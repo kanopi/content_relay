@@ -1,0 +1,84 @@
+# Decision record
+
+Choices that differ from, or make concrete, the build specification. Each says
+what was decided, why, and what it affects.
+
+## 1. Replay protection is per message, not per event
+
+The specification says the receiver rejects "already-processed event IDs".
+Taken literally, an origin that times out waiting for a response and retries
+the same event would be refused as a replay, and the event dead-lettered,
+even though the replica may never have received it.
+
+Instead, every delivery attempt is a new signed message with its own ID, and
+the verifier refuses a message ID it has seen. The event ID inside stays the
+same across retries and replays; the replica's apply service (phase 2)
+recognizes an event it has already applied and answers with its earlier result
+instead of applying it twice. The security property (a captured message cannot
+be replayed) is unchanged, and retries work.
+
+## 2. Empty fields are left out of snapshots
+
+A field with no values does not appear in a snapshot, and a snapshot without a
+field means the field is empty. Otherwise adding a field on the origin would
+change the hash of every existing entity of that bundle, and the report would
+mark them all out of sync although no content changed.
+
+## 3. "Changed" timestamps are synced but not hashed
+
+Fields of type `changed` go into the snapshot's metadata section. They are
+applied on the replica so it shows the origin's dates, but a re-save that
+changes nothing else must not produce a new hash. Staleness checks use the
+event's `source_changed` and revision, not the hash. Normalizer plugins can
+put other informative values in metadata the same way (file paths, phase 6).
+
+## 4. Values are cast to their declared type
+
+The same integer can be `"1"` after a database load and `1` or `TRUE` in
+memory. The generic normalizer casts every primitive property to its typed
+data type before hashing, and leaves NULL properties out (casting would turn
+them into `0` or `""`). Without this the origin's hash at save time and the
+replica's hash after loading would differ for identical content.
+
+## 5. References that cannot be matched by UUID
+
+- **Configuration entities** (text formats, roles, bundles) are referenced by
+  machine name, which is already the same on every site.
+- **The anonymous user** is user 0 everywhere but has a different UUID on each
+  site, so it travels as the marker `anonymous`.
+- **Other users** are matched by UUID like any entity. If users are not synced,
+  references to them cannot be resolved on the replica. *Open question:* fall
+  back to a configurable replica user, or require user sync for authored
+  content?
+
+## 6. Private keys may not use the config or state key providers
+
+The specification requires that private keys never appear in exported config
+or the database. The Key module's `config` provider stores the value in the
+key entity's exported configuration and `state` stores it in the database, so
+both are refused with a clear error. File and environment providers work.
+
+## 7. Key IDs are derived from the public key
+
+A key ID is the first 16 hex characters of SHA-256 over the purpose and public
+key. Both sites compute the same ID from the public key alone, so there is no
+assigned identifier to keep in step during pairing or rotation.
+
+## 8. The default translation is always in a snapshot
+
+A snapshot cannot exist without its default translation, so it is included
+even when the receiver's language filter excludes it. Whether to send an item
+whose only wanted language is not its default is decided by the sender before
+building the snapshot (phase 11).
+
+## 9. Signatures are domain-separated
+
+Signed bytes are prefixed with `content_relay.message.v1` so a signature over a
+message can never be presented as a signature over anything else made with the
+same key, such as the JWTs in phase 3.
+
+## 10. Drupal 10.3 support
+
+Supported because it costs little: hooks are thin procedural wrappers that
+delegate to services, and plugins use PHP attributes, both of which 10.3 has.
+Tests carry annotation and attribute forms so PHPUnit 9 and 11 both read them.

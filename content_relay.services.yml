@@ -1,0 +1,69 @@
+services:
+  logger.channel.content_relay:
+    parent: logger.channel_base
+    arguments: ['content_relay']
+
+  content_relay.site_identity:
+    class: Drupal\content_relay\SiteIdentity
+    arguments: ['@config.factory']
+
+  # Serialization.
+  plugin.manager.content_relay_normalizer:
+    class: Drupal\content_relay\Serialization\NormalizerManager
+    parent: default_plugin_manager
+    arguments: ['@entity_type.manager']
+
+  content_relay.uuid_resolver:
+    class: Drupal\content_relay\Serialization\UuidResolver
+    arguments: ['@entity_type.manager', '@database']
+
+  content_relay.entity_serializer:
+    class: Drupal\content_relay\Serialization\EntitySerializer
+    arguments:
+      - '@plugin.manager.content_relay_normalizer'
+      - '@entity.repository'
+      - '@content_relay.uuid_resolver'
+      - '@event_dispatcher'
+
+  content_relay.syncable_entity_types:
+    class: Drupal\content_relay\Serialization\SyncableEntityTypes
+    arguments:
+      - '@entity_type.manager'
+      - '@entity_type.bundle.info'
+      - '@plugin.manager.content_relay_normalizer'
+
+  content_relay.revision_hasher:
+    class: Drupal\content_relay\Hash\RevisionHasher
+
+  # Keys and messages.
+  content_relay.key_store:
+    class: Drupal\content_relay\Key\KeyStore
+    arguments: ['@config.factory', '@key.repository']
+
+  # Role modules add resolvers for their peers by tagging a service with
+  # content_relay_public_key_resolver.
+  content_relay.public_key_resolver:
+    class: Drupal\content_relay\Crypto\ChainPublicKeyResolver
+    tags:
+      - { name: service_collector, tag: content_relay_public_key_resolver, call: addResolver }
+
+  content_relay.replay_guard:
+    class: Drupal\content_relay\Crypto\DatabaseReplayGuard
+    arguments: ['@database']
+
+  content_relay.message_signer:
+    class: Drupal\content_relay\Crypto\MessageSigner
+    arguments:
+      - '@content_relay.key_store'
+      - '@content_relay.site_identity'
+      - '@datetime.time'
+      - '@uuid'
+
+  content_relay.message_verifier:
+    class: Drupal\content_relay\Crypto\MessageVerifier
+    arguments:
+      - '@content_relay.public_key_resolver'
+      - '@content_relay.replay_guard'
+      - '@content_relay.site_identity'
+      - '@config.factory'
+      - '@datetime.time'

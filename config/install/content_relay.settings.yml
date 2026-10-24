@@ -1,0 +1,6 @@
+site_id: ''
+site_label: ''
+signature:
+  clock_window: 300
+signing_keys: []
+encryption_keys: []

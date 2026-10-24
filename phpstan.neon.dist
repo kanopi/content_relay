@@ -1,0 +1,22 @@
+# Static analysis for Content Relay. Run from the module directory, the way
+# drupal.org CI does, so tests are analyzed too:
+#
+#   ../../../../vendor/bin/phpstan analyse . --memory-limit=1G
+parameters:
+  # Level 5 for now: typed data and the entity API return mixed in many places
+  # that higher levels would need casts or assertions for. Raise it by fixing
+  # findings, not by widening ignores.
+  level: 5
+  paths:
+    - .
+  excludePaths:
+    - vendor (?)
+  ignoreErrors:
+    # PHPUnit 9 (Drupal 10) has no attributes; the docblock forms cover it.
+    -
+      message: '#Attribute class PHPUnit\\Framework\\Attributes\\[A-Za-z]+ does not exist\.#'
+      reportUnmatched: false
+    # Plugins are built by the manager from a fixed constructor signature.
+    -
+      identifier: new.static
+      reportUnmatched: false

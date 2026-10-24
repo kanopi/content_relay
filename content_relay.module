@@ -1,0 +1,15 @@
+<?php
+
+/**
+ * @file
+ * Hook implementations for Content Relay.
+ */
+
+declare(strict_types=1);
+
+/**
+ * Implements hook_cron().
+ */
+function content_relay_cron(): void {
+  \Drupal::service('content_relay.replay_guard')->prune(\Drupal::time()->getRequestTime());
+}

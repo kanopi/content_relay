@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ruleset name="content_relay">
+  <description>
+    Drupal coding standards for Content Relay. Run from the module directory:
+
+      ../../../../vendor/bin/phpcs
+  </description>
+  <file>.</file>
+  <arg name="extensions" value="php,module,inc,install,test,profile,theme,yml"/>
+  <arg name="colors"/>
+  <arg value="sp"/>
+  <rule ref="Drupal"/>
+  <rule ref="DrupalPractice"/>
+  <exclude-pattern>./vendor/*</exclude-pattern>
+  <exclude-pattern>./node_modules/*</exclude-pattern>
+  <exclude-pattern>./.phpunit.cache/*</exclude-pattern>
+</ruleset>

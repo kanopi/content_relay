@@ -1,0 +1,6 @@
+name: 'Content Relay test'
+type: module
+description: 'Support module for Content Relay tests.'
+package: Testing
+dependencies:
+  - content_relay:content_relay

@@ -1,0 +1,12 @@
+name: 'Content Relay'
+type: module
+description: 'Shared foundation for syncing content between Drupal sites: event schema, entity serialization, revision hashing, signing and key management. Enable Content Relay Origin or Content Relay Replica on top of it.'
+package: Content Relay
+core_version_requirement: ^10.3 || ^11
+php: 8.3
+
+# Private keys are read through the Key module so they never live in exported
+# configuration. See \Drupal\content_relay\Key\KeyStore for which key providers
+# are accepted.
+dependencies:
+  - key:key

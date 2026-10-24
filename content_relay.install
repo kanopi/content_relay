@@ -1,0 +1,90 @@
+<?php
+
+/**
+ * @file
+ * Install, update and uninstall functions for Content Relay.
+ */
+
+declare(strict_types=1);
+
+use Drupal\content_relay\Crypto\DatabaseReplayGuard;
+
+/**
+ * Implements hook_install().
+ */
+function content_relay_install(bool $is_syncing): void {
+  // A site installed from existing configuration already has its ID, and it
+  // must keep it: peers address messages to it.
+  if ($is_syncing) {
+    return;
+  }
+  $config = \Drupal::configFactory()->getEditable('content_relay.settings');
+  if ($config->get('site_id') === '') {
+    $config->set('site_id', \Drupal::service('uuid')->generate())->save();
+  }
+}
+
+/**
+ * Implements hook_requirements().
+ */
+function content_relay_requirements(string $phase): array {
+  $requirements = [];
+  if (!extension_loaded('sodium')) {
+    $requirements['content_relay_sodium'] = [
+      'title' => t('Content Relay: libsodium'),
+      'value' => t('Missing'),
+      'description' => t('Content Relay signs every message with libsodium. Install or enable the PHP sodium extension.'),
+      'severity' => REQUIREMENT_ERROR,
+    ];
+  }
+  if ($phase === 'runtime') {
+    $connection = \Drupal::database();
+    // Hashes cover text byte for byte. A database that cannot store four-byte
+    // UTF-8 (emoji, some CJK) changes the bytes, and the replica's copy would
+    // never hash the same as the origin's.
+    $charset = $connection->getConnectionOptions()['charset'] ?? NULL;
+    if ($connection->databaseType() === 'mysql' && $charset !== NULL && $charset !== 'utf8mb4') {
+      $requirements['content_relay_utf8mb4'] = [
+        'title' => t('Content Relay: database character set'),
+        'value' => $charset,
+        'description' => t('Content Relay needs the utf8mb4 character set so that synced text hashes identically on every site.'),
+        'severity' => REQUIREMENT_ERROR,
+      ];
+    }
+  }
+  return $requirements;
+}
+
+/**
+ * Implements hook_schema().
+ */
+function content_relay_schema(): array {
+  $schema[DatabaseReplayGuard::TABLE] = [
+    'description' => 'IDs of signed messages already accepted, kept until they would be refused as stale.',
+    'fields' => [
+      'sender' => [
+        'type' => 'varchar_ascii',
+        'length' => 64,
+        'not null' => TRUE,
+        'description' => 'Site ID of the sender.',
+      ],
+      'message_id' => [
+        'type' => 'varchar_ascii',
+        'length' => 64,
+        'not null' => TRUE,
+        'description' => 'Message ID.',
+      ],
+      'expires' => [
+        'type' => 'int',
+        'size' => 'big',
+        'not null' => TRUE,
+        'description' => 'When the record may be removed.',
+      ],
+    ],
+    'primary key' => ['sender', 'message_id'],
+    'indexes' => [
+      'expires' => ['expires'],
+    ],
+  ];
+  return $schema;
+}

@@ -1,0 +1,45 @@
+content_relay.settings:
+  type: config_object
+  label: 'Content Relay settings'
+  mapping:
+    site_id:
+      type: string
+      label: 'Site ID'
+      # Generated at install. Peers address messages to this value, so it
+      # identifies the site across environments and must survive config sync.
+    site_label:
+      type: label
+      label: 'Site label'
+    signature:
+      type: mapping
+      label: 'Signature verification'
+      mapping:
+        clock_window:
+          type: integer
+          label: 'Accepted clock difference, in seconds'
+    signing_keys:
+      type: sequence
+      label: 'Ed25519 signing keys'
+      sequence:
+        type: content_relay.key_reference
+    encryption_keys:
+      type: sequence
+      label: 'X25519 encryption keys'
+      sequence:
+        type: content_relay.key_reference
+
+content_relay.key_reference:
+  type: mapping
+  label: 'Key reference'
+  mapping:
+    key:
+      type: string
+      label: 'Key entity holding the private key'
+    status:
+      type: string
+      label: 'Status'
+      constraints:
+        Choice:
+          - primary
+          - active
+          - retired

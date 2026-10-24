@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Runs this module's tests from the module directory:
+
+    ../../../../vendor/bin/phpunit -c phpunit.xml.dist
+
+  Copy to phpunit.xml (git-ignored) and set SIMPLETEST_DB, and for functional
+  tests SIMPLETEST_BASE_URL, or export them in your shell. There is no
+  cacheDirectory attribute because PHPUnit 9 (Drupal 10) rejects it.
+-->
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="../../../core/vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="../../../core/tests/bootstrap.php"
+         colors="true"
+         beStrictAboutTestsThatDoNotTestAnything="true"
+         failOnWarning="true"
+         failOnRisky="true">
+  <php>
+    <ini name="error_reporting" value="32767"/>
+    <ini name="memory_limit" value="-1"/>
+    <env name="SIMPLETEST_BASE_URL" value=""/>
+    <env name="SIMPLETEST_DB" value=""/>
+    <env name="BROWSERTEST_OUTPUT_DIRECTORY" value=""/>
+    <env name="SYMFONY_DEPRECATIONS_HELPER" value="weak"/>
+  </php>
+  <testsuites>
+    <testsuite name="content_relay">
+      <directory>tests/src</directory>
+      <directory>modules/*/tests/src</directory>
+    </testsuite>
+    <testsuite name="content_relay-unit">
+      <directory>tests/src/Unit</directory>
+    </testsuite>
+  </testsuites>
+</phpunit>

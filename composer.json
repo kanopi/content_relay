@@ -1,0 +1,16 @@
+{
+    "name": "drupal/content_relay",
+    "description": "Keeps content in sync between Drupal sites, from one origin to many replicas, over signed and optionally encrypted messages.",
+    "type": "drupal-module",
+    "license": "GPL-2.0-or-later",
+    "homepage": "https://www.drupal.org/project/content_relay",
+    "support": {
+        "issues": "https://www.drupal.org/project/issues/content_relay",
+        "source": "https://git.drupalcode.org/project/content_relay"
+    },
+    "require": {
+        "php": ">=8.3",
+        "ext-sodium": "*",
+        "drupal/key": "^1.17"
+    }
+}
