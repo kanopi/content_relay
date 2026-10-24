@@ -51,12 +51,22 @@ replica's hash after loading would differ for identical content.
   back to a configurable replica user, or require user sync for authored
   content?
 
-## 6. Private keys may not use the config or state key providers
+## 6. Keys live in the Key module, as key types
+
+Content Relay keeps no list of its keys. It provides two Key module key types,
+one per purpose, and every key entity of those types is one of the site's key
+pairs. The primary/active/retired status is that key's key type setting, edited
+on the Key module's own form. Rotation is therefore done entirely in the Key UI:
+add a key, make it primary, make the old one active, later retired.
 
 The specification requires that private keys never appear in exported config
-or the database. The Key module's `config` provider stores the value in the
-key entity's exported configuration and `state` stores it in the database, so
-both are refused with a clear error. File and environment providers work.
+or the database. The Key module's `config` provider stores the value in the key
+entity's exported configuration and `state` stores it in the database, so both
+are refused, on the key form and when the key is read. File and environment
+providers work. The key types offer value generation, but the Key module only
+generates for providers that accept a value, which are exactly the refused
+ones; with a file or environment provider the value is generated outside the
+form and placed where the provider reads it.
 
 ## 7. Key IDs are derived from the public key
 

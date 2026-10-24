@@ -93,7 +93,8 @@ final class DeliveryTest extends KernelTestBase {
     Key::create([
       'id' => 'origin_signing',
       'label' => 'Origin signing',
-      'key_type' => 'authentication',
+      'key_type' => 'content_relay_signing',
+      'key_type_settings' => ['status' => 'primary'],
       'key_provider' => 'env',
       'key_provider_settings' => [
         'env_variable' => 'CONTENT_RELAY_ORIGIN_TEST_KEY',
@@ -102,7 +103,6 @@ final class DeliveryTest extends KernelTestBase {
       ],
       'key_input' => 'none',
     ])->save();
-    $this->config('content_relay.settings')->set('signing_keys', [['key' => 'origin_signing', 'status' => 'primary']])->save();
 
     NodeType::create(['type' => 'article', 'name' => 'Article'])->save();
     NodeType::create(['type' => 'page', 'name' => 'Page'])->save();

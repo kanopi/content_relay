@@ -70,21 +70,32 @@ schema (`v: 1`).
 ### Keys
 
 Each site has a site ID (a UUID generated on install) and key pairs for
-signing (Ed25519) and, later, encryption (X25519). Private keys are stored in
-Key module entities using the **file** or **environment variable** provider;
-the configuration and state providers are refused so a private key never
-appears in a config export or the database. `content_relay.settings` lists the
-key entities with a status: `primary` signs new messages, `active` is still
-accepted during a rotation, `retired` is refused. Key IDs are derived from the
-public key.
+signing (Ed25519) and encryption (X25519). Keys are ordinary
+[Key](https://www.drupal.org/project/key) module entities of two key types this
+module provides: **Content Relay signing key** and **Content Relay encryption
+key**. Content Relay finds them by type; there is no list of keys in its own
+settings.
 
-Generating keys and the admin UI for them arrive in later phases. Until then:
+Each key's status is set on its edit form, under the key type settings:
+
+- **Primary** signs new messages (one per type);
+- **Active** is still accepted, for the overlap during a rotation;
+- **Retired** is never used, and its value is not even read.
+
+Private keys must use the **file** or **environment variable** provider. The
+configuration and state providers are refused, on the key form and at
+runtime, so a private key never appears in a config export or the database.
+Key IDs used in messages are derived from the public key.
+
+To create a key, generate its value and store it where the provider will read
+it, then add the key entity pointing at it:
 
 ```php
-[$pair, $material] = \Drupal\content_relay\Key\KeyPair::generate(\Drupal\content_relay\Key\KeyPurpose::Signing);
-// Store $material in a file outside the web root or an environment variable,
-// point a Key entity at it, and list that entity in content_relay.settings.
+[, $value] = \Drupal\content_relay\Key\KeyPair::generate(\Drupal\content_relay\Key\KeyPurpose::Signing);
+file_put_contents('/path/outside/webroot/content_relay_signing.key', $value);
 ```
+
+A Drush command for this arrives with the admin tooling.
 
 ## Origin
 

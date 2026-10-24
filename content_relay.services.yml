@@ -38,7 +38,7 @@ services:
   # Keys and messages.
   content_relay.key_store:
     class: Drupal\content_relay\Key\KeyStore
-    arguments: ['@config.factory', '@key.repository']
+    arguments: ['@key.repository']
 
   # Role modules add resolvers for their peers by tagging a service with
   # content_relay_public_key_resolver.

@@ -28,12 +28,12 @@ enum KeyPurpose: string {
   }
 
   /**
-   * The settings key listing references for this purpose.
+   * The Key module key type that holds keys for this purpose.
    */
-  public function settingsKey(): string {
+  public function keyTypeId(): string {
     return match ($this) {
-      self::Signing => 'signing_keys',
-      self::Encryption => 'encryption_keys',
+      self::Signing => 'content_relay_signing',
+      self::Encryption => 'content_relay_encryption',
     };
   }
 

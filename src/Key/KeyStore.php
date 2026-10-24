@@ -4,23 +4,29 @@ declare(strict_types=1);
 
 namespace Drupal\content_relay\Key;
 
-use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\key\KeyInterface;
 use Drupal\key\KeyRepositoryInterface;
 
 /**
- * This site's own key pairs, read through the Key module.
+ * This site's own key pairs, held by the Key module.
  *
- * Settings hold only references: which key entity holds each private key, and
- * whether it is the primary key (used for new messages), an active one (still
- * accepted or used to decrypt, during a rotation) or retired (refused). The
- * key material lives wherever the key entity's provider puts it.
+ * Every key entity of a Content Relay key type is one of this site's key
+ * pairs; there is no separate list to maintain. The key type's settings give
+ * its status: primary (used for new messages), active (still accepted or used
+ * to decrypt, during a rotation) or retired (refused). The value lives wherever
+ * the key's provider keeps it.
  *
  * Providers that keep the value in exported configuration or in the database
  * are refused, so a config export or a database dump never contains a private
- * key. Use the file or environment provider.
+ * key. Use the file or environment variable provider.
+ *
+ * @see \Drupal\content_relay\Plugin\KeyType\ContentRelayKeyTypeBase
  */
 class KeyStore {
+
+  public const PRIMARY = 'primary';
+  public const ACTIVE = 'active';
+  public const RETIRED = 'retired';
 
   /**
    * Key providers whose storage is configuration or the database.
@@ -30,12 +36,11 @@ class KeyStore {
   /**
    * Key pairs already read, by purpose and key ID.
    *
-   * @var array<string, array<string, array{pair: \Drupal\content_relay\Key\KeyPair, status: string}>>
+   * @var array<string, array<string, array{pair: \Drupal\content_relay\Key\KeyPair, status: string, key: string}>>
    */
   protected array $pairs = [];
 
   public function __construct(
-    protected ConfigFactoryInterface $configFactory,
     protected KeyRepositoryInterface $keyRepository,
   ) {}
 
@@ -43,23 +48,22 @@ class KeyStore {
    * The key pair used for new messages.
    *
    * @throws \RuntimeException
-   *   When no primary key is configured or it cannot be read.
+   *   When no primary key exists or it cannot be read.
    */
   public function getPrimary(KeyPurpose $purpose): KeyPair {
     foreach ($this->load($purpose) as $entry) {
-      if ($entry['status'] === 'primary') {
+      if ($entry['status'] === self::PRIMARY) {
         return $entry['pair'];
       }
     }
-    throw new \RuntimeException(sprintf('No primary %s key is configured for Content Relay.', $purpose->value));
+    throw new \RuntimeException(sprintf('No primary Content Relay %s key exists. Create a key of type "%s" with status primary.', $purpose->value, $purpose->keyTypeId()));
   }
 
   /**
    * A usable key pair by ID: primary or active, never retired.
    */
   public function get(KeyPurpose $purpose, string $key_id): ?KeyPair {
-    $entry = $this->load($purpose)[$key_id] ?? NULL;
-    return $entry && $entry['status'] !== 'retired' ? $entry['pair'] : NULL;
+    return $this->load($purpose)[$key_id]['pair'] ?? NULL;
   }
 
   /**
@@ -71,18 +75,24 @@ class KeyStore {
   public function getPublicKeys(KeyPurpose $purpose): array {
     $keys = [];
     foreach ($this->load($purpose) as $id => $entry) {
-      if ($entry['status'] !== 'retired') {
-        $keys[$id] = ['public_key' => base64_encode($entry['pair']->publicKey), 'status' => $entry['status']];
-      }
+      $keys[$id] = ['public_key' => base64_encode($entry['pair']->publicKey), 'status' => $entry['status']];
     }
     return $keys;
   }
 
   /**
-   * Forgets key pairs already read, after settings change.
+   * Forgets key pairs already read, after keys change.
    */
   public function reset(): void {
     $this->pairs = [];
+  }
+
+  /**
+   * The Content Relay status of a key entity.
+   */
+  public static function statusOf(KeyInterface $key): string {
+    $settings = $key->get('key_type_settings');
+    return is_array($settings) && is_string($settings['status'] ?? NULL) ? $settings['status'] : self::ACTIVE;
   }
 
   /**
@@ -99,37 +109,42 @@ class KeyStore {
   }
 
   /**
-   * Reads and checks every configured key for a purpose.
+   * Reads and checks every key of a purpose's key type.
    *
-   * @return array<string, array{pair: \Drupal\content_relay\Key\KeyPair, status: string}>
-   *   Key pairs by key ID.
+   * @return array<string, array{pair: \Drupal\content_relay\Key\KeyPair, status: string, key: string}>
+   *   Primary and active key pairs by key ID, in key entity ID order.
    *
    * @throws \RuntimeException
-   *   When a configured key is missing, misconfigured or not a valid key.
+   *   When a key is misconfigured or its value is not a valid key, or more
+   *   than one is primary.
    */
   protected function load(KeyPurpose $purpose): array {
     if (isset($this->pairs[$purpose->value])) {
       return $this->pairs[$purpose->value];
     }
+    $keys = $this->keyRepository->getKeysByType($purpose->keyTypeId());
+    ksort($keys);
     $pairs = [];
     $primaries = 0;
-    foreach ($this->configFactory->get('content_relay.settings')->get($purpose->settingsKey()) ?? [] as $reference) {
-      $key = $this->keyRepository->getKey($reference['key']);
-      if (!$key instanceof KeyInterface) {
-        throw new \RuntimeException(sprintf('Content Relay %s key "%s" does not exist.', $purpose->value, $reference['key']));
+    foreach ($keys as $id => $key) {
+      $status = self::statusOf($key);
+      // Retired keys are never used, so their value is not even read: a
+      // retired key whose file has been removed must not break the others.
+      if ($status === self::RETIRED) {
+        continue;
       }
       try {
         self::assertAcceptableProvider($key);
         $pair = KeyPair::fromMaterial($purpose, (string) $key->getKeyValue());
       }
       catch (\InvalidArgumentException $e) {
-        throw new \RuntimeException(sprintf('Content Relay %s key "%s" cannot be used: %s', $purpose->value, $reference['key'], $e->getMessage()), 0, $e);
+        throw new \RuntimeException(sprintf('Content Relay %s key "%s" cannot be used: %s', $purpose->value, $id, $e->getMessage()), 0, $e);
       }
-      $primaries += (int) ($reference['status'] === 'primary');
-      $pairs[$pair->id()] = ['pair' => $pair, 'status' => $reference['status']];
+      $primaries += (int) ($status === self::PRIMARY);
+      $pairs[$pair->id()] = ['pair' => $pair, 'status' => $status, 'key' => (string) $id];
     }
     if ($primaries > 1) {
-      throw new \RuntimeException(sprintf('More than one primary Content Relay %s key is configured.', $purpose->value));
+      throw new \RuntimeException(sprintf('More than one Content Relay %s key is primary.', $purpose->value));
     }
     return $this->pairs[$purpose->value] = $pairs;
   }

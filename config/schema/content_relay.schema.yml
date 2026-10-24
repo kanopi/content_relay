@@ -17,24 +17,19 @@ content_relay.settings:
         clock_window:
           type: integer
           label: 'Accepted clock difference, in seconds'
-    signing_keys:
-      type: sequence
-      label: 'Ed25519 signing keys'
-      sequence:
-        type: content_relay.key_reference
-    encryption_keys:
-      type: sequence
-      label: 'X25519 encryption keys'
-      sequence:
-        type: content_relay.key_reference
 
-content_relay.key_reference:
+key.type.content_relay_signing:
+  type: content_relay.key_type_settings
+  label: 'Content Relay signing key settings'
+
+key.type.content_relay_encryption:
+  type: content_relay.key_type_settings
+  label: 'Content Relay encryption key settings'
+
+content_relay.key_type_settings:
   type: mapping
-  label: 'Key reference'
+  label: 'Content Relay key settings'
   mapping:
-    key:
-      type: string
-      label: 'Key entity holding the private key'
     status:
       type: string
       label: 'Status'
