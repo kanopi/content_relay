@@ -67,3 +67,11 @@ services:
       - '@content_relay.site_identity'
       - '@config.factory'
       - '@datetime.time'
+
+  content_relay.contract_summarizer:
+    class: Drupal\content_relay\Contract\ContractSummarizer
+    arguments: ['@entity_type.bundle.info', '@language_manager', '@string_translation']
+
+  content_relay.contract_renderer:
+    class: Drupal\content_relay\Contract\ContractRenderer
+    arguments: ['@content_relay.contract_summarizer', '@date.formatter', '@entity_type.manager', '@string_translation']

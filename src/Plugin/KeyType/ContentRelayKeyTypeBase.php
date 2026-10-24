@@ -15,7 +15,7 @@ use Drupal\key\Plugin\KeyTypeBase;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 
 /**
- * Shared behaviour of the Content Relay key types.
+ * Shared behavior of the Content Relay key types.
  *
  * Each key entity of one of these types is one of this site's key pairs. Its
  * status, set on the key's own edit form, says how Content Relay uses it:

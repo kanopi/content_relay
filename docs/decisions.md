@@ -147,3 +147,48 @@ Entity storage wraps every exception in `EntityStorageException`. The summary
 sent to the origin names the innermost exception's class (for example
 `RuntimeException`) and nothing else; its message, which can contain paths or
 values, stays in the replica's failed events table.
+
+## 17. JWT pull authentication waits for the endpoints that need it
+
+Pairing and every contract message are signed messages, which already prove
+who sent them; none of phase 3 needs a bearer token. `lcobucci/jwt` is added
+with the first replica-to-origin read endpoint (pull, schema, file), so the
+dependency arrives with code that uses it.
+
+## 18. A pairing request is signed by the key it registers
+
+Before pairing the origin knows no key for the replica. The request is
+therefore signed with the signing key it carries, whose ID must be the one
+derived from it. This proves the replica holds the private key it registers;
+the code proves it was invited. The origin's keys reach the replica in the
+pairing response, authenticated by HTTPS, and verify everything after.
+
+## 19. When a contract version takes effect
+
+The specification sets `effective_from_sequence` when the version is
+proposed, and also says the origin keeps using the previous version until the
+new one is acknowledged. Both hold: the signed terms keep the sequence known
+at proposal, and on acknowledgement the origin records the first event not yet
+sent as the sequence the version actually applies from (shown in the history).
+The replica does not need it: each event names its contract version.
+
+An event for a bundle that is not in the contract in force when it is sent is
+skipped, even if a pending version adds the bundle. Holding it would stall the
+whole stream on an acknowledgement that may be lost. Content saved in that
+window reaches the replica through the backfill and reconciliation that adding
+a bundle triggers (phase 10).
+
+## 20. Pairing codes fold look-alike letters
+
+Codes are Crockford Base32, which has no I, L, O or U. Input is folded the
+Crockford way (I and L to 1, O to 0) as well as ignoring dashes, spaces and
+case, so a code read aloud or copied from a screen still works. Codes are
+stored as an HMAC keyed with the site's hash salt, so a database dump alone
+cannot be used to recover them.
+
+## 21. Switching the replica to selected languages
+
+The specification asks that switching from "all languages" to "selected"
+pre-selects the languages currently received. Until the origin's language list
+is available from its schema endpoint (phase 9), the form pre-selects the
+replica's own enabled languages when none are ticked.

@@ -10,6 +10,8 @@ use Drupal\content_relay\Event\SyncEvent;
 use Drupal\content_relay\Key\KeyPair;
 use Drupal\content_relay\Key\KeyPurpose;
 use Drupal\content_relay_replica\Apply\ApplyResult;
+use Drupal\content_relay\Contract\SubscriptionContract;
+use Drupal\content_relay_replica\ContractStore;
 use Drupal\content_relay_replica\FailedEventStore;
 use Drupal\content_relay_replica\ProcessedEvents;
 use Drupal\content_relay_replica\StreamTracker;
@@ -77,6 +79,7 @@ abstract class ReplicaTestBase extends KernelTestBase {
       ProcessedEvents::TABLE,
       FailedEventStore::TABLE,
       FailedEventStore::DEPENDENCY_TABLE,
+      ContractStore::TABLE,
     ]);
     $this->installConfig(['content_relay', 'content_relay_replica', 'node', 'filter']);
     content_relay_install(FALSE);
@@ -93,6 +96,29 @@ abstract class ReplicaTestBase extends KernelTestBase {
       'signing_keys' => [
         $this->originKey->id() => ['public_key' => base64_encode($this->originKey->publicKey), 'status' => 'primary'],
       ],
+    ]);
+    $this->container->get('content_relay_replica.contracts')->save($this->contract(1, [
+      'node' => ['article'],
+      'taxonomy_term' => ['tags'],
+    ]));
+  }
+
+  /**
+   * A contract from the origin to this replica.
+   */
+  protected function contract(int $version, array $bundles): SubscriptionContract {
+    return new SubscriptionContract([
+      'version' => $version,
+      'origin' => self::ORIGIN,
+      'replica' => $this->container->get('content_relay.site_identity')->getSiteId(),
+      'effective_from_sequence' => 1,
+      'issued' => 1700000000,
+      'issued_by' => 'replica',
+      'origin_terms' => SubscriptionContract::defaultOriginTerms(),
+      'replica_terms' => ['bundles' => $bundles] + SubscriptionContract::defaultReplicaTerms(),
+      'joint' => [],
+      'effective' => ['bundles' => $bundles],
+      'not_granted' => [],
     ]);
   }
 

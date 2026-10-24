@@ -7,10 +7,12 @@ namespace Drupal\Tests\content_relay_origin\Kernel;
 use Drupal\content_relay\Crypto\MessageSigner;
 use Drupal\content_relay\Key\KeyPair;
 use Drupal\content_relay\Key\KeyPurpose;
+use Drupal\content_relay_origin\ContractManager;
 use Drupal\content_relay_origin\DeliveryScheduler;
 use Drupal\content_relay_origin\EventStatus;
 use Drupal\content_relay_origin\HashStore;
 use Drupal\content_relay_origin\Outbox;
+use Drupal\content_relay_origin\PairingCodes;
 use Drupal\content_relay_origin\Replica;
 use Drupal\content_relay_origin\ReplicaRegistry;
 use Drupal\key\Entity\Key;
@@ -80,11 +82,22 @@ final class DeliveryTest extends KernelTestBase {
    */
   protected function setUp(): void {
     parent::setUp();
+    // First: saving any entity builds services that hold the HTTP client.
+    $this->responses = new MockHandler();
+    $stack = HandlerStack::create($this->responses);
+    $stack->push(Middleware::history($this->sent));
+    $this->container->set('http_client', new Client(['handler' => $stack]));
     $this->installEntitySchema('user');
     $this->installEntitySchema('node');
     $this->installSchema('node', ['node_access']);
     $this->installSchema('content_relay', ['content_relay_seen_message']);
-    $this->installSchema('content_relay_origin', [ReplicaRegistry::TABLE, Outbox::TABLE, HashStore::TABLE]);
+    $this->installSchema('content_relay_origin', [
+      ReplicaRegistry::TABLE,
+      Outbox::TABLE,
+      HashStore::TABLE,
+      ContractManager::TABLE,
+      PairingCodes::TABLE,
+    ]);
     $this->installConfig(['content_relay', 'content_relay_origin', 'node', 'filter']);
     content_relay_install(FALSE);
 
@@ -111,12 +124,10 @@ final class DeliveryTest extends KernelTestBase {
       ->set('delivery.max_attempts', 3)
       ->save();
 
-    $this->responses = new MockHandler();
-    $stack = HandlerStack::create($this->responses);
-    $stack->push(Middleware::history($this->sent));
-    $this->container->set('http_client', new Client(['handler' => $stack]));
-
     $this->container->get('content_relay_origin.replica_registry')->save(new Replica(self::REPLICA, 'Replica one', self::ENDPOINT, Replica::ACTIVE, []));
+    $contracts = $this->container->get('content_relay_origin.contract_manager');
+    $contracts->propose(self::REPLICA, ['bundles' => ['node' => ['article']]], NULL, 'replica');
+    $contracts->acknowledge(self::REPLICA, 1);
   }
 
   /**

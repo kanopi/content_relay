@@ -1,0 +1,66 @@
+# Machine endpoints. Each authenticates the caller itself: pairing by code and
+# a signature from the key being registered, the inbox by the signature of a
+# registered replica. There is no session and no CSRF token.
+content_relay_origin.pair:
+  path: '/content-relay/v1/pair'
+  defaults:
+    _controller: '\Drupal\content_relay_origin\Controller\PairingController::pair'
+  methods: [POST]
+  requirements:
+    # Open on purpose: authenticated by the pairing code and flood-limited.
+    _access: 'TRUE'
+  options:
+    no_cache: TRUE
+
+content_relay_origin.inbox:
+  path: '/content-relay/v1/messages'
+  defaults:
+    _controller: '\Drupal\content_relay_origin\Controller\InboxController::receive'
+  methods: [POST]
+  requirements:
+    # Open on purpose: every message is signature-checked by the controller.
+    _access: 'TRUE'
+  options:
+    no_cache: TRUE
+
+# Administration.
+content_relay_origin.settings:
+  path: '/admin/config/services/content-relay/origin'
+  defaults:
+    _form: '\Drupal\content_relay_origin\Form\OriginSettingsForm'
+    _title: 'Content Relay origin'
+  requirements:
+    _permission: 'administer content relay origin'
+
+content_relay_origin.replicas:
+  path: '/admin/config/services/content-relay/origin/replicas'
+  defaults:
+    _controller: '\Drupal\content_relay_origin\Controller\ReplicaListController::list'
+    _title: 'Replicas'
+  requirements:
+    _permission: 'administer content relay replicas'
+
+content_relay_origin.pairing_code:
+  path: '/admin/config/services/content-relay/origin/pairing-code'
+  defaults:
+    _form: '\Drupal\content_relay_origin\Form\PairingCodeForm'
+    _title: 'Generate a pairing code'
+  requirements:
+    _permission: 'generate content relay pairing codes'
+
+content_relay_origin.replica_contract:
+  path: '/admin/config/services/content-relay/origin/replicas/{replica_id}/contract'
+  defaults:
+    _form: '\Drupal\content_relay_origin\Form\ReplicaContractForm'
+    _title: 'Contract'
+  requirements:
+    _permission: 'administer content relay replicas'
+
+content_relay_origin.replica_action:
+  path: '/admin/config/services/content-relay/origin/replicas/{replica_id}/{action}'
+  defaults:
+    _form: '\Drupal\content_relay_origin\Form\ReplicaActionForm'
+    _title: 'Change replica'
+  requirements:
+    _permission: 'administer content relay replicas'
+    action: 'approve|suspend|resume|revoke'

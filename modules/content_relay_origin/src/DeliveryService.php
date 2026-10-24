@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Drupal\content_relay_origin;
 
 use Drupal\Component\Datetime\TimeInterface;
+use Drupal\content_relay\Contract\SubscriptionContract;
 use Drupal\content_relay\Crypto\MessageSigner;
 use Drupal\content_relay\Event\Operation;
 use Drupal\Core\Config\ConfigFactoryInterface;
@@ -30,9 +31,18 @@ use Psr\Log\LoggerInterface;
  * - Any other 4xx: dead-lettered at once. Resending the same thing would get
  *   the same answer.
  *
+ * - 409 with result "contract_mismatch": the replica does not have the
+ *   contract the event names. The contract is sent again and the event
+ *   retried, rebuilt under whatever is in force.
+ *
  * Only one worker delivers to a replica at a time, and a retrying event holds
  * back everything behind it, so a replica always receives its stream in
  * order.
+ *
+ * The contract in force decides the rest: nothing is sent before the replica
+ * acknowledged its first contract, while it has paused delivery, or outside
+ * its delivery windows; at most its rate limit is sent per minute; and events
+ * for bundles it does not receive are skipped.
  */
 class DeliveryService {
 
@@ -45,6 +55,7 @@ class DeliveryService {
     protected ReplicaRegistry $registry,
     protected Outbox $outbox,
     protected EventBuilder $eventBuilder,
+    protected ContractManager $contracts,
     protected MessageSigner $signer,
     protected ClientInterface $httpClient,
     protected LockBackendInterface $lock,
@@ -65,23 +76,35 @@ class DeliveryService {
    *   TRUE if more events are due now and another run should follow.
    */
   public function deliver(string $replica_id, ?int $limit = NULL): bool {
-    $replica = $this->registry->get($replica_id);
-    if (!$replica || !$replica->receivesDeliveries()) {
-      return FALSE;
-    }
     $lock = 'content_relay_origin:deliver:' . $replica_id;
     if (!$this->lock->acquire($lock, 600)) {
       // Another worker is on it, and will pick up what is due.
       return FALSE;
     }
     try {
-      $limit ??= max(1, (int) $this->settings('batch_size'));
+      // A contract waiting for acknowledgement goes first, even to a replica
+      // that is not receiving events yet: its first contract is what makes it
+      // ready.
+      $this->contracts->push($replica_id);
+      $replica = $this->registry->get($replica_id);
+      $contract = $this->contracts->getActive($replica_id);
+      if (!$replica || !$replica->receivesDeliveries() || $contract === NULL) {
+        return FALSE;
+      }
+      $now = $this->time->getCurrentTime();
+      if ($contract->isPaused() || !$contract->isWithinWindow($now)) {
+        return FALSE;
+      }
+      $limit ??= max(1, (int) ($contract->terms['effective']['batch_size'] ?? $this->settings('batch_size')));
+      if ($per_minute = $contract->maxEventsPerMinute()) {
+        $limit = min($limit, $per_minute - $this->outbox->countSentSince($replica_id, $now - 60));
+      }
       for ($sent = 0; $sent < $limit; $sent++) {
         $row = $this->outbox->nextPending($replica_id);
         if ($row === NULL || (int) $row['next_attempt'] > $this->time->getCurrentTime()) {
           return FALSE;
         }
-        if (!$this->send($row, $replica)) {
+        if (!$this->send($row, $replica, $contract)) {
           return FALSE;
         }
       }
@@ -98,10 +121,14 @@ class DeliveryService {
    * @return bool
    *   FALSE when delivery to this replica should pause.
    */
-  protected function send(array $row, Replica $replica): bool {
+  protected function send(array $row, Replica $replica, SubscriptionContract $contract): bool {
     $id = (int) $row['id'];
+    if (!$contract->allowsBundle($row['entity_type'], $row['bundle'])) {
+      $this->outbox->update($id, ['status' => EventStatus::SKIPPED, 'result_code' => 'not_in_contract']);
+      return TRUE;
+    }
     try {
-      $event = $this->eventBuilder->build($row, $replica, $this->outbox->previousSentSequence($replica->id, (int) $row['sequence']));
+      $event = $this->eventBuilder->build($row, $contract, $this->outbox->previousSentSequence($replica->id, (int) $row['sequence']));
     }
     catch (\Throwable $e) {
       // The origin cannot build what it is supposed to send. Retrying will not
@@ -167,6 +194,24 @@ class DeliveryService {
       'last_response' => mb_substr($body, 0, self::RESPONSE_LIMIT),
     ];
 
+    if ($code === 409 && $result === 'contract_mismatch') {
+      // The replica is missing the contract this event names. Send it again;
+      // the event is retried at once, rebuilt under whatever is in force.
+      $this->logger->warning('Replica @replica does not have contract version @version; sending it again.', [
+        '@replica' => $replica->id,
+        '@version' => $contract->version(),
+      ]);
+      if ($attempts >= max(1, (int) $this->settings('max_attempts'))) {
+        $this->outbox->update($id, $fields + ['status' => EventStatus::DEAD_LETTER]);
+        return TRUE;
+      }
+      $this->outbox->update($id, $fields + [
+        'status' => EventStatus::FAILED,
+        'next_attempt' => $this->time->getCurrentTime(),
+      ]);
+      $this->contracts->push($replica->id, TRUE);
+      return FALSE;
+    }
     if ($code === 200 || $code === 202 || $code === 409) {
       $status = match ($code) {
         200 => EventStatus::APPLIED,

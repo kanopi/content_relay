@@ -124,6 +124,25 @@ class Outbox {
   }
 
   /**
+   * The highest sequence ever sent to a replica, or 0.
+   */
+  public function lastSentSequence(string $replica_id): int {
+    return $this->previousSentSequence($replica_id, \PHP_INT_MAX) ?? 0;
+  }
+
+  /**
+   * How many events were first sent to a replica since a moment.
+   */
+  public function countSentSince(string $replica_id, int $since): int {
+    return (int) $this->database->select(self::TABLE, 'o')
+      ->condition('replica_id', $replica_id)
+      ->condition('first_sent', $since, '>=')
+      ->countQuery()
+      ->execute()
+      ->fetchField();
+  }
+
+  /**
    * Marks later pending creates and updates of an entity as superseded.
    *
    * Called when an event for the entity is about to be sent with its current

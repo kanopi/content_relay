@@ -1,0 +1,5 @@
+content_relay_origin.settings:
+  title: 'Content Relay origin'
+  description: 'Publish content to Content Relay replicas.'
+  route_name: content_relay_origin.settings
+  parent: system.admin_config_services

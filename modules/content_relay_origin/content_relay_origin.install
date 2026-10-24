@@ -7,8 +7,10 @@
 
 declare(strict_types=1);
 
+use Drupal\content_relay_origin\ContractManager;
 use Drupal\content_relay_origin\HashStore;
 use Drupal\content_relay_origin\Outbox;
+use Drupal\content_relay_origin\PairingCodes;
 use Drupal\content_relay_origin\ReplicaRegistry;
 
 /**
@@ -54,7 +56,20 @@ function content_relay_origin_schema(): array {
         'not null' => TRUE,
         'description' => 'JSON: key ID => {public_key, status}.',
       ],
-      'contract_version' => ['type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE, 'default' => 1],
+      'approved' => [
+        'type' => 'int',
+        'size' => 'tiny',
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => 'Whether an administrator approved the replica, when approval is required.',
+      ],
+      'contract_version' => [
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => 'The acknowledged contract version in force; 0 before the first acknowledgement.',
+      ],
       'next_sequence' => ['type' => 'int', 'size' => 'big', 'unsigned' => TRUE, 'not null' => TRUE, 'default' => 1],
       'created' => ['type' => 'int', 'size' => 'big', 'not null' => TRUE, 'default' => 0],
       'changed' => ['type' => 'int', 'size' => 'big', 'not null' => TRUE, 'default' => 0],
@@ -123,6 +138,59 @@ function content_relay_origin_schema(): array {
       'created' => ['type' => 'int', 'size' => 'big', 'not null' => TRUE],
     ],
     'primary key' => ['entity_type', 'uuid', 'revision', 'algorithm'],
+  ];
+  $schema[PairingCodes::TABLE] = [
+    'description' => 'One-time pairing codes, stored only as keyed hashes.',
+    'fields' => [
+      'id' => ['type' => 'serial', 'unsigned' => TRUE, 'not null' => TRUE],
+      'code_hash' => ['type' => 'char', 'length' => 64, 'not null' => TRUE],
+      'allowed_bundles' => [
+        'type' => 'text',
+        'not null' => FALSE,
+        'description' => 'JSON: entity type => bundles the replica may receive. NULL for all published bundles.',
+      ],
+      'created_by' => ['type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE, 'default' => 0],
+      'created' => ['type' => 'int', 'size' => 'big', 'not null' => TRUE],
+      'expires' => ['type' => 'int', 'size' => 'big', 'not null' => TRUE],
+      'used' => ['type' => 'int', 'size' => 'big', 'not null' => FALSE],
+      'used_by' => [
+        'type' => 'varchar_ascii',
+        'length' => 64,
+        'not null' => FALSE,
+        'description' => 'The replica that used it.',
+      ],
+    ],
+    'primary key' => ['id'],
+    'unique keys' => ['code_hash' => ['code_hash']],
+    'indexes' => ['expires' => ['expires']],
+  ];
+
+  $schema[ContractManager::TABLE] = [
+    'description' => 'Every version of every replica\'s subscription contract.',
+    'fields' => [
+      'replica_id' => ['type' => 'varchar_ascii', 'length' => 64, 'not null' => TRUE],
+      'version' => ['type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE],
+      'terms' => ['type' => 'blob', 'size' => 'big', 'not null' => TRUE, 'description' => 'The contract, as JSON.'],
+      'status' => [
+        'type' => 'varchar_ascii',
+        'length' => 16,
+        'not null' => TRUE,
+        'description' => 'pending, active or superseded.',
+      ],
+      'effective_from_sequence' => ['type' => 'int', 'size' => 'big', 'unsigned' => TRUE, 'not null' => TRUE],
+      'created_by' => ['type' => 'int', 'unsigned' => TRUE, 'not null' => FALSE],
+      'initiated_by' => [
+        'type' => 'varchar_ascii',
+        'length' => 16,
+        'not null' => TRUE,
+        'description' => 'origin or replica.',
+      ],
+      'created' => ['type' => 'int', 'size' => 'big', 'not null' => TRUE],
+      'acknowledged' => ['type' => 'int', 'size' => 'big', 'not null' => FALSE],
+      'last_push' => ['type' => 'int', 'size' => 'big', 'not null' => FALSE],
+    ],
+    'primary key' => ['replica_id', 'version'],
+    'indexes' => ['status' => ['replica_id', 'status']],
   ];
   return $schema;
 }

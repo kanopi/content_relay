@@ -31,6 +31,8 @@ final class EventStatus {
   public const SUPERSEDED = 'superseded';
   // Replaced by a replay, which has its own row.
   public const REPLAYED = 'replayed';
+  // Not sent because the contract in force does not include its bundle.
+  public const SKIPPED = 'skipped';
 
   /**
    * States waiting to be sent.
@@ -40,7 +42,7 @@ final class EventStatus {
   /**
    * Final states that may be pruned after the retention period.
    */
-  public const PRUNABLE = [self::APPLIED, self::STALE, self::SUPERSEDED, self::REPLAYED];
+  public const PRUNABLE = [self::APPLIED, self::STALE, self::SUPERSEDED, self::REPLAYED, self::SKIPPED];
 
   /**
    * States a replay can start from.

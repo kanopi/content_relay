@@ -36,3 +36,26 @@ content_relay_origin.settings:
     retention_days:
       type: integer
       label: 'Days to keep acknowledged events'
+    pairing:
+      type: mapping
+      label: 'Pairing'
+      mapping:
+        code_length:
+          type: integer
+          label: 'Pairing code length'
+          constraints:
+            Range:
+              min: 8
+              max: 64
+        code_lifetime:
+          type: integer
+          label: 'Pairing code lifetime, in seconds'
+        flood_limit:
+          type: integer
+          label: 'Failed pairing attempts allowed per IP address'
+        flood_window:
+          type: integer
+          label: 'Window for failed pairing attempts, in seconds'
+        require_approval:
+          type: boolean
+          label: 'Hold events until an administrator approves a new replica'

@@ -1,0 +1,5 @@
+content_relay_replica.subscription:
+  title: 'Content Relay replica'
+  description: 'Receive content from a Content Relay origin.'
+  route_name: content_relay_replica.subscription
+  parent: system.admin_config_services

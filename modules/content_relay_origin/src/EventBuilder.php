@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Drupal\content_relay_origin;
 
 use Drupal\Component\Datetime\TimeInterface;
+use Drupal\content_relay\Contract\SubscriptionContract;
 use Drupal\content_relay\Event\Operation;
 use Drupal\content_relay\Event\SyncEvent;
 use Drupal\content_relay\Hash\RevisionHasher;
@@ -38,12 +39,12 @@ class EventBuilder {
    *
    * @param array $row
    *   The outbox row.
-   * @param \Drupal\content_relay_origin\Replica $replica
-   *   The recipient.
+   * @param \Drupal\content_relay\Contract\SubscriptionContract $contract
+   *   The contract it is sent under, which decides the languages included.
    * @param int|null $previous_sequence
    *   The sequence sent to this replica before this one.
    */
-  public function build(array $row, Replica $replica, ?int $previous_sequence): ?SyncEvent {
+  public function build(array $row, SubscriptionContract $contract, ?int $previous_sequence): ?SyncEvent {
     $operation = Operation::from($row['operation']);
     /** @var \Drupal\Core\Entity\EntityInterface|null $entity */
     $entity = $this->entityRepository->loadEntityByUuid($row['entity_type'], $row['entity_uuid']);
@@ -67,7 +68,7 @@ class EventBuilder {
         langcodes: [],
         hashes: NULL,
         snapshot: NULL,
-        contractVersion: $replica->contractVersion,
+        contractVersion: $contract->version(),
         created: $this->time->getCurrentTime(),
         previousSequence: $previous_sequence,
       );
@@ -76,7 +77,7 @@ class EventBuilder {
     if ($entity === NULL) {
       return NULL;
     }
-    $context = new NormalizationContext();
+    $context = new NormalizationContext($contract->languagesFor($entity->getEntityTypeId(), $entity->bundle()));
     $snapshot = $this->serializer->normalize($entity, $context);
     $hashes = $this->hasher->hash($snapshot);
     $revisionable = $entity->getEntityType()->isRevisionable();
@@ -96,7 +97,7 @@ class EventBuilder {
       langcodes: array_map('strval', array_keys($snapshot['translations'])),
       hashes: $hashes,
       snapshot: $snapshot,
-      contractVersion: $replica->contractVersion,
+      contractVersion: $contract->version(),
       created: $this->time->getCurrentTime(),
       dependencies: array_values($context->references),
       previousSequence: $previous_sequence,

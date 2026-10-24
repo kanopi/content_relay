@@ -11,8 +11,8 @@ final class Replica {
 
   // Receives events.
   public const ACTIVE = 'active';
-  // Paired, waiting for an administrator's approval. Events are queued, not
-  // sent.
+  // Paired, waiting for its first contract to be acknowledged or for an
+  // administrator's approval. Events are queued, not sent.
   public const PENDING = 'pending';
   // Temporarily stopped by the origin. Events are queued, not sent.
   public const SUSPENDED = 'suspended';
@@ -35,9 +35,11 @@ final class Replica {
    * @param array<string, array{public_key: string, status: string}> $encryptionKeys
    *   The replica's X25519 public keys (base64), by key ID.
    * @param int $contractVersion
-   *   The subscription contract version in force.
+   *   The acknowledged contract version in force, 0 before the first.
    * @param int|null $lastSuccess
    *   When a delivery last succeeded.
+   * @param bool $approved
+   *   Whether an administrator approved it, where approval is required.
    */
   public function __construct(
     public readonly string $id,
@@ -46,8 +48,9 @@ final class Replica {
     public readonly string $status,
     public readonly array $signingKeys,
     public readonly array $encryptionKeys = [],
-    public readonly int $contractVersion = 1,
+    public readonly int $contractVersion = 0,
     public readonly ?int $lastSuccess = NULL,
+    public readonly bool $approved = FALSE,
   ) {
     if (!str_starts_with(strtolower($endpoint), 'https://')) {
       throw new \InvalidArgumentException('Replica endpoints must use HTTPS.');
@@ -61,7 +64,7 @@ final class Replica {
    * Whether events are delivered to this replica now.
    */
   public function receivesDeliveries(): bool {
-    return $this->status === self::ACTIVE;
+    return $this->status === self::ACTIVE && $this->contractVersion > 0;
   }
 
   /**

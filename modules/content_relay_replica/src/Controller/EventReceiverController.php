@@ -11,6 +11,8 @@ use Drupal\content_relay\Exception\InvalidEventException;
 use Drupal\content_relay_replica\Apply\SyncApplier;
 use Drupal\content_relay_replica\OriginPeer;
 use Drupal\content_relay_replica\StreamTracker;
+use Drupal\content_relay_replica\SubscriptionException;
+use Drupal\content_relay_replica\SubscriptionManager;
 use Drupal\Core\DependencyInjection\ContainerInjectionInterface;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\DependencyInjection\ContainerInterface;
@@ -18,7 +20,7 @@ use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
- * Receives events from the origin.
+ * Receives events and contracts from the origin.
  *
  * Refusals before an event is identified (malformed, unsigned, wrong sender)
  * are 400 or 403 and permanent: the origin dead-letters them. Everything
@@ -31,6 +33,7 @@ final class EventReceiverController implements ContainerInjectionInterface {
     private readonly OriginPeer $origin,
     private readonly StreamTracker $stream,
     private readonly SyncApplier $applier,
+    private readonly SubscriptionManager $subscription,
     private readonly LoggerInterface $logger,
   ) {}
 
@@ -43,6 +46,7 @@ final class EventReceiverController implements ContainerInjectionInterface {
       $container->get('content_relay_replica.origin'),
       $container->get('content_relay_replica.stream'),
       $container->get('content_relay_replica.applier'),
+      $container->get('content_relay_replica.subscription'),
       $container->get('logger.channel.content_relay_replica'),
     );
   }
@@ -68,6 +72,17 @@ final class EventReceiverController implements ContainerInjectionInterface {
     }
     if ($message->sender !== $this->origin->getSiteId()) {
       return $this->refuse(403, 'unknown_sender', 'This replica does not receive from that site.');
+    }
+    if ($message->type === 'contract') {
+      try {
+        return new JsonResponse([
+          'result' => 'acknowledged',
+          'ack' => $this->subscription->receivePushed($message)->toArray(),
+        ]);
+      }
+      catch (SubscriptionException $e) {
+        return $this->refuse(400, 'invalid_contract', $e->getMessage());
+      }
     }
     if ($message->type !== 'event') {
       return $this->refuse(400, 'unsupported_type', sprintf('This endpoint does not accept "%s" messages.', $message->type));

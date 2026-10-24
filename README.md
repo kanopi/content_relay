@@ -14,8 +14,8 @@ or refine, the original specification.
 | Module | Role | Status |
 | --- | --- | --- |
 | `content_relay` | Shared base: event schema, entity serialization, hashing, signing, keys | Phase 1 |
-| `content_relay_origin` | Publishes changes to replicas | Phase 2: hooks, event log, delivery, hash store |
-| `content_relay_replica` | Receives and applies changes | Phase 2: endpoint, transactional apply, failures |
+| `content_relay_origin` | Publishes changes to replicas | Phases 2–3: event log, delivery, hash store, pairing, contracts |
+| `content_relay_replica` | Receives and applies changes | Phases 2–3: endpoint, transactional apply, failures, pairing, contracts |
 
 ## Requirements
 
@@ -124,7 +124,9 @@ due and prunes acknowledged rows after `retention_days`.
 `content_relay_origin.replay` replays a dead-lettered or failed row as a new
 event decided from the entity as it is now.
 
-Replicas are stored in `content_relay_replica` (pairing arrives in phase 3).
+Replicas are stored in `content_relay_replica`, and managed under
+**Configuration › Web services › Content Relay origin › Replicas**: approve,
+suspend, resume or revoke each one, and open its contract.
 
 ## Replica
 
@@ -159,8 +161,58 @@ A newer event that applies supersedes older failures. Subscribers to
 `content_relay.apply_failed` can send alerts, and the status report shows a
 warning while failures are open.
 
-The paired origin is stored in state (`content_relay_replica.origin`); pairing
-arrives in phase 3.
+The paired origin is stored in state (`content_relay_replica.origin`).
+
+## Pairing
+
+The replica asks, the origin decides.
+
+1. On the origin, choose what to publish under **Content Relay origin ›
+   Settings**, then generate a code under **Pairing code**, optionally limited
+   to some bundles. Codes are Crockford Base32 (no I, L, O or U), shown in
+   groups of four, single-use, valid for 30 minutes by default and stored only
+   as a keyed hash. Length (8–64, default 12), lifetime, the flood limit on
+   failed attempts (5 per IP per hour) and manual approval are settings.
+2. On the replica, create a Content Relay signing key (see Keys), then enter
+   the origin's `https://` address, the code and the bundles wanted under
+   **Content Relay replica › Pairing**. Input ignores dashes, spaces and case.
+3. The replica sends its public keys, its endpoint and the requested terms,
+   signed with the key it offers. The origin checks the code, registers the
+   replica, proposes contract version 1 and answers with its public keys and
+   that contract, signed.
+4. The replica stores and acknowledges the contract. Only then, and after an
+   administrator's approval where that is required, does the origin send
+   events.
+
+Both sites refuse anything that is not HTTPS.
+
+## Subscription contract
+
+The contract says what is sent, how and from when. Each side keeps every
+version; each event names the version it was built under, and the replica
+judges it by that version, accepting the current and the previous one.
+Anything else is answered `409 contract_mismatch`, and the origin sends its
+contract again and retries.
+
+- **Replica changes** (bundles, languages, processing mode, rate limit, pause)
+  are made under **Content Relay replica › Contract**. The replica sends a
+  signed `subscription_update`; the origin answers with the new version,
+  which the replica stores and acknowledges. If the origin cannot be reached,
+  the change is kept and retried by cron, and the old version stays in force.
+- **Origin changes** (which bundles a replica may receive) are made on the
+  replica's contract page on the origin. The new version is pushed to the
+  replica, which acknowledges it in its response. Unacknowledged versions are
+  pushed again by cron. Items of a withdrawn bundle are kept on the replica as
+  "detached by origin", never deleted.
+- The **effective** terms are what the replica asked for, limited by what the
+  origin allows; everything refused is listed with a reason.
+- Delivery follows the contract in force: nothing while paused or outside the
+  delivery windows, at most the rate limit per minute, and events for bundles
+  outside the contract are skipped.
+
+Both sites show the contract in plain language ("You receive Article and
+Page in all languages, immediately, unencrypted."), with its version, since
+when it applies and a history of every version with what changed.
 
 ## Development
 

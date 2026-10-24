@@ -38,6 +38,17 @@ class SyncScope {
   }
 
   /**
+   * Every bundle the origin publishes, by entity type.
+   *
+   * @return array<string, string[]>
+   *   Bundles.
+   */
+  public function getPublishedBundles(): array {
+    $bundles = $this->configFactory->get('content_relay_origin.settings')->get('bundles') ?? [];
+    return array_filter(array_map(fn ($list) => array_values((array) $list), $bundles));
+  }
+
+  /**
    * Whether a bundle is configured for sync.
    */
   public function isBundleSynced(string $entity_type_id, string $bundle): bool {

@@ -45,6 +45,8 @@ services:
       - '@content_relay_origin.hash_store'
       - '@content_relay_origin.outbox'
       - '@content_relay_origin.delivery_scheduler'
+      - '@content_relay_origin.replica_registry'
+      - '@content_relay_origin.contract_manager'
 
   content_relay_origin.event_builder:
     class: Drupal\content_relay_origin\EventBuilder
@@ -62,6 +64,7 @@ services:
       - '@content_relay_origin.replica_registry'
       - '@content_relay_origin.outbox'
       - '@content_relay_origin.event_builder'
+      - '@content_relay_origin.contract_manager'
       - '@content_relay.message_signer'
       - '@http_client'
       - '@lock'
@@ -77,4 +80,41 @@ services:
       - '@content_relay_origin.delivery_scheduler'
       - '@entity.repository'
       - '@current_user'
+      - '@logger.channel.content_relay_origin'
+
+  content_relay_origin.pairing_codes:
+    class: Drupal\content_relay_origin\PairingCodes
+    arguments: ['@database', '@config.factory', '@datetime.time']
+
+  content_relay_origin.contract_negotiator:
+    class: Drupal\content_relay_origin\ContractNegotiator
+    arguments: ['@content_relay_origin.sync_scope']
+
+  content_relay_origin.contract_manager:
+    class: Drupal\content_relay_origin\ContractManager
+    arguments:
+      - '@database'
+      - '@content_relay_origin.replica_registry'
+      - '@content_relay_origin.outbox'
+      - '@content_relay_origin.contract_negotiator'
+      - '@content_relay.message_signer'
+      - '@content_relay.message_verifier'
+      - '@content_relay.site_identity'
+      - '@content_relay.key_store'
+      - '@http_client'
+      - '@config.factory'
+      - '@datetime.time'
+      - '@logger.channel.content_relay_origin'
+
+  content_relay_origin.pairing:
+    class: Drupal\content_relay_origin\PairingService
+    arguments:
+      - '@content_relay_origin.pairing_codes'
+      - '@content_relay_origin.replica_registry'
+      - '@content_relay_origin.contract_manager'
+      - '@content_relay.key_store'
+      - '@content_relay.site_identity'
+      - '@flood'
+      - '@config.factory'
+      - '@datetime.time'
       - '@logger.channel.content_relay_origin'

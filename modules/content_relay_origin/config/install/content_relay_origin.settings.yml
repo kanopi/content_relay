@@ -7,3 +7,9 @@ delivery:
   timeout: 30
   connect_timeout: 10
 retention_days: 60
+pairing:
+  code_length: 12
+  code_lifetime: 1800
+  flood_limit: 5
+  flood_window: 3600
+  require_approval: false

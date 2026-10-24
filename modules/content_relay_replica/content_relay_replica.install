@@ -7,6 +7,7 @@
 
 declare(strict_types=1);
 
+use Drupal\content_relay_replica\ContractStore;
 use Drupal\content_relay_replica\FailedEventStore;
 use Drupal\content_relay_replica\ProcessedEvents;
 use Drupal\content_relay_replica\StreamTracker;
@@ -44,6 +45,7 @@ function content_relay_replica_schema(): array {
     'fields' => [
       'entity_type' => ['type' => 'varchar_ascii', 'length' => 32, 'not null' => TRUE],
       'uuid' => ['type' => 'varchar_ascii', 'length' => 128, 'not null' => TRUE],
+      'bundle' => ['type' => 'varchar_ascii', 'length' => 128, 'not null' => TRUE, 'default' => ''],
       'source_site' => ['type' => 'varchar_ascii', 'length' => 64, 'not null' => TRUE],
       'source_revision' => ['type' => 'int', 'size' => 'big', 'unsigned' => TRUE, 'not null' => TRUE],
       'source_changed' => ['type' => 'int', 'size' => 'big', 'not null' => FALSE],
@@ -72,6 +74,7 @@ function content_relay_replica_schema(): array {
     'primary key' => ['entity_type', 'uuid'],
     'indexes' => [
       'status' => ['status'],
+      'bundle' => ['entity_type', 'bundle'],
       'last_synced' => ['last_synced'],
     ],
   ];
@@ -166,6 +169,21 @@ function content_relay_replica_schema(): array {
     'indexes' => [
       'dependency' => ['entity_type', 'uuid'],
     ],
+  ];
+  $schema[ContractStore::TABLE] = [
+    'description' => 'Every version of this replica\'s subscription contract, as received from the origin.',
+    'fields' => [
+      'version' => ['type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE],
+      'terms' => ['type' => 'blob', 'size' => 'big', 'not null' => TRUE, 'description' => 'The contract, as JSON.'],
+      'received' => ['type' => 'int', 'size' => 'big', 'not null' => TRUE],
+      'proposed_by' => [
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => FALSE,
+        'description' => 'The local user whose proposal produced it, if any.',
+      ],
+    ],
+    'primary key' => ['version'],
   ];
   return $schema;
 }

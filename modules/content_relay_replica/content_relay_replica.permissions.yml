@@ -1,0 +1,8 @@
+administer content relay replica:
+  title: 'Administer Content Relay replica'
+  description: 'Pair this site with an origin and change replica settings.'
+  restrict access: true
+change content relay subscription:
+  title: 'Change the Content Relay subscription'
+  description: 'Choose which content and languages this site receives, and pause delivery.'
+  restrict access: true

@@ -2,6 +2,9 @@ content_relay_replica.settings:
   type: config_object
   label: 'Content Relay Replica settings'
   mapping:
+    webhook_url:
+      type: string
+      label: 'Endpoint URL to give the origin, when the site cannot work it out (for example behind a proxy). Empty to use this site''s own address.'
     failures:
       type: mapping
       label: 'Save failures'

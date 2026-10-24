@@ -23,7 +23,25 @@ class EntityChangeRecorder {
     protected HashStore $hashStore,
     protected Outbox $outbox,
     protected DeliveryScheduler $scheduler,
+    protected ReplicaRegistry $registry,
+    protected ContractManager $contracts,
   ) {}
+
+  /**
+   * Replicas whose contract, in force or pending, covers a bundle.
+   *
+   * @return string[]
+   *   Replica IDs.
+   */
+  protected function recipients(string $entity_type_id, string $bundle): array {
+    $ids = [];
+    foreach ($this->registry->getAll() as $replica) {
+      if ($replica->receivesEvents() && $this->contracts->coversBundle($replica->id, $entity_type_id, $bundle)) {
+        $ids[] = $replica->id;
+      }
+    }
+    return $ids;
+  }
 
   /**
    * Records an insert or update.
@@ -34,7 +52,7 @@ class EntityChangeRecorder {
     }
     assert($entity instanceof ContentEntityInterface);
     ['revision' => $revision] = $this->hashStore->record($entity);
-    $rows = $this->outbox->enqueue($is_new ? Operation::Create : Operation::Update, $entity->getEntityTypeId(), $entity->bundle(), $entity->uuid(), $revision);
+    $rows = $this->outbox->enqueue($is_new ? Operation::Create : Operation::Update, $entity->getEntityTypeId(), $entity->bundle(), $entity->uuid(), $revision, $this->recipients($entity->getEntityTypeId(), $entity->bundle()));
     $this->scheduler->schedule(array_keys($rows));
   }
 
@@ -47,7 +65,7 @@ class EntityChangeRecorder {
     }
     $latest = $this->hashStore->latest($entity->getEntityTypeId(), (string) $entity->uuid());
     $revision = $entity instanceof ContentEntityInterface && $entity->getEntityType()->isRevisionable() ? (int) $entity->getRevisionId() : ($latest['revision'] ?? 0);
-    $rows = $this->outbox->enqueue(Operation::Delete, $entity->getEntityTypeId(), $entity->bundle(), (string) $entity->uuid(), $revision);
+    $rows = $this->outbox->enqueue(Operation::Delete, $entity->getEntityTypeId(), $entity->bundle(), (string) $entity->uuid(), $revision, $this->recipients($entity->getEntityTypeId(), $entity->bundle()));
     $this->hashStore->forget($entity->getEntityTypeId(), (string) $entity->uuid());
     $this->scheduler->schedule(array_keys($rows));
   }

@@ -11,3 +11,19 @@ content_relay_replica.receive_events:
     _access: 'TRUE'
   options:
     no_cache: TRUE
+
+content_relay_replica.subscription:
+  path: '/admin/config/services/content-relay/replica'
+  defaults:
+    _form: '\Drupal\content_relay_replica\Form\SubscriptionForm'
+    _title: 'Content Relay replica'
+  requirements:
+    _permission: 'change content relay subscription'
+
+content_relay_replica.pair:
+  path: '/admin/config/services/content-relay/replica/pair'
+  defaults:
+    _form: '\Drupal\content_relay_replica\Form\PairForm'
+    _title: 'Pair with an origin'
+  requirements:
+    _permission: 'administer content relay replica'

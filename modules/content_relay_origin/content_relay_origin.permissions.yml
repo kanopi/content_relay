@@ -1,0 +1,12 @@
+administer content relay origin:
+  title: 'Administer Content Relay origin settings'
+  description: 'Choose which bundles are published and how delivery and pairing behave.'
+  restrict access: true
+administer content relay replicas:
+  title: 'Administer Content Relay replicas'
+  description: 'Approve, suspend, resume and revoke replicas, and change what each may receive.'
+  restrict access: true
+generate content relay pairing codes:
+  title: 'Generate Content Relay pairing codes'
+  description: 'Anyone with a code can pair a replica that receives published content.'
+  restrict access: true

@@ -1,0 +1,14 @@
+content_relay_origin.settings:
+  title: 'Settings'
+  route_name: content_relay_origin.settings
+  base_route: content_relay_origin.settings
+content_relay_origin.replicas:
+  title: 'Replicas'
+  route_name: content_relay_origin.replicas
+  base_route: content_relay_origin.settings
+  weight: 10
+content_relay_origin.pairing_code:
+  title: 'Pairing code'
+  route_name: content_relay_origin.pairing_code
+  base_route: content_relay_origin.settings
+  weight: 20

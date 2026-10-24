@@ -14,6 +14,7 @@ use Drupal\content_relay\Hash\RevisionHasher;
 use Drupal\content_relay\Serialization\DenormalizationContext;
 use Drupal\content_relay\Serialization\EntitySerializer;
 use Drupal\content_relay\Serialization\NormalizationContext;
+use Drupal\content_relay_replica\ContractStore;
 use Drupal\content_relay_replica\FailedEventStore;
 use Drupal\content_relay_replica\OriginPeer;
 use Drupal\content_relay_replica\ProcessedEvents;
@@ -66,6 +67,7 @@ class SyncApplier {
     protected FailedEventStore $failures,
     protected FailureClassifier $classifier,
     protected OriginPeer $origin,
+    protected ContractStore $contracts,
     protected Connection $database,
     protected LockBackendInterface $lock,
     protected EventDispatcherInterface $eventDispatcher,
@@ -91,6 +93,16 @@ class SyncApplier {
     }
     if ($event->snapshot !== NULL && ($event->hashes === NULL || !$this->hasher->matches($event->snapshot, $event->hashes))) {
       return new ApplyResult(400, ApplyResult::REJECTED, 'hash_mismatch', 'The snapshot does not match its hash.');
+    }
+    // Contract before anything else: an event built under terms this replica
+    // does not have cannot be judged, and is not recorded as handled, so the
+    // origin's resend after sending the contract is applied normally.
+    $contract = $this->contracts->accepts($event->contractVersion);
+    if ($contract === NULL || !$contract->allowsBundle($event->entityType, $event->bundle)) {
+      $current = $this->contracts->getCurrent()?->version();
+      return new ApplyResult(409, ApplyResult::CONTRACT_MISMATCH, NULL, $contract === NULL
+        ? sprintf('This replica does not accept contract version %d; it has version %s.', $event->contractVersion, $current ?? 'none')
+        : sprintf('Contract version %d does not include %s %s.', $event->contractVersion, $event->entityType, $event->bundle), ['current_version' => $current]);
     }
     if (!in_array($event->operation, [Operation::Create, Operation::Update, Operation::Delete], TRUE)) {
       return new ApplyResult(400, ApplyResult::REJECTED, 'unsupported_operation', sprintf('This replica does not handle "%s" events yet.', $event->operation->value));
@@ -213,6 +225,7 @@ class SyncApplier {
         $error = 'After saving, the local copy does not hash the same as the origin\'s.';
       }
       $this->syncState->save($event->entityType, $event->entityUuid, [
+        'bundle' => $event->bundle,
         'source_site' => $source_site,
         'source_revision' => $event->sourceRevision,
         'source_changed' => $event->sourceChanged,

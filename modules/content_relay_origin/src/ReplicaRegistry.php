@@ -31,7 +31,10 @@ class ReplicaRegistry {
   ) {}
 
   /**
-   * Adds or replaces a replica. The sequence counter is kept on replace.
+   * Adds or replaces a replica.
+   *
+   * The sequence counter and the contract version are kept on replace; they
+   * change only through takeSequence() and setContractVersion().
    */
   public function save(Replica $replica): void {
     $now = $this->time->getCurrentTime();
@@ -43,7 +46,7 @@ class ReplicaRegistry {
         'status' => $replica->status,
         'signing_keys' => json_encode($replica->signingKeys, \JSON_THROW_ON_ERROR),
         'encryption_keys' => json_encode($replica->encryptionKeys, \JSON_THROW_ON_ERROR),
-        'contract_version' => $replica->contractVersion,
+        'approved' => (int) $replica->approved,
         'changed' => $now,
       ])
       ->insertFields([
@@ -53,6 +56,7 @@ class ReplicaRegistry {
         'status' => $replica->status,
         'signing_keys' => json_encode($replica->signingKeys, \JSON_THROW_ON_ERROR),
         'encryption_keys' => json_encode($replica->encryptionKeys, \JSON_THROW_ON_ERROR),
+        'approved' => (int) $replica->approved,
         'contract_version' => $replica->contractVersion,
         'next_sequence' => 1,
         'created' => $now,
@@ -112,6 +116,42 @@ class ReplicaRegistry {
   }
 
   /**
+   * The sequence number the next event for a replica will get.
+   */
+  public function peekSequence(string $id): int {
+    return (int) $this->database->select(self::TABLE, 'r')->fields('r', ['next_sequence'])->condition('id', $id)->execute()->fetchField();
+  }
+
+  /**
+   * Sets a replica's status.
+   */
+  public function setStatus(string $id, string $status): void {
+    $this->update($id, ['status' => $status]);
+  }
+
+  /**
+   * Records an administrator's approval.
+   */
+  public function setApproved(string $id, bool $approved): void {
+    $this->update($id, ['approved' => (int) $approved]);
+  }
+
+  /**
+   * Records the acknowledged contract version in force.
+   */
+  public function setContractVersion(string $id, int $version): void {
+    $this->update($id, ['contract_version' => $version]);
+  }
+
+  /**
+   * Updates columns of a replica.
+   */
+  protected function update(string $id, array $fields): void {
+    $this->database->update(self::TABLE)->fields($fields + ['changed' => $this->time->getCurrentTime()])->condition('id', $id)->execute();
+    unset($this->cache[$id]);
+  }
+
+  /**
    * Records a successful delivery.
    */
   public function recordSuccess(string $id): void {
@@ -132,6 +172,7 @@ class ReplicaRegistry {
       json_decode($row['encryption_keys'], TRUE) ?: [],
       (int) $row['contract_version'],
       $row['last_success'] === NULL ? NULL : (int) $row['last_success'],
+      (bool) $row['approved'],
     );
   }
 

@@ -44,9 +44,30 @@ services:
       - '@content_relay_replica.failed_events'
       - '@content_relay_replica.failure_classifier'
       - '@content_relay_replica.origin'
+      - '@content_relay_replica.contracts'
       - '@database'
       - '@lock'
       - '@event_dispatcher'
+      - '@config.factory'
+      - '@datetime.time'
+      - '@logger.channel.content_relay_replica'
+
+  content_relay_replica.contracts:
+    class: Drupal\content_relay_replica\ContractStore
+    arguments: ['@database', '@datetime.time']
+
+  content_relay_replica.subscription:
+    class: Drupal\content_relay_replica\SubscriptionManager
+    arguments:
+      - '@content_relay_replica.origin'
+      - '@content_relay_replica.contracts'
+      - '@content_relay.key_store'
+      - '@content_relay.site_identity'
+      - '@content_relay.message_signer'
+      - '@content_relay.message_verifier'
+      - '@http_client'
+      - '@state'
+      - '@database'
       - '@config.factory'
       - '@datetime.time'
       - '@logger.channel.content_relay_replica'

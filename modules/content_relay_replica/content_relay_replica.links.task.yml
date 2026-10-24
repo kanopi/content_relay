@@ -1,0 +1,9 @@
+content_relay_replica.subscription:
+  title: 'Contract'
+  route_name: content_relay_replica.subscription
+  base_route: content_relay_replica.subscription
+content_relay_replica.pair:
+  title: 'Pairing'
+  route_name: content_relay_replica.pair
+  base_route: content_relay_replica.subscription
+  weight: 10

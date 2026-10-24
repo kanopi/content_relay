@@ -348,6 +348,40 @@ final class ApplyTest extends ReplicaTestBase {
   }
 
   /**
+   * Events are judged by the contract they name.
+   */
+  public function testContractVersions(): void {
+    $snapshot = $this->originArticle();
+    $unknown = $this->event($snapshot, Operation::Create, 1, ['contract_version' => 5]);
+    $result = $this->apply($unknown);
+    $this->assertSame([409, ApplyResult::CONTRACT_MISMATCH, 1], [
+      $result->httpStatus,
+      $result->result,
+      $result->details['current_version'],
+    ]);
+    $this->assertNull($this->container->get('content_relay_replica.processed_events')->get($unknown->eventId), 'A mismatch is not recorded, so a resend is applied.');
+
+    // Once the replica has that version, the very same event applies.
+    $contracts = $this->container->get('content_relay_replica.contracts');
+    $contracts->save($this->contract(5, ['node' => ['article']]));
+    $this->assertSame(ApplyResult::APPLIED, $this->apply($unknown)->result);
+
+    // The previous version is still accepted; older ones are not.
+    $contracts->save($this->contract(6, ['node' => ['article']]));
+    $this->assertSame(ApplyResult::APPLIED, $this->apply($this->event($this->retitle($snapshot, 'Under 5'), Operation::Update, 2, ['contract_version' => 5]))->result);
+    $this->assertSame(ApplyResult::CONTRACT_MISMATCH, $this->apply($this->event($snapshot, Operation::Update, 3, ['contract_version' => 1]))->result);
+
+    // A bundle the contract does not include is a mismatch too.
+    $term = $this->event(NULL, Operation::Delete, 1, [
+      'contract_version' => 6,
+      'entity_type' => 'taxonomy_term',
+      'bundle' => 'tags',
+      'entity_uuid' => $snapshot['uuid'],
+    ]);
+    $this->assertSame(ApplyResult::CONTRACT_MISMATCH, $this->apply($term)->result);
+  }
+
+  /**
    * Runs the retry queue until it is empty.
    */
   private function runRetryQueue(): void {

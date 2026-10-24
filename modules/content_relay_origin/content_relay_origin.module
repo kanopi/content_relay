@@ -34,6 +34,8 @@ function content_relay_origin_entity_delete(EntityInterface $entity): void {
  * Implements hook_cron().
  */
 function content_relay_origin_cron(): void {
+  \Drupal::service('content_relay_origin.contract_manager')->pushPending();
+  \Drupal::service('content_relay_origin.pairing_codes')->prune();
   \Drupal::service('content_relay_origin.delivery_scheduler')->scheduleDue();
   \Drupal::service('content_relay_origin.outbox')->prune();
 }
