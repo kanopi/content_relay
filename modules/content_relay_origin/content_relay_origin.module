@@ -1,0 +1,39 @@
+<?php
+
+/**
+ * @file
+ * Hook implementations for Content Relay Origin.
+ */
+
+declare(strict_types=1);
+
+use Drupal\Core\Entity\EntityInterface;
+
+/**
+ * Implements hook_entity_insert().
+ */
+function content_relay_origin_entity_insert(EntityInterface $entity): void {
+  \Drupal::service('content_relay_origin.change_recorder')->onSave($entity, TRUE);
+}
+
+/**
+ * Implements hook_entity_update().
+ */
+function content_relay_origin_entity_update(EntityInterface $entity): void {
+  \Drupal::service('content_relay_origin.change_recorder')->onSave($entity, FALSE);
+}
+
+/**
+ * Implements hook_entity_delete().
+ */
+function content_relay_origin_entity_delete(EntityInterface $entity): void {
+  \Drupal::service('content_relay_origin.change_recorder')->onDelete($entity);
+}
+
+/**
+ * Implements hook_cron().
+ */
+function content_relay_origin_cron(): void {
+  \Drupal::service('content_relay_origin.delivery_scheduler')->scheduleDue();
+  \Drupal::service('content_relay_origin.outbox')->prune();
+}

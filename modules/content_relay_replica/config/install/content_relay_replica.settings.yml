@@ -1,0 +1,5 @@
+failures:
+  transient_retry_limit: 5
+  retry_base: 60
+  retry_max: 3600
+processed_retention_days: 60

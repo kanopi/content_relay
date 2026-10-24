@@ -82,3 +82,58 @@ same key, such as the JWTs in phase 3.
 Supported because it costs little: hooks are thin procedural wrappers that
 delegate to services, and plugins use PHP attributes, both of which 10.3 has.
 Tests carry annotation and attribute forms so PHPUnit 9 and 11 both read them.
+
+## 11. Snapshots are built when an event is sent, not when it is recorded
+
+The origin's event log row records that an entity changed, not the change.
+The snapshot is built at delivery from the entity as it is then. This keeps
+saves cheap (no serialization per replica, no payload storage), makes every
+retry and replay send the current state as the specification requires for
+replays, and lets several updates queued for one entity go out as one event;
+the others are marked `superseded`.
+
+The hash is still computed at save time for the hash store, as specified.
+
+## 12. Gaps are detected through `previous_sequence`, not consecutive numbers
+
+Because superseded rows are never sent, a replica may legitimately see
+sequence 5 followed by 8. Each event therefore carries `previous_sequence`,
+the sequence of the last event actually sent to that replica. A gap is an
+event whose predecessor the replica never received. This field was added to
+the event schema before any release, so it is still version 1.
+
+## 13. Delivery to a replica is strictly ordered
+
+The oldest pending event for a replica blocks the ones behind it while it
+waits for a retry. A replica that is down receives nothing until it recovers,
+then everything in order. One undeliverable event delays a replica by at most
+its retry schedule before it is dead-lettered and the stream moves on.
+
+## 14. Responses the specification leaves open
+
+- **Refused messages** (bad signature, unknown key or sender, replay, wrong
+  recipient, stale timestamp) are answered 403; malformed ones 400. Both are
+  permanent for the origin, which dead-letters them.
+- **A UUID that matches replica-owned content** is a permanent apply failure
+  (422 `apply_failed`, code `uuid_collision`). It is recorded in the
+  replica's failed events so the replica's administrators see it, rather than
+  only logged.
+- **Transient failures and missing dependencies** are answered 202: the
+  replica has the event and will apply it itself. The origin learns the
+  outcome through the status endpoint (phase 8).
+- **Responses are not signed.** They travel over HTTPS in answer to a signed
+  request and change only the origin's bookkeeping. Signing them can be added
+  if the status endpoint needs it.
+
+## 15. Peers are stored outside configuration
+
+The origin's replica registry is a table and the replica's origin is in
+state. Both hold public keys and addresses for one environment's pairing; a
+config import from another environment must not change whom a site trusts.
+
+## 16. Exception summaries name the root cause class only
+
+Entity storage wraps every exception in `EntityStorageException`. The summary
+sent to the origin names the innermost exception's class (for example
+`RuntimeException`) and nothing else; its message, which can contain paths or
+values, stays in the replica's failed events table.

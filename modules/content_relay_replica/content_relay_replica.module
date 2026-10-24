@@ -1,0 +1,16 @@
+<?php
+
+/**
+ * @file
+ * Hook implementations for Content Relay Replica.
+ */
+
+declare(strict_types=1);
+
+/**
+ * Implements hook_cron().
+ */
+function content_relay_replica_cron(): void {
+  \Drupal::service('content_relay_replica.failed_events')->scheduleDueRetries();
+  \Drupal::service('content_relay_replica.processed_events')->prune();
+}

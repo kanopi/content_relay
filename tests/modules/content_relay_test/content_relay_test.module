@@ -1,0 +1,32 @@
+<?php
+
+/**
+ * @file
+ * Hooks that let tests make saves fail on purpose.
+ */
+
+declare(strict_types=1);
+
+use Drupal\Core\Database\DatabaseExceptionWrapper;
+use Drupal\node\NodeInterface;
+
+/**
+ * Implements hook_ENTITY_TYPE_presave() for nodes.
+ *
+ * A title of "Explode" throws, standing in for a broken custom hook. While the
+ * state value content_relay_test.deadlocks is positive, saves throw a deadlock
+ * and count it down.
+ */
+function content_relay_test_node_presave(NodeInterface $node): void {
+  if ($node->label() === 'Explode') {
+    throw new \RuntimeException('Exploded in /var/www/html/web/modules/custom/secret.php with password hunter2');
+  }
+  $state = \Drupal::state();
+  $deadlocks = (int) $state->get('content_relay_test.deadlocks', 0);
+  if ($deadlocks > 0) {
+    $state->set('content_relay_test.deadlocks', $deadlocks - 1);
+    $pdo = new \PDOException('SQLSTATE[40001]: Serialization failure: 1213 Deadlock found when trying to get lock');
+    $pdo->errorInfo = ['40001', 1213, 'Deadlock found when trying to get lock'];
+    throw new DatabaseExceptionWrapper($pdo->getMessage(), 0, $pdo);
+  }
+}

@@ -1,0 +1,38 @@
+content_relay_origin.settings:
+  type: config_object
+  label: 'Content Relay Origin settings'
+  mapping:
+    bundles:
+      type: sequence
+      label: 'Synced bundles, by entity type'
+      sequence:
+        type: sequence
+        label: 'Bundles'
+        sequence:
+          type: string
+          label: 'Bundle'
+    delivery:
+      type: mapping
+      label: 'Delivery'
+      mapping:
+        batch_size:
+          type: integer
+          label: 'Events sent to one replica per queue run'
+        max_attempts:
+          type: integer
+          label: 'Attempts before an event is dead-lettered'
+        backoff_base:
+          type: integer
+          label: 'First retry delay, in seconds'
+        backoff_max:
+          type: integer
+          label: 'Longest retry delay, in seconds'
+        timeout:
+          type: integer
+          label: 'Request timeout, in seconds'
+        connect_timeout:
+          type: integer
+          label: 'Connection timeout, in seconds'
+    retention_days:
+      type: integer
+      label: 'Days to keep acknowledged events'

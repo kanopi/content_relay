@@ -1,0 +1,52 @@
+services:
+  logger.channel.content_relay_replica:
+    parent: logger.channel_base
+    arguments: ['content_relay_replica']
+
+  content_relay_replica.origin:
+    class: Drupal\content_relay_replica\OriginPeer
+    arguments: ['@state']
+
+  content_relay_replica.public_key_resolver:
+    class: Drupal\content_relay_replica\OriginPublicKeyResolver
+    arguments: ['@content_relay_replica.origin']
+    tags:
+      - { name: content_relay_public_key_resolver }
+
+  content_relay_replica.sync_state:
+    class: Drupal\content_relay_replica\SyncStateStore
+    arguments: ['@database', '@datetime.time']
+
+  content_relay_replica.stream:
+    class: Drupal\content_relay_replica\StreamTracker
+    arguments: ['@database', '@datetime.time']
+
+  content_relay_replica.processed_events:
+    class: Drupal\content_relay_replica\ProcessedEvents
+    arguments: ['@database', '@config.factory', '@datetime.time']
+
+  content_relay_replica.failed_events:
+    class: Drupal\content_relay_replica\FailedEventStore
+    arguments: ['@database', '@queue', '@config.factory', '@datetime.time']
+
+  content_relay_replica.failure_classifier:
+    class: Drupal\content_relay_replica\Apply\FailureClassifier
+
+  content_relay_replica.applier:
+    class: Drupal\content_relay_replica\Apply\SyncApplier
+    arguments:
+      - '@entity_type.manager'
+      - '@entity.repository'
+      - '@content_relay.entity_serializer'
+      - '@content_relay.revision_hasher'
+      - '@content_relay_replica.sync_state'
+      - '@content_relay_replica.processed_events'
+      - '@content_relay_replica.failed_events'
+      - '@content_relay_replica.failure_classifier'
+      - '@content_relay_replica.origin'
+      - '@database'
+      - '@lock'
+      - '@event_dispatcher'
+      - '@config.factory'
+      - '@datetime.time'
+      - '@logger.channel.content_relay_replica'

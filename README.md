@@ -14,8 +14,8 @@ or refine, the original specification.
 | Module | Role | Status |
 | --- | --- | --- |
 | `content_relay` | Shared base: event schema, entity serialization, hashing, signing, keys | Phase 1 |
-| `content_relay_origin` | Publishes changes to replicas | Not started |
-| `content_relay_replica` | Receives and applies changes | Not started |
+| `content_relay_origin` | Publishes changes to replicas | Phase 2: hooks, event log, delivery, hash store |
+| `content_relay_replica` | Receives and applies changes | Phase 2: endpoint, transactional apply, failures |
 
 ## Requirements
 
@@ -85,6 +85,71 @@ Generating keys and the admin UI for them arrive in later phases. Until then:
 // Store $material in a file outside the web root or an environment variable,
 // point a Key entity at it, and list that entity in content_relay.settings.
 ```
+
+## Origin
+
+Bundles to publish are listed in `content_relay_origin.settings:bundles`, keyed
+by entity type. Saving or deleting an entity in one of them stores its hashes
+(`content_relay_revision_hash`) and adds one row per replica to the event log
+(`content_relay_outbox`), inside the save transaction. Nothing is sent during
+the save.
+
+The `content_relay_origin_delivery` queue sends each replica its rows in
+sequence order. The snapshot is built when a row is sent, from the entity as
+it is then, so a retry or replay never sends an outdated version, and several
+queued updates of one entity go out as one event. Retries use exponential
+backoff with jitter (`delivery.*` settings); cron queues retries that came
+due and prunes acknowledged rows after `retention_days`.
+
+| Replica answers | Event log status | Retried? |
+| --- | --- | --- |
+| 200 | applied | no |
+| 202 | accepted | no; confirmed later |
+| 409 | stale | no |
+| 422 `apply_failed` | failed_on_replica | no; the replica owns retries |
+| other 4xx | dead_letter | no; replay by hand |
+| 408, 429, 5xx, timeout | failed, then dead_letter | yes, up to `max_attempts` |
+
+`content_relay_origin.replay` replays a dead-lettered or failed row as a new
+event decided from the entity as it is now.
+
+Replicas are stored in `content_relay_replica` (pairing arrives in phase 3).
+
+## Replica
+
+Events arrive at `POST /content-relay/v1/events` as signed envelopes. The
+endpoint verifies the signature and that the sender is the paired origin,
+records the sequence (and any gap), and hands the event to
+`content_relay_replica.applier`, which every way of applying an event goes
+through. Its rules, in order:
+
+1. An event already handled gets the same answer again.
+2. A snapshot that does not match its signed hash is refused (400).
+3. A per-UUID lock is held while applying.
+4. A local item with the same UUID but no sync state is never touched.
+5. Events older than what is here are refused as stale (409).
+6. The entity, its translations and the sync state row are written in one
+   transaction, as a new revision logged "Synced from origin …". Any failure
+   rolls everything back.
+7. The saved copy is hashed again and compared with the origin's hash.
+
+Failures are kept in `content_relay_failed_event` with the full event:
+
+- **transient** (deadlocks, lock timeouts, lost connections, or a
+  `TransientApplyException`): answered 202 and retried locally by cron and
+  the `content_relay_replica_retry` queue, then treated as permanent;
+- **permanent** (validation, exceptions in hooks, UUID collisions): answered
+  422 `apply_failed` with a short summary that never includes exception
+  messages or paths;
+- **dependency** (references to items not here yet): answered 202, and retried
+  automatically when the missing item arrives.
+
+A newer event that applies supersedes older failures. Subscribers to
+`content_relay.apply_failed` can send alerts, and the status report shows a
+warning while failures are open.
+
+The paired origin is stored in state (`content_relay_replica.origin`); pairing
+arrives in phase 3.
 
 ## Development
 

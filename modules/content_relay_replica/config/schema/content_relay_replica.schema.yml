@@ -1,0 +1,20 @@
+content_relay_replica.settings:
+  type: config_object
+  label: 'Content Relay Replica settings'
+  mapping:
+    failures:
+      type: mapping
+      label: 'Save failures'
+      mapping:
+        transient_retry_limit:
+          type: integer
+          label: 'Local retries of a transient failure before it is treated as permanent'
+        retry_base:
+          type: integer
+          label: 'First retry delay, in seconds'
+        retry_max:
+          type: integer
+          label: 'Longest retry delay, in seconds'
+    processed_retention_days:
+      type: integer
+      label: 'Days to remember processed event IDs'

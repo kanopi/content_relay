@@ -1,0 +1,80 @@
+services:
+  logger.channel.content_relay_origin:
+    parent: logger.channel_base
+    arguments: ['content_relay_origin']
+
+  content_relay_origin.replica_registry:
+    class: Drupal\content_relay_origin\ReplicaRegistry
+    arguments: ['@database', '@datetime.time']
+
+  content_relay_origin.public_key_resolver:
+    class: Drupal\content_relay_origin\ReplicaPublicKeyResolver
+    arguments: ['@content_relay_origin.replica_registry']
+    tags:
+      - { name: content_relay_public_key_resolver }
+
+  content_relay_origin.sync_scope:
+    class: Drupal\content_relay_origin\SyncScope
+    arguments: ['@config.factory', '@plugin.manager.content_relay_normalizer']
+
+  content_relay_origin.hash_store:
+    class: Drupal\content_relay_origin\HashStore
+    arguments:
+      - '@database'
+      - '@content_relay.entity_serializer'
+      - '@content_relay.revision_hasher'
+      - '@datetime.time'
+
+  content_relay_origin.outbox:
+    class: Drupal\content_relay_origin\Outbox
+    arguments:
+      - '@database'
+      - '@content_relay_origin.replica_registry'
+      - '@config.factory'
+      - '@datetime.time'
+      - '@uuid'
+
+  content_relay_origin.delivery_scheduler:
+    class: Drupal\content_relay_origin\DeliveryScheduler
+    arguments: ['@queue', '@content_relay_origin.outbox', '@datetime.time']
+
+  content_relay_origin.change_recorder:
+    class: Drupal\content_relay_origin\EntityChangeRecorder
+    arguments:
+      - '@content_relay_origin.sync_scope'
+      - '@content_relay_origin.hash_store'
+      - '@content_relay_origin.outbox'
+      - '@content_relay_origin.delivery_scheduler'
+
+  content_relay_origin.event_builder:
+    class: Drupal\content_relay_origin\EventBuilder
+    arguments:
+      - '@entity.repository'
+      - '@entity_type.manager'
+      - '@content_relay.entity_serializer'
+      - '@content_relay.revision_hasher'
+      - '@content_relay_origin.hash_store'
+      - '@datetime.time'
+
+  content_relay_origin.delivery:
+    class: Drupal\content_relay_origin\DeliveryService
+    arguments:
+      - '@content_relay_origin.replica_registry'
+      - '@content_relay_origin.outbox'
+      - '@content_relay_origin.event_builder'
+      - '@content_relay.message_signer'
+      - '@http_client'
+      - '@lock'
+      - '@config.factory'
+      - '@datetime.time'
+      - '@logger.channel.content_relay_origin'
+
+  content_relay_origin.replay:
+    class: Drupal\content_relay_origin\ReplayService
+    arguments:
+      - '@content_relay_origin.outbox'
+      - '@content_relay_origin.hash_store'
+      - '@content_relay_origin.delivery_scheduler'
+      - '@entity.repository'
+      - '@current_user'
+      - '@logger.channel.content_relay_origin'

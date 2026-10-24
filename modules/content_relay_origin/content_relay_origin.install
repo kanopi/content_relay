@@ -1,0 +1,128 @@
+<?php
+
+/**
+ * @file
+ * Install, update and uninstall functions for Content Relay Origin.
+ */
+
+declare(strict_types=1);
+
+use Drupal\content_relay_origin\HashStore;
+use Drupal\content_relay_origin\Outbox;
+use Drupal\content_relay_origin\ReplicaRegistry;
+
+/**
+ * Implements hook_requirements().
+ */
+function content_relay_origin_requirements(string $phase): array {
+  $requirements = [];
+  // One site is either the source of truth or a copy of one. Both at once
+  // would let a replica republish what it received, which is two-way sync.
+  if ($phase === 'install' && \Drupal::moduleHandler()->moduleExists('content_relay_replica')) {
+    $requirements['content_relay_origin_role'] = [
+      'title' => t('Content Relay role'),
+      'description' => t('Content Relay Replica is enabled. A site can be an origin or a replica, not both.'),
+      'severity' => REQUIREMENT_ERROR,
+    ];
+  }
+  return $requirements;
+}
+
+/**
+ * Implements hook_schema().
+ */
+function content_relay_origin_schema(): array {
+  $schema[ReplicaRegistry::TABLE] = [
+    'description' => 'Replicas this origin sends content to.',
+    'fields' => [
+      'id' => ['type' => 'varchar_ascii', 'length' => 64, 'not null' => TRUE, 'description' => 'The replica site ID.'],
+      'label' => ['type' => 'varchar', 'length' => 255, 'not null' => TRUE, 'default' => ''],
+      'endpoint' => [
+        'type' => 'varchar',
+        'length' => 2048,
+        'not null' => TRUE,
+        'description' => 'HTTPS URL events are posted to.',
+      ],
+      'status' => ['type' => 'varchar_ascii', 'length' => 16, 'not null' => TRUE, 'default' => 'active'],
+      'signing_keys' => [
+        'type' => 'text',
+        'not null' => TRUE,
+        'description' => 'JSON: key ID => {public_key, status}.',
+      ],
+      'encryption_keys' => [
+        'type' => 'text',
+        'not null' => TRUE,
+        'description' => 'JSON: key ID => {public_key, status}.',
+      ],
+      'contract_version' => ['type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE, 'default' => 1],
+      'next_sequence' => ['type' => 'int', 'size' => 'big', 'unsigned' => TRUE, 'not null' => TRUE, 'default' => 1],
+      'created' => ['type' => 'int', 'size' => 'big', 'not null' => TRUE, 'default' => 0],
+      'changed' => ['type' => 'int', 'size' => 'big', 'not null' => TRUE, 'default' => 0],
+      'last_success' => ['type' => 'int', 'size' => 'big', 'not null' => FALSE],
+    ],
+    'primary key' => ['id'],
+  ];
+
+  $schema[Outbox::TABLE] = [
+    'description' => 'Every event for every replica, with its delivery state. The event log.',
+    'fields' => [
+      'id' => ['type' => 'serial', 'size' => 'big', 'unsigned' => TRUE, 'not null' => TRUE],
+      'event_id' => ['type' => 'varchar_ascii', 'length' => 36, 'not null' => TRUE],
+      'replica_id' => ['type' => 'varchar_ascii', 'length' => 64, 'not null' => TRUE],
+      'sequence' => ['type' => 'int', 'size' => 'big', 'unsigned' => TRUE, 'not null' => TRUE],
+      'operation' => ['type' => 'varchar_ascii', 'length' => 16, 'not null' => TRUE],
+      'entity_type' => ['type' => 'varchar_ascii', 'length' => 32, 'not null' => TRUE],
+      'bundle' => ['type' => 'varchar_ascii', 'length' => 128, 'not null' => TRUE],
+      'entity_uuid' => ['type' => 'varchar_ascii', 'length' => 128, 'not null' => TRUE],
+      'source_revision' => ['type' => 'int', 'size' => 'big', 'unsigned' => TRUE, 'not null' => FALSE],
+      'status' => ['type' => 'varchar_ascii', 'length' => 32, 'not null' => TRUE],
+      'attempts' => ['type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE, 'default' => 0],
+      'next_attempt' => ['type' => 'int', 'size' => 'big', 'not null' => TRUE, 'default' => 0],
+      'last_http_status' => ['type' => 'int', 'not null' => FALSE],
+      'result_code' => ['type' => 'varchar_ascii', 'length' => 64, 'not null' => FALSE],
+      'last_response' => ['type' => 'text', 'not null' => FALSE, 'description' => 'Response body, truncated.'],
+      'triggered_by' => [
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => FALSE,
+        'description' => 'User who triggered a manual push or replay.',
+      ],
+      'replay_of' => ['type' => 'int', 'size' => 'big', 'unsigned' => TRUE, 'not null' => FALSE],
+      'created' => ['type' => 'int', 'size' => 'big', 'not null' => TRUE],
+      'changed' => ['type' => 'int', 'size' => 'big', 'not null' => TRUE],
+      'first_sent' => ['type' => 'int', 'size' => 'big', 'not null' => FALSE],
+      'completed' => ['type' => 'int', 'size' => 'big', 'not null' => FALSE],
+    ],
+    'primary key' => ['id'],
+    'unique keys' => [
+      'event_id' => ['event_id'],
+      'replica_sequence' => ['replica_id', 'sequence'],
+    ],
+    'indexes' => [
+      'replica_status' => ['replica_id', 'status', 'sequence'],
+      'entity' => ['entity_type', 'entity_uuid', 'replica_id'],
+      'status_changed' => ['status', 'changed'],
+    ],
+  ];
+
+  $schema[HashStore::TABLE] = [
+    'description' => 'Canonical hashes of every synced revision.',
+    'fields' => [
+      'entity_type' => ['type' => 'varchar_ascii', 'length' => 32, 'not null' => TRUE],
+      'uuid' => ['type' => 'varchar_ascii', 'length' => 128, 'not null' => TRUE],
+      'revision' => [
+        'type' => 'int',
+        'size' => 'big',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'description' => 'Revision ID, or version counter for non-revisionable types.',
+      ],
+      'algorithm' => ['type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE],
+      'entity_hash' => ['type' => 'char', 'length' => 64, 'not null' => TRUE],
+      'translation_hashes' => ['type' => 'text', 'not null' => TRUE, 'description' => 'JSON: langcode => hash.'],
+      'created' => ['type' => 'int', 'size' => 'big', 'not null' => TRUE],
+    ],
+    'primary key' => ['entity_type', 'uuid', 'revision', 'algorithm'],
+  ];
+  return $schema;
+}

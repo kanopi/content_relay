@@ -1,0 +1,171 @@
+<?php
+
+/**
+ * @file
+ * Install, update and uninstall functions for Content Relay Replica.
+ */
+
+declare(strict_types=1);
+
+use Drupal\content_relay_replica\FailedEventStore;
+use Drupal\content_relay_replica\ProcessedEvents;
+use Drupal\content_relay_replica\StreamTracker;
+use Drupal\content_relay_replica\SyncStateStore;
+
+/**
+ * Implements hook_requirements().
+ */
+function content_relay_replica_requirements(string $phase): array {
+  $requirements = [];
+  if ($phase === 'install' && \Drupal::moduleHandler()->moduleExists('content_relay_origin')) {
+    $requirements['content_relay_replica_role'] = [
+      'title' => t('Content Relay role'),
+      'description' => t('Content Relay Origin is enabled. A site can be an origin or a replica, not both.'),
+      'severity' => REQUIREMENT_ERROR,
+    ];
+  }
+  if ($phase === 'runtime') {
+    $open = \Drupal::service('content_relay_replica.failed_events')->countOpen();
+    $requirements['content_relay_replica_failures'] = [
+      'title' => t('Content Relay synced items'),
+      'value' => $open ? \Drupal::translation()->formatPlural($open, '1 synced item failed to save', '@count synced items failed to save') : t('No save failures'),
+      'severity' => $open ? REQUIREMENT_WARNING : REQUIREMENT_OK,
+    ];
+  }
+  return $requirements;
+}
+
+/**
+ * Implements hook_schema().
+ */
+function content_relay_replica_schema(): array {
+  $schema[SyncStateStore::TABLE] = [
+    'description' => 'What this replica knows about each item it received. Only items with a row here are ever updated or deleted by sync.',
+    'fields' => [
+      'entity_type' => ['type' => 'varchar_ascii', 'length' => 32, 'not null' => TRUE],
+      'uuid' => ['type' => 'varchar_ascii', 'length' => 128, 'not null' => TRUE],
+      'source_site' => ['type' => 'varchar_ascii', 'length' => 64, 'not null' => TRUE],
+      'source_revision' => ['type' => 'int', 'size' => 'big', 'unsigned' => TRUE, 'not null' => TRUE],
+      'source_changed' => ['type' => 'int', 'size' => 'big', 'not null' => FALSE],
+      'hash_algorithm' => ['type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE],
+      'source_hash' => ['type' => 'char', 'length' => 64, 'not null' => TRUE],
+      'source_translation_hashes' => [
+        'type' => 'text',
+        'not null' => TRUE,
+        'description' => 'JSON: origin langcode => hash, as received.',
+      ],
+      'local_hash' => [
+        'type' => 'char',
+        'length' => 64,
+        'not null' => FALSE,
+        'description' => 'Hash of the local copy, computed after applying.',
+      ],
+      'import_mode' => ['type' => 'varchar_ascii', 'length' => 16, 'not null' => TRUE, 'default' => 'as_is'],
+      'mapping_id' => ['type' => 'varchar_ascii', 'length' => 128, 'not null' => FALSE],
+      'status' => ['type' => 'varchar_ascii', 'length' => 32, 'not null' => TRUE],
+      'last_error' => ['type' => 'text', 'not null' => FALSE],
+      'last_event_id' => ['type' => 'varchar_ascii', 'length' => 36, 'not null' => FALSE],
+      'last_synced' => ['type' => 'int', 'size' => 'big', 'not null' => TRUE, 'default' => 0],
+      'detached_by' => ['type' => 'int', 'unsigned' => TRUE, 'not null' => FALSE],
+      'detached_at' => ['type' => 'int', 'size' => 'big', 'not null' => FALSE],
+    ],
+    'primary key' => ['entity_type', 'uuid'],
+    'indexes' => [
+      'status' => ['status'],
+      'last_synced' => ['last_synced'],
+    ],
+  ];
+
+  $schema[StreamTracker::TABLE] = [
+    'description' => 'The last event sequence received from each origin, for gap detection.',
+    'fields' => [
+      'source_site' => ['type' => 'varchar_ascii', 'length' => 64, 'not null' => TRUE],
+      'last_sequence' => ['type' => 'int', 'size' => 'big', 'unsigned' => TRUE, 'not null' => TRUE, 'default' => 0],
+      'gaps' => [
+        'type' => 'text',
+        'not null' => FALSE,
+        'description' => 'JSON list of [last received, lost sequence] pairs.',
+      ],
+      'changed' => ['type' => 'int', 'size' => 'big', 'not null' => TRUE, 'default' => 0],
+    ],
+    'primary key' => ['source_site'],
+  ];
+
+  $schema[ProcessedEvents::TABLE] = [
+    'description' => 'Events already handled and the answer given, so a duplicate gets the same answer without being applied twice.',
+    'fields' => [
+      'event_id' => ['type' => 'varchar_ascii', 'length' => 36, 'not null' => TRUE],
+      'entity_type' => ['type' => 'varchar_ascii', 'length' => 32, 'not null' => TRUE],
+      'uuid' => ['type' => 'varchar_ascii', 'length' => 128, 'not null' => TRUE],
+      'http_status' => ['type' => 'int', 'not null' => TRUE],
+      'result' => ['type' => 'text', 'not null' => TRUE, 'description' => 'JSON response body.'],
+      'created' => ['type' => 'int', 'size' => 'big', 'not null' => TRUE],
+      'changed' => ['type' => 'int', 'size' => 'big', 'not null' => TRUE],
+    ],
+    'primary key' => ['event_id'],
+    'indexes' => [
+      'changed' => ['changed'],
+    ],
+  ];
+
+  $schema[FailedEventStore::TABLE] = [
+    'description' => 'Valid events this replica could not apply, with everything needed to retry them without the origin.',
+    'fields' => [
+      'id' => ['type' => 'serial', 'unsigned' => TRUE, 'not null' => TRUE],
+      'event_id' => ['type' => 'varchar_ascii', 'length' => 36, 'not null' => TRUE],
+      'source_site' => ['type' => 'varchar_ascii', 'length' => 64, 'not null' => TRUE],
+      'entity_type' => ['type' => 'varchar_ascii', 'length' => 32, 'not null' => TRUE],
+      'bundle' => ['type' => 'varchar_ascii', 'length' => 128, 'not null' => TRUE],
+      'uuid' => ['type' => 'varchar_ascii', 'length' => 128, 'not null' => TRUE],
+      'label' => [
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => FALSE,
+        'description' => 'From the payload, so a failed create can be listed.',
+      ],
+      'operation' => ['type' => 'varchar_ascii', 'length' => 16, 'not null' => TRUE],
+      'contract_version' => ['type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE],
+      'source_revision' => ['type' => 'int', 'size' => 'big', 'unsigned' => TRUE, 'not null' => TRUE],
+      'source_hash' => ['type' => 'char', 'length' => 64, 'not null' => FALSE],
+      'status' => ['type' => 'varchar_ascii', 'length' => 16, 'not null' => TRUE],
+      'failure_class' => ['type' => 'varchar_ascii', 'length' => 16, 'not null' => TRUE],
+      'error_code' => ['type' => 'varchar_ascii', 'length' => 64, 'not null' => TRUE],
+      'error_class' => ['type' => 'varchar', 'length' => 255, 'not null' => FALSE],
+      'message' => ['type' => 'text', 'not null' => TRUE],
+      'violations' => [
+        'type' => 'text',
+        'not null' => TRUE,
+        'description' => 'JSON list of {field, langcode, message}.',
+      ],
+      'payload' => ['type' => 'blob', 'size' => 'big', 'not null' => TRUE, 'description' => 'The event, as JSON.'],
+      'attempts' => ['type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE, 'default' => 1],
+      'next_retry' => ['type' => 'int', 'size' => 'big', 'not null' => FALSE],
+      'first_failed' => ['type' => 'int', 'size' => 'big', 'not null' => TRUE],
+      'last_failed' => ['type' => 'int', 'size' => 'big', 'not null' => TRUE],
+      'resolved' => ['type' => 'int', 'size' => 'big', 'not null' => FALSE],
+      'dismissed_by' => ['type' => 'int', 'unsigned' => TRUE, 'not null' => FALSE],
+      'dismiss_reason' => ['type' => 'text', 'not null' => FALSE],
+    ],
+    'primary key' => ['id'],
+    'unique keys' => ['event_id' => ['event_id']],
+    'indexes' => [
+      'entity' => ['entity_type', 'uuid', 'status'],
+      'status' => ['status', 'failure_class', 'next_retry'],
+    ],
+  ];
+
+  $schema[FailedEventStore::DEPENDENCY_TABLE] = [
+    'description' => 'Which missing items each waiting event depends on.',
+    'fields' => [
+      'failure_id' => ['type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE],
+      'entity_type' => ['type' => 'varchar_ascii', 'length' => 32, 'not null' => TRUE],
+      'uuid' => ['type' => 'varchar_ascii', 'length' => 128, 'not null' => TRUE],
+      'field' => ['type' => 'varchar_ascii', 'length' => 128, 'not null' => TRUE, 'default' => ''],
+    ],
+    'primary key' => ['failure_id', 'entity_type', 'uuid'],
+    'indexes' => [
+      'dependency' => ['entity_type', 'uuid'],
+    ],
+  ];
+  return $schema;
+}

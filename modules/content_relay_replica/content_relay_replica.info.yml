@@ -1,0 +1,8 @@
+name: 'Content Relay Replica'
+type: module
+description: 'Receives content from a Content Relay origin and applies it to this site.'
+package: Content Relay
+core_version_requirement: ^10.3 || ^11
+php: 8.3
+dependencies:
+  - content_relay:content_relay

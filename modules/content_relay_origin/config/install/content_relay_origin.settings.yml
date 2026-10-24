@@ -1,0 +1,9 @@
+bundles: {}
+delivery:
+  batch_size: 50
+  max_attempts: 8
+  backoff_base: 30
+  backoff_max: 21600
+  timeout: 30
+  connect_timeout: 10
+retention_days: 60

@@ -72,6 +72,12 @@ final class SyncEvent {
    *   File metadata for binaries to fetch.
    * @param \Drupal\content_relay\Event\ProcessingMode|null $process
    *   A per-event override of the replica's processing mode.
+   * @param int|null $previousSequence
+   *   The sequence of the event sent to this replica before this one, or NULL
+   *   for the first. Sequence numbers can be skipped on purpose (an update
+   *   superseded by a later one is never sent), so a replica detects a lost
+   *   event by comparing this with the last sequence it received, not by
+   *   expecting consecutive numbers.
    */
   public function __construct(
     public readonly string $eventId,
@@ -92,6 +98,7 @@ final class SyncEvent {
     public readonly array $dependencies = [],
     public readonly array $files = [],
     public readonly ?ProcessingMode $process = NULL,
+    public readonly ?int $previousSequence = NULL,
   ) {
     $this->validate();
   }
@@ -104,6 +111,7 @@ final class SyncEvent {
       'v' => self::SCHEMA_VERSION,
       'event_id' => $this->eventId,
       'sequence' => $this->sequence,
+      'previous_sequence' => $this->previousSequence,
       'operation' => $this->operation->value,
       'entity_type' => $this->entityType,
       'bundle' => $this->bundle,
@@ -165,6 +173,7 @@ final class SyncEvent {
     return new self(
       eventId: $require('event_id', 'string'),
       sequence: $require('sequence', 'int'),
+      previousSequence: $require('previous_sequence', '?int'),
       operation: $operation,
       entityType: $require('entity_type', 'string'),
       bundle: $require('bundle', 'string'),
@@ -197,6 +206,9 @@ final class SyncEvent {
     }
     if ($this->sequence < 1 || $this->sourceRevision < 0 || $this->contractVersion < 1) {
       throw new InvalidEventException('Event sequence and contract version start at 1, and revisions cannot be negative.');
+    }
+    if ($this->previousSequence !== NULL && ($this->previousSequence < 1 || $this->previousSequence >= $this->sequence)) {
+      throw new InvalidEventException('The previous sequence must come before this one.');
     }
     if (!array_is_list($this->langcodes) || array_filter($this->langcodes, fn ($l) => !is_string($l) || $l === '')) {
       throw new InvalidEventException('Event langcodes must be a list of strings.');

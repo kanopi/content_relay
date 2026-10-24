@@ -1,0 +1,13 @@
+# Authentication is the signature on every message, checked by the controller
+# before anything else happens. There is no session and no CSRF token: the
+# caller is another site, not a browser.
+content_relay_replica.receive_events:
+  path: '/content-relay/v1/events'
+  defaults:
+    _controller: '\Drupal\content_relay_replica\Controller\EventReceiverController::receive'
+  methods: [POST]
+  requirements:
+    # Open on purpose: every message is signature-checked by the controller.
+    _access: 'TRUE'
+  options:
+    no_cache: TRUE
