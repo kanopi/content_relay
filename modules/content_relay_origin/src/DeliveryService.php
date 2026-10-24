@@ -8,7 +8,10 @@ use Drupal\Component\Datetime\TimeInterface;
 use Drupal\content_relay\Contract\SubscriptionContract;
 use Drupal\content_relay\Crypto\MessageSigner;
 use Drupal\content_relay\Event\Operation;
+use Drupal\content_relay\Event\SyncEvent;
 use Drupal\Core\Config\ConfigFactoryInterface;
+use Drupal\Core\Entity\ContentEntityInterface;
+use Drupal\Core\Entity\EntityRepositoryInterface;
 use Drupal\Core\Lock\LockBackendInterface;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
@@ -35,6 +38,12 @@ use Psr\Log\LoggerInterface;
  *   contract the event names. The contract is sent again and the event
  *   retried, rebuilt under whatever is in force.
  *
+ * Before an item, everything it references that the replica subscribes to
+ * and does not have yet is sent, depth first, so references resolve when the
+ * item arrives. Each item is sent at most once per run, which is what stops a
+ * pair of items referencing each other from looping: the second one goes
+ * first and waits on the replica until the first arrives.
+ *
  * Only one worker delivers to a replica at a time, and a retrying event holds
  * back everything behind it, so a replica always receives its stream in
  * order.
@@ -56,6 +65,9 @@ class DeliveryService {
     protected Outbox $outbox,
     protected EventBuilder $eventBuilder,
     protected ContractManager $contracts,
+    protected ReplicaItems $items,
+    protected SyncScope $scope,
+    protected EntityRepositoryInterface $entityRepository,
     protected MessageSigner $signer,
     protected ClientInterface $httpClient,
     protected LockBackendInterface $lock,
@@ -121,14 +133,25 @@ class DeliveryService {
    * @return bool
    *   FALSE when delivery to this replica should pause.
    */
-  protected function send(array $row, Replica $replica, SubscriptionContract $contract): bool {
+  protected function send(array $row, Replica $replica, SubscriptionContract $contract, array &$visited = []): bool {
     $id = (int) $row['id'];
     if (!$contract->allowsBundle($row['entity_type'], $row['bundle'])) {
       $this->outbox->update($id, ['status' => EventStatus::SKIPPED, 'result_code' => 'not_in_contract']);
       return TRUE;
     }
+    $visited[$row['entity_type'] . ':' . $row['entity_uuid']] = TRUE;
     try {
       $event = $this->eventBuilder->build($row, $contract, $this->outbox->previousSentSequence($replica->id, (int) $row['sequence']));
+      if ($event !== NULL && $event->dependencies !== []) {
+        $sent = $this->sendDependencies($event, $replica, $contract, $visited);
+        if ($sent === NULL) {
+          return FALSE;
+        }
+        if ($sent) {
+          // The stream moved on while dependencies went out.
+          $event = $this->eventBuilder->build($row, $contract, $this->outbox->previousSentSequence($replica->id, (int) $row['sequence']));
+        }
+      }
     }
     catch (\Throwable $e) {
       // The origin cannot build what it is supposed to send. Retrying will not
@@ -219,11 +242,16 @@ class DeliveryService {
         409 => EventStatus::STALE,
       };
       $this->outbox->update($id, $fields + ['status' => $status]);
+      $this->items->record($replica->id, $event, match ($code) {
+        200 => ReplicaItems::APPLIED,
+        default => ReplicaItems::ACCEPTED,
+      });
       $this->registry->recordSuccess($replica->id);
       return TRUE;
     }
     if ($code === 422 && $result === 'apply_failed') {
       $this->outbox->update($id, $fields + ['status' => EventStatus::FAILED_ON_REPLICA]);
+      $this->items->record($replica->id, $event, ReplicaItems::FAILED);
       $this->logger->warning('Replica @replica could not apply event @event for @type @uuid: @body', $this->context($row, $replica, $body));
       return TRUE;
     }
@@ -234,6 +262,49 @@ class DeliveryService {
     }
     $this->retryOrGiveUp($id, $fields, $attempts, $row, $replica);
     return FALSE;
+  }
+
+  /**
+   * Sends the dependencies of an event that the replica does not have.
+   *
+   * @return bool|null
+   *   TRUE if any were sent, FALSE if none needed sending, NULL if one could
+   *   not be delivered and the stream must pause.
+   */
+  protected function sendDependencies(SyncEvent $event, Replica $replica, SubscriptionContract $contract, array &$visited): ?bool {
+    $sent = FALSE;
+    foreach ($event->dependencies as $dependency) {
+      $key = $dependency['entity_type'] . ':' . $dependency['uuid'];
+      if (isset($visited[$key]) || $this->items->isKnown($replica->id, $dependency['entity_type'], $dependency['uuid'])) {
+        continue;
+      }
+      $visited[$key] = TRUE;
+      $row = $this->outbox->pendingRowFor($replica->id, $dependency['entity_type'], $dependency['uuid'])
+        ?? $this->enqueueDependency($replica, $dependency['entity_type'], $dependency['uuid']);
+      if ($row === NULL) {
+        continue;
+      }
+      if (!$this->send($row, $replica, $contract, $visited)) {
+        return NULL;
+      }
+      $sent = TRUE;
+    }
+    return $sent;
+  }
+
+  /**
+   * Records an event for a dependency that never had one for this replica.
+   *
+   * Typically content that existed before the replica subscribed.
+   */
+  protected function enqueueDependency(Replica $replica, string $entity_type_id, string $uuid): ?array {
+    /** @var \Drupal\Core\Entity\EntityInterface|null $entity */
+    $entity = $this->entityRepository->loadEntityByUuid($entity_type_id, $uuid);
+    if (!$entity instanceof ContentEntityInterface || !$this->scope->applies($entity)) {
+      return NULL;
+    }
+    $ids = $this->outbox->enqueue(Operation::Create, $entity_type_id, $entity->bundle(), $uuid, NULL, [$replica->id]);
+    return isset($ids[$replica->id]) ? $this->outbox->load($ids[$replica->id]) : NULL;
   }
 
   /**

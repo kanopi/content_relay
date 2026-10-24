@@ -38,7 +38,7 @@ interface EntityNormalizerInterface extends PluginInspectionInterface {
    * hashed and deleted as part of the entity that holds them, never as events
    * of their own.
    */
-  public function isEmbedded(): bool;
+  public function isEmbedded(ContentEntityTypeInterface $entity_type): bool;
 
   /**
    * Builds the snapshot of an entity.

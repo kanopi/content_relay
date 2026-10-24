@@ -81,6 +81,15 @@ class NormalizerManager extends DefaultPluginManager {
   }
 
   /**
+   * Whether entities of a type travel only inside their parent.
+   */
+  public function isEmbedded(string $entity_type_id): bool {
+    $entity_type = $this->entityTypeManager->getDefinition($entity_type_id);
+    assert($entity_type instanceof ContentEntityTypeInterface);
+    return $this->getNormalizer($entity_type_id)->isEmbedded($entity_type);
+  }
+
+  /**
    * {@inheritdoc}
    */
   public function clearCachedDefinitions(): void {

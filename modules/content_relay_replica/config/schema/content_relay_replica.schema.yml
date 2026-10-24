@@ -18,6 +18,16 @@ content_relay_replica.settings:
         retry_max:
           type: integer
           label: 'Longest retry delay, in seconds'
+    external_references:
+      type: mapping
+      label: 'References to content this replica does not subscribe to'
+      mapping:
+        fallbacks:
+          type: sequence
+          label: 'Local entity ID to use instead, by entity type. Types not listed leave the reference out.'
+          sequence:
+            type: string
+            label: 'Local entity ID'
     processed_retention_days:
       type: integer
       label: 'Days to remember processed event IDs'

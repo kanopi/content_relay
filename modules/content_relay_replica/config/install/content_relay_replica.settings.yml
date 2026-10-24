@@ -4,3 +4,6 @@ failures:
   retry_base: 60
   retry_max: 3600
 processed_retention_days: 60
+external_references:
+  fallbacks:
+    user: '0'

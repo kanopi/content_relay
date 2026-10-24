@@ -78,6 +78,10 @@ final class SyncEvent {
    *   superseded by a later one is never sent), so a replica detects a lost
    *   event by comparing this with the last sequence it received, not by
    *   expecting consecutive numbers.
+   * @param array $externalReferences
+   *   Entities the snapshot references that the replica does not subscribe
+   *   to, each an array with entity_type and uuid. They will never be sent,
+   *   so the replica resolves them by its own policy instead of waiting.
    */
   public function __construct(
     public readonly string $eventId,
@@ -99,6 +103,7 @@ final class SyncEvent {
     public readonly array $files = [],
     public readonly ?ProcessingMode $process = NULL,
     public readonly ?int $previousSequence = NULL,
+    public readonly array $externalReferences = [],
   ) {
     $this->validate();
   }
@@ -125,6 +130,7 @@ final class SyncEvent {
       'contract_version' => $this->contractVersion,
       'created' => $this->created,
       'dependencies' => $this->dependencies,
+      'external_references' => $this->externalReferences,
       'files' => $this->files,
       'process' => $this->process?->value,
       'snapshot' => $this->snapshot,
@@ -188,6 +194,7 @@ final class SyncEvent {
       contractVersion: $require('contract_version', 'int'),
       created: $require('created', 'int'),
       dependencies: $require('dependencies', 'array'),
+      externalReferences: $require('external_references', 'array'),
       files: $require('files', 'array'),
       process: $process === NULL ? NULL : (ProcessingMode::tryFrom($process) ?? throw new InvalidEventException('Unknown processing mode.')),
     );
@@ -213,9 +220,9 @@ final class SyncEvent {
     if (!array_is_list($this->langcodes) || array_filter($this->langcodes, fn ($l) => !is_string($l) || $l === '')) {
       throw new InvalidEventException('Event langcodes must be a list of strings.');
     }
-    foreach ($this->dependencies as $dependency) {
+    foreach ([...$this->dependencies, ...$this->externalReferences] as $dependency) {
       if (!is_array($dependency) || !is_string($dependency['entity_type'] ?? NULL) || !is_string($dependency['uuid'] ?? NULL)) {
-        throw new InvalidEventException('Event dependencies need an entity type and a UUID.');
+        throw new InvalidEventException('Event dependencies and external references need an entity type and a UUID.');
       }
     }
 

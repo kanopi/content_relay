@@ -17,6 +17,13 @@ content_relay.settings:
         clock_window:
           type: integer
           label: 'Accepted clock difference, in seconds'
+    users:
+      type: mapping
+      label: 'Users'
+      mapping:
+        sync_roles:
+          type: boolean
+          label: 'Sync user roles'
 
 key.type.content_relay_signing:
   type: content_relay.key_type_settings

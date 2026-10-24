@@ -21,6 +21,7 @@ or refine, the original specification.
 
 - Drupal 10.3 or 11, PHP 8.3 or later, with the `sodium` extension.
 - The [Key](https://www.drupal.org/project/key) module.
+- `lcobucci/jwt` 5.5 or later (installed by Composer).
 - A `utf8mb4` database. Hashes cover text byte for byte, and a database that
   cannot store four-byte characters changes the bytes.
 
@@ -35,12 +36,34 @@ translatable fields per langcode under `translations`, and informative values
 that are not content (changed timestamps) under `metadata`. References are
 UUIDs; embedded entities such as paragraphs are nested snapshots.
 
-The work is done by **normalizer plugins**, one per entity type. The generic
-normalizer handles any content entity type with a UUID key. A module can
-override it for its own entity type by adding a plugin in
-`src/Plugin/ContentRelay/Normalizer` with a higher weight than the generic one
-(-100); see the `ContentRelayNormalizer` attribute. Entity types without a UUID
-key are never offered for sync.
+Any content entity type with a UUID and storage can be synced; nothing lists
+the supported types. Two kinds of plugin do the work:
+
+- **Field normalizers** handle a kind of field wherever it appears, on every
+  entity type. Built in:
+  - *entity references* of any kind (entity reference, file, image, comment
+    hosts, and contrib types like Dynamic Entity Reference whose target type
+    is per item): content targets travel as UUIDs, configuration targets by
+    machine name;
+  - *embedded entities*: an Entity Reference Revisions field whose target is
+    composite (paragraphs, or any type declaring the parent keys) carries the
+    target's whole snapshot, to any depth;
+  - *links* and *system paths* (link fields, a path alias's path): local IDs in
+    `entity:node/5`, `internal:/node/5/edit`, `route:` URIs and `/node/5`
+    become UUID tokens, using every entity type's link templates;
+  - *menu link parents*, so a child waits for its parent;
+  - *moderation state*, synced per translation although it is computed.
+- **Entity normalizers** handle what is particular to one entity type. The
+  generic one covers everything; users (no password, activity or, by default,
+  roles) and comments (no thread or IP address) have their own.
+
+A module adds either by placing a plugin in
+`src/Plugin/ContentRelay/FieldNormalizer` or `src/Plugin/ContentRelay/Normalizer`
+with a higher weight than the built-in one. Entity types without a UUID key,
+and types that are never stored (contact messages), are never offered.
+
+String entity IDs, which are chosen rather than generated, travel with the
+snapshot; integer IDs never do.
 
 Subscribers to `content_relay.pre_serialize` and `content_relay.post_serialize`
 can adjust what is serialized.
@@ -162,6 +185,29 @@ A newer event that applies supersedes older failures. Subscribers to
 warning while failures are open.
 
 The paired origin is stored in state (`content_relay_replica.origin`).
+
+## Dependencies and external references
+
+Before sending an item, the origin sends everything it references that the
+replica subscribes to and does not have yet (content that predates the
+pairing, for example), depth first. Items referencing each other are each sent
+once; the replica holds the first until the second arrives.
+
+References to anything the replica does not subscribe to (users, when users
+are not synced; a bundle outside the contract) are listed in the event as
+external. The replica uses the local entity with that UUID if it has one, and
+otherwise a fallback set in `content_relay_replica.settings:external_references.fallbacks`:
+by default, authors become the anonymous user and other references are left
+out. The copy is still verified against the origin's hash, with the same
+substitutions applied.
+
+## Pull authentication
+
+Requests a replica makes to its origin (pulls, schema, files) carry a bearer
+token: a JWT the replica issues itself, signed with its Ed25519 key, valid for
+two minutes, with issuer, audience, scope and a one-time `jti`. The origin
+checks it against the key it registered at pairing. Endpoints depend on
+`content_relay.pull_authenticator`, an alias, so another scheme can replace it.
 
 ## Pairing
 

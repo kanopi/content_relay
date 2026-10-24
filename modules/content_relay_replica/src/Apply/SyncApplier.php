@@ -189,7 +189,7 @@ class SyncApplier {
     assert($event->snapshot !== NULL && $event->hashes !== NULL);
     $transaction = $this->database->startTransaction();
     try {
-      $context = new DenormalizationContext();
+      $context = $this->denormalizationContext($event);
       $target = $this->serializer->denormalize($event->snapshot, $context, $entity);
 
       if ($context->missingReferences !== []) {
@@ -213,6 +213,11 @@ class SyncApplier {
       $saved = $this->entityTypeManager->getStorage($event->entityType)->loadUnchanged($target->id());
       assert($saved instanceof ContentEntityInterface);
       $local = $this->hasher->hash($this->serializer->normalize($saved, new NormalizationContext($event->langcodes)), [], $event->hashes->algorithmVersion);
+      // What the copy should hash to: the origin's snapshot, with the
+      // references this site resolved by its own policy swapped the same way.
+      $expected = $context->substitutions === []
+        ? $event->hashes
+        : $this->hasher->hash($context->applySubstitutions($event->snapshot), [], $event->hashes->algorithmVersion);
 
       $status = SyncStatus::SYNCED;
       $error = NULL;
@@ -220,7 +225,7 @@ class SyncApplier {
         $status = SyncStatus::SCHEMA_DRIFT;
         $error = sprintf('Fields from the origin that do not exist here were ignored: %s.', implode(', ', array_keys($context->unknownFields)));
       }
-      elseif (!hash_equals($event->hashes->entity, $local->entity)) {
+      elseif (!hash_equals($expected->entity, $local->entity)) {
         $status = SyncStatus::ERROR;
         $error = 'After saving, the local copy does not hash the same as the origin\'s.';
       }
@@ -288,6 +293,29 @@ class SyncApplier {
       return $this->failFromException($event, $source_site, $e);
     }
     return $result;
+  }
+
+  /**
+   * The denormalization context for an event, with this site's policies.
+   */
+  protected function denormalizationContext(SyncEvent $event): DenormalizationContext {
+    $external = [];
+    foreach ($event->externalReferences as $reference) {
+      $external[$reference['entity_type'] . ':' . $reference['uuid']] = TRUE;
+    }
+    $fallbacks = $this->configFactory->get('content_relay_replica.settings')->get('external_references.fallbacks') ?? [];
+    $fallback = function (string $entity_type_id, string $uuid) use ($fallbacks): int|string|null {
+      $id = $fallbacks[$entity_type_id] ?? NULL;
+      if ($id === NULL || $id === '') {
+        return NULL;
+      }
+      // User 0 is always there; anything else must exist to be used.
+      if ($entity_type_id === 'user' && (string) $id === '0') {
+        return 0;
+      }
+      return $this->entityTypeManager->getStorage($entity_type_id)->load($id) ? $id : NULL;
+    };
+    return new DenormalizationContext(external: $external, externalFallback: $fallback);
   }
 
   /**

@@ -11,6 +11,10 @@
     "require": {
         "php": ">=8.3",
         "ext-sodium": "*",
-        "drupal/key": "^1.17"
+        "drupal/key": "^1.17",
+        "lcobucci/jwt": "^5.5"
+    },
+    "require-dev": {
+        "drupal/paragraphs": "^1.18"
     }
 }

@@ -11,6 +11,7 @@ use Drupal\content_relay_origin\ContractManager;
 use Drupal\content_relay_origin\HashStore;
 use Drupal\content_relay_origin\Outbox;
 use Drupal\content_relay_origin\PairingCodes;
+use Drupal\content_relay_origin\ReplicaItems;
 use Drupal\content_relay_origin\ReplicaRegistry;
 
 /**
@@ -139,6 +140,25 @@ function content_relay_origin_schema(): array {
     ],
     'primary key' => ['entity_type', 'uuid', 'revision', 'algorithm'],
   ];
+  $schema[ReplicaItems::TABLE] = [
+    'description' => 'What each replica has of each item, from its answers.',
+    'fields' => [
+      'replica_id' => ['type' => 'varchar_ascii', 'length' => 64, 'not null' => TRUE],
+      'entity_type' => ['type' => 'varchar_ascii', 'length' => 32, 'not null' => TRUE],
+      'uuid' => ['type' => 'varchar_ascii', 'length' => 128, 'not null' => TRUE],
+      'bundle' => ['type' => 'varchar_ascii', 'length' => 128, 'not null' => TRUE],
+      'status' => ['type' => 'varchar_ascii', 'length' => 16, 'not null' => TRUE],
+      'revision' => ['type' => 'int', 'size' => 'big', 'unsigned' => TRUE, 'not null' => FALSE],
+      'algorithm' => ['type' => 'int', 'unsigned' => TRUE, 'not null' => FALSE],
+      'entity_hash' => ['type' => 'char', 'length' => 64, 'not null' => FALSE],
+      'translation_hashes' => ['type' => 'text', 'not null' => FALSE],
+      'last_event_id' => ['type' => 'varchar_ascii', 'length' => 36, 'not null' => TRUE],
+      'updated' => ['type' => 'int', 'size' => 'big', 'not null' => TRUE],
+    ],
+    'primary key' => ['replica_id', 'entity_type', 'uuid'],
+    'indexes' => ['status' => ['replica_id', 'status']],
+  ];
+
   $schema[PairingCodes::TABLE] = [
     'description' => 'One-time pairing codes, stored only as keyed hashes.',
     'fields' => [

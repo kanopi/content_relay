@@ -13,9 +13,17 @@ services:
     parent: default_plugin_manager
     arguments: ['@entity_type.manager']
 
+  plugin.manager.content_relay_field_normalizer:
+    class: Drupal\content_relay\Serialization\FieldNormalizerManager
+    parent: default_plugin_manager
+
+  content_relay.path_translator:
+    class: Drupal\content_relay\Serialization\PathTranslator
+    arguments: ['@entity_type.manager', '@content_relay.uuid_resolver']
+
   content_relay.uuid_resolver:
     class: Drupal\content_relay\Serialization\UuidResolver
-    arguments: ['@entity_type.manager', '@database']
+    arguments: ['@entity_type.manager', '@database', '@entity_field.manager']
 
   content_relay.entity_serializer:
     class: Drupal\content_relay\Serialization\EntitySerializer
@@ -75,3 +83,18 @@ services:
   content_relay.contract_renderer:
     class: Drupal\content_relay\Contract\ContractRenderer
     arguments: ['@content_relay.contract_summarizer', '@date.formatter', '@entity_type.manager', '@string_translation']
+
+  # Authentication of replica requests to the origin. Swap the alias to use
+  # another scheme, such as OAuth client credentials.
+  content_relay.jwt_authenticator:
+    class: Drupal\content_relay\Auth\JwtAuthenticator
+    arguments:
+      - '@content_relay.key_store'
+      - '@content_relay.site_identity'
+      - '@content_relay.public_key_resolver'
+      - '@content_relay.replay_guard'
+      - '@datetime.time'
+      - '@uuid'
+
+  content_relay.pull_authenticator:
+    alias: content_relay.jwt_authenticator

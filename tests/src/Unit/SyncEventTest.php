@@ -58,6 +58,7 @@ final class SyncEventTest extends UnitTestCase {
       'contract_version' => 1,
       'created' => 1700000001,
       'dependencies' => [['entity_type' => 'taxonomy_term', 'uuid' => self::EVENT]],
+      'external_references' => [['entity_type' => 'user', 'uuid' => self::EVENT]],
       'files' => [],
       'process' => 'immediate',
       'snapshot' => $snapshot,

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Drupal\content_relay\Serialization;
 
 use Drupal\Core\Database\Connection;
+use Drupal\Core\Entity\EntityFieldManagerInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Entity\Sql\SqlEntityStorageInterface;
 
@@ -36,9 +37,17 @@ class UuidResolver {
    */
   protected array $ids = [];
 
+  /**
+   * Whether each entity type's ID is an integer, by entity type.
+   *
+   * @var array<string, bool>
+   */
+  protected array $integerIds = [];
+
   public function __construct(
     protected EntityTypeManagerInterface $entityTypeManager,
     protected Connection $database,
+    protected EntityFieldManagerInterface $entityFieldManager,
   ) {}
 
   /**
@@ -51,6 +60,18 @@ class UuidResolver {
    */
   public function primeIds(string $entity_type_id, array $ids): void {
     $missing = array_values(array_filter(array_unique($ids), fn ($id) => !array_key_exists($id, $this->uuids[$entity_type_id] ?? [])));
+    // A database compares "login" with an integer column as 0. Words in a path
+    // such as /user/login must never match an entity, so they are known
+    // missing without asking.
+    if ($this->hasIntegerIds($entity_type_id)) {
+      foreach ($missing as $i => $id) {
+        if (!is_int($id) && !ctype_digit((string) $id)) {
+          $this->uuids[$entity_type_id][$id] = FALSE;
+          unset($missing[$i]);
+        }
+      }
+      $missing = array_values($missing);
+    }
     if ($missing === []) {
       return;
     }
@@ -103,6 +124,18 @@ class UuidResolver {
   public function toId(string $entity_type_id, string $uuid): int|string|null {
     $this->primeUuids($entity_type_id, [$uuid]);
     return $this->ids[$entity_type_id][$uuid] ?: NULL;
+  }
+
+  /**
+   * Whether an entity type's ID field is an integer.
+   */
+  protected function hasIntegerIds(string $entity_type_id): bool {
+    if (!isset($this->integerIds[$entity_type_id])) {
+      $id_key = (string) $this->entityTypeManager->getDefinition($entity_type_id)->getKey('id');
+      $field = $this->entityFieldManager->getBaseFieldDefinitions($entity_type_id)[$id_key] ?? NULL;
+      $this->integerIds[$entity_type_id] = $field !== NULL && $field->getType() === 'integer';
+    }
+    return $this->integerIds[$entity_type_id];
   }
 
   /**

@@ -11,6 +11,7 @@ use Drupal\content_relay\Event\SyncEvent;
 use Drupal\content_relay_replica\Apply\ApplyResult;
 use Drupal\content_relay_replica\FailedEventStore;
 use Drupal\content_relay_replica\SyncStatus;
+use Drupal\entity_test\Entity\EntityTestMul;
 use Drupal\node\Entity\Node;
 use Drupal\taxonomy\Entity\Term;
 use PHPUnit\Framework\Attributes\Group;
@@ -379,6 +380,40 @@ final class ApplyTest extends ReplicaTestBase {
       'entity_uuid' => $snapshot['uuid'],
     ]);
     $this->assertSame(ApplyResult::CONTRACT_MISMATCH, $this->apply($term)->result);
+  }
+
+  /**
+   * Without revisions, the version counter and changed time decide staleness.
+   */
+  public function testNonRevisionableStaleness(): void {
+    // entity_test itself has a test normalizer that keeps "name" local.
+    $this->container->get('content_relay_replica.contracts')->save($this->contract(2, ['entity_test_mul' => ['entity_test_mul']]));
+    $entity = EntityTestMul::create(['name' => 'v1']);
+    $entity->save();
+    $snapshot = json_decode(json_encode($this->container->get('content_relay.entity_serializer')->normalize($entity)), TRUE);
+    $entity->delete();
+    $this->container->get('content_relay.uuid_resolver')->reset();
+
+    $event = fn (int $version, int $changed, string $name) => $this->event(
+      ['shared' => ['name' => [['value' => $name]]] + $snapshot['shared']] + $snapshot,
+      Operation::Update,
+      $version,
+      [
+        'entity_type' => 'entity_test_mul',
+        'bundle' => 'entity_test_mul',
+        'revisionable' => FALSE,
+        'source_changed' => $changed,
+        'contract_version' => 2,
+      ],
+    );
+    $first = $this->apply($event(1, 100, 'v1'));
+    $this->assertSame(ApplyResult::APPLIED, $first->result, json_encode($first->toArray('x')));
+    $this->assertSame(ApplyResult::APPLIED, $this->apply($event(2, 200, 'v2'))->result);
+    $this->assertSame(ApplyResult::STALE, $this->apply($event(1, 300, 'older counter'))->result);
+    $this->assertSame(ApplyResult::STALE, $this->apply($event(2, 150, 'same counter, older'))->result);
+    $this->container->get('entity_type.manager')->getStorage('entity_test_mul')->resetCache();
+    $stored = $this->container->get('entity.repository')->loadEntityByUuid('entity_test_mul', $snapshot['uuid']);
+    $this->assertSame('v2', $stored->label());
   }
 
   /**

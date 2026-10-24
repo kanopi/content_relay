@@ -110,6 +110,22 @@ class Outbox {
   }
 
   /**
+   * The oldest unsent row for an item and a replica.
+   */
+  public function pendingRowFor(string $replica_id, string $entity_type_id, string $uuid): ?array {
+    return $this->database->select(self::TABLE, 'o')
+      ->fields('o')
+      ->condition('replica_id', $replica_id)
+      ->condition('entity_type', $entity_type_id)
+      ->condition('entity_uuid', $uuid)
+      ->condition('status', EventStatus::PENDING, 'IN')
+      ->orderBy('sequence')
+      ->range(0, 1)
+      ->execute()
+      ->fetchAssoc() ?: NULL;
+  }
+
+  /**
    * The sequence of the last event this replica was sent before another.
    */
   public function previousSentSequence(string $replica_id, int $sequence): ?int {

@@ -44,7 +44,7 @@ class SyncableEntityTypes {
       catch (\InvalidArgumentException) {
         continue;
       }
-      if ($include_embedded || !$normalizer->isEmbedded()) {
+      if ($include_embedded || !$normalizer->isEmbedded($definition)) {
         $types[$id] = $definition;
       }
     }

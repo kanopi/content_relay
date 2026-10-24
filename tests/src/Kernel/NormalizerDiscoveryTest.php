@@ -67,7 +67,8 @@ final class NormalizerDiscoveryTest extends KernelTestBase {
     $this->installEntitySchema('user');
     $manager = $this->container->get('plugin.manager.content_relay_normalizer');
     $this->assertSame('content_relay_test', $manager->getNormalizer('entity_test')->getPluginId());
-    $this->assertSame('generic', $manager->getNormalizer('user')->getPluginId());
+    $this->assertSame('user', $manager->getNormalizer('user')->getPluginId());
+    $this->assertSame('generic', $manager->getNormalizer('entity_test_mul')->getPluginId());
 
     $entity = EntityTest::create(['name' => 'Local only']);
     $entity->save();

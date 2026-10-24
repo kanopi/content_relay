@@ -148,12 +148,13 @@ sent to the origin names the innermost exception's class (for example
 `RuntimeException`) and nothing else; its message, which can contain paths or
 values, stays in the replica's failed events table.
 
-## 17. JWT pull authentication waits for the endpoints that need it
+## 17. JWT pull authentication
 
 Pairing and every contract message are signed messages, which already prove
-who sent them; none of phase 3 needs a bearer token. `lcobucci/jwt` is added
-with the first replica-to-origin read endpoint (pull, schema, file), so the
-dependency arrives with code that uses it.
+who sent them. JWTs are for the plain read requests a replica makes to its
+origin. `lcobucci/jwt` is a dependency of the module and of the project, and
+`JwtAuthenticator` is in place behind `PullAuthenticatorInterface`; the
+endpoints that use it arrive with pulls, schema and files.
 
 ## 18. A pairing request is signed by the key it registers
 
@@ -192,3 +193,44 @@ The specification asks that switching from "all languages" to "selected"
 pre-selects the languages currently received. Until the origin's language list
 is available from its schema endpoint (phase 9), the form pre-selects the
 replica's own enabled languages when none are ticked.
+
+## 22. Entity coverage is by field kind, not by entity type
+
+The specification lists entity types to support. Instead, everything that can
+hide a site-specific value is handled by the kind of field it is in (reference,
+embedded entity, link, system path, moderation state) wherever that field
+appears, and only what is truly particular to one entity type has an entity
+plugin. A test enables a wide set of modules and every `entity_test` type,
+asks which types and bundles can be synced, and round-trips a sample entity of
+each, so a type that does not work shows up as a failure rather than a gap.
+
+## 23. Embedding requires a composite target
+
+An Entity Reference Revisions field is embedded only when its target type is
+composite (declares the parent keys, as paragraphs do). Otherwise it is an
+ordinary reference, so pointing such a field at nodes does not copy whole
+nodes into their referrers.
+
+## 24. References outside the subscription have a local fallback
+
+This answers the open question on authors. An event lists the entities it
+references that the replica will never receive. The replica uses its own
+entity with that UUID if there is one, and otherwise a fallback per entity
+type: by default the anonymous user for authors, and nothing for other
+references. Subscribed references the replica lacks still make the item wait.
+Sites that want real authors subscribe to users.
+
+## 25. Pending drafts are not synced yet
+
+Snapshots are built from the default revision, the one that is live. A draft
+saved on top of published content (a forward revision) is not sent until it
+is published, and moderation state is synced for the translations of the
+default revision. Sending forward revisions, so a replica can show the same
+drafts, belongs with the multilingual and moderation work in phase 11.
+
+## 26. Things a replica must not generate itself
+
+Modules that create content from other content on save will collide with
+synced content. Pathauto is the common case: synced path aliases arrive as
+entities, and a replica that also generates aliases for synced nodes gets two.
+Disable generation for synced bundles on replicas.

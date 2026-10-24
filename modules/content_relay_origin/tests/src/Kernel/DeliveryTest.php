@@ -14,6 +14,7 @@ use Drupal\content_relay_origin\HashStore;
 use Drupal\content_relay_origin\Outbox;
 use Drupal\content_relay_origin\PairingCodes;
 use Drupal\content_relay_origin\Replica;
+use Drupal\content_relay_origin\ReplicaItems;
 use Drupal\content_relay_origin\ReplicaRegistry;
 use Drupal\key\Entity\Key;
 use Drupal\KernelTests\KernelTestBase;
@@ -97,6 +98,7 @@ final class DeliveryTest extends KernelTestBase {
       HashStore::TABLE,
       ContractManager::TABLE,
       PairingCodes::TABLE,
+      ReplicaItems::TABLE,
     ]);
     $this->installConfig(['content_relay', 'content_relay_origin', 'node', 'filter']);
     content_relay_install(FALSE);

@@ -27,6 +27,7 @@ class EventBuilder {
     protected EntitySerializer $serializer,
     protected RevisionHasher $hasher,
     protected HashStore $hashStore,
+    protected SyncScope $scope,
     protected TimeInterface $time,
   ) {}
 
@@ -80,6 +81,7 @@ class EventBuilder {
     $context = new NormalizationContext($contract->languagesFor($entity->getEntityTypeId(), $entity->bundle()));
     $snapshot = $this->serializer->normalize($entity, $context);
     $hashes = $this->hasher->hash($snapshot);
+    [$dependencies, $external] = $this->classifyReferences(array_values($context->references), $contract);
     $revisionable = $entity->getEntityType()->isRevisionable();
     $revision = $revisionable ? (int) $entity->getRevisionId() : (int) ($this->hashStore->latest($entity->getEntityTypeId(), $entity->uuid())['revision'] ?? 1);
 
@@ -99,9 +101,53 @@ class EventBuilder {
       snapshot: $snapshot,
       contractVersion: $contract->version(),
       created: $this->time->getCurrentTime(),
-      dependencies: array_values($context->references),
+      dependencies: $dependencies,
       previousSequence: $previous_sequence,
+      externalReferences: $external,
     );
+  }
+
+  /**
+   * Splits referenced entities into those the replica gets and the rest.
+   *
+   * A reference to something the replica subscribes to is a dependency: it is
+   * sent first, and the replica waits for it if it has not arrived. Anything
+   * else (an entity type or bundle outside the contract, or one the origin
+   * does not publish) will never be sent, and the replica is told so.
+   *
+   * @param array<array{entity_type: string, uuid: string}> $references
+   *   Referenced entities.
+   * @param \Drupal\content_relay\Contract\SubscriptionContract $contract
+   *   The contract in force.
+   *
+   * @return array{0: array, 1: array}
+   *   Dependencies and external references.
+   */
+  protected function classifyReferences(array $references, SubscriptionContract $contract): array {
+    $by_type = [];
+    foreach ($references as $reference) {
+      $by_type[$reference['entity_type']][] = $reference['uuid'];
+    }
+    $dependencies = $external = [];
+    foreach ($by_type as $entity_type_id => $uuids) {
+      $storage = $this->entityTypeManager->getStorage($entity_type_id);
+      $uuid_key = (string) $this->entityTypeManager->getDefinition($entity_type_id)->getKey('uuid');
+      $loaded = [];
+      foreach ($storage->loadByProperties([$uuid_key => $uuids]) as $entity) {
+        $loaded[$entity->uuid()] = $entity;
+      }
+      foreach ($uuids as $uuid) {
+        $target = $loaded[$uuid] ?? NULL;
+        $reference = ['entity_type' => $entity_type_id, 'uuid' => $uuid];
+        if ($target !== NULL && $this->scope->applies($target) && $contract->allowsBundle($entity_type_id, $target->bundle())) {
+          $dependencies[] = $reference;
+        }
+        else {
+          $external[] = $reference;
+        }
+      }
+    }
+    return [$dependencies, $external];
   }
 
   /**

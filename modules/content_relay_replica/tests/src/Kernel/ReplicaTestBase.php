@@ -43,6 +43,7 @@ abstract class ReplicaTestBase extends KernelTestBase {
     'content_relay',
     'content_relay_replica',
     'content_relay_test',
+    'entity_test',
     'key',
     'node',
     'system',
@@ -71,7 +72,9 @@ abstract class ReplicaTestBase extends KernelTestBase {
     $this->installEntitySchema('user');
     $this->installEntitySchema('node');
     $this->installEntitySchema('taxonomy_term');
+    $this->installEntitySchema('entity_test_mul');
     $this->installSchema('node', ['node_access']);
+    $this->installSchema('user', ['users_data']);
     $this->installSchema('content_relay', ['content_relay_seen_message']);
     $this->installSchema('content_relay_replica', [
       SyncStateStore::TABLE,
@@ -126,7 +129,7 @@ abstract class ReplicaTestBase extends KernelTestBase {
    * The snapshot of an article that exists only on the origin.
    */
   protected function originArticle(string $title = 'Hello', array $values = []): array {
-    $node = Node::create(['type' => 'article', 'title' => $title, 'uid' => 0] + $values);
+    $node = Node::create($values + ['type' => 'article', 'title' => $title, 'uid' => 0]);
     $node->save();
     $snapshot = json_decode(json_encode($this->container->get('content_relay.entity_serializer')->normalize($node)), TRUE);
     $node->delete();
@@ -156,6 +159,7 @@ abstract class ReplicaTestBase extends KernelTestBase {
       'contract_version' => 1,
       'created' => 1700000000,
       'dependencies' => [],
+      'external_references' => [],
       'files' => [],
       'process' => NULL,
       'snapshot' => $snapshot,

@@ -8,16 +8,18 @@ use Drupal\content_relay\Attribute\ContentRelayNormalizer;
 use Drupal\content_relay\Serialization\DenormalizationContext;
 use Drupal\content_relay\Serialization\EntityNormalizerInterface;
 use Drupal\content_relay\Serialization\EntitySerializer;
+use Drupal\content_relay\Serialization\FieldNormalizerInterface;
+use Drupal\content_relay\Serialization\FieldNormalizerManager;
 use Drupal\content_relay\Serialization\NormalizationContext;
 use Drupal\content_relay\Serialization\Snapshot;
-use Drupal\Core\Config\Entity\ConfigEntityTypeInterface;
 use Drupal\Core\Entity\ContentEntityInterface;
+use Drupal\Core\Entity\ContentEntityNullStorage;
 use Drupal\Core\Entity\ContentEntityTypeInterface;
+use Drupal\Core\Entity\EntityFieldManagerInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Field\FieldDefinitionInterface;
 use Drupal\Core\Field\FieldItemInterface;
 use Drupal\Core\Field\FieldItemListInterface;
-use Drupal\Core\Field\Plugin\Field\FieldType\EntityReferenceItem;
 use Drupal\Core\Language\LanguageInterface;
 use Drupal\Core\Language\LanguageManagerInterface;
 use Drupal\Core\Plugin\ContainerFactoryPluginInterface;
@@ -29,23 +31,24 @@ use Symfony\Component\DependencyInjection\ContainerInterface;
 /**
  * Normalizes any content entity type with a UUID.
  *
- * Every stored, non-computed field is synced except the ones that only mean
- * something on the site that holds them (see getLocalFieldNames()). Values are
- * taken property by property and cast to their declared type, so an integer
- * read back from the database as "1" and the same integer set in memory as 1
- * produce the same snapshot.
+ * Every stored field is synced except the ones that only mean something on
+ * the site that holds them (see getLocalFieldNames()) and password fields.
+ * Values are taken property by property and cast to their declared type, so
+ * an integer read back from the database as "1" and the same integer set in
+ * memory as 1 produce the same snapshot.
  *
- * References to content entities become UUIDs; references to configuration
- * entities keep their machine name, which is already portable. Entities whose
- * own normalizer says they are embedded (paragraphs) are normalized into the
- * referencing item.
+ * Anything site-specific inside a value is the business of the field
+ * normalizer for that kind of field (references, embedded entities, links,
+ * moderation state), which works the same on every entity type. That is what
+ * makes this class enough for entity types nobody wrote a plugin for.
  *
  * Fields of type "changed" go into the metadata section: they are synced so
  * the replica shows the origin's dates, but they are not content, and saving
  * the same values twice must not produce two hashes.
  *
- * Subclasses handle the special cases; most need only override
- * getLocalFieldNames() or normalizeItem().
+ * Entity types that are composite, meaning they only exist inside a parent
+ * through Entity Reference Revisions (paragraphs, and anything else declaring
+ * the parent keys), are embedded in their parent's snapshot.
  */
 #[ContentRelayNormalizer(
   id: 'generic',
@@ -56,12 +59,13 @@ use Symfony\Component\DependencyInjection\ContainerInterface;
 class GenericContentEntityNormalizer extends PluginBase implements EntityNormalizerInterface, ContainerFactoryPluginInterface {
 
   /**
-   * The user ID that is the same on every site.
-   *
-   * Anonymous is user 0 everywhere but its UUID is generated per site, so it
-   * cannot be matched by UUID like everything else.
+   * Entity type keys a composite entity uses to point back at its parent.
    */
-  protected const ANONYMOUS = 'anonymous';
+  public const PARENT_KEYS = [
+    'entity_revision_parent_type_field',
+    'entity_revision_parent_id_field',
+    'entity_revision_parent_field_name_field',
+  ];
 
   public function __construct(
     array $configuration,
@@ -69,6 +73,8 @@ class GenericContentEntityNormalizer extends PluginBase implements EntityNormali
     $plugin_definition,
     protected EntityTypeManagerInterface $entityTypeManager,
     protected LanguageManagerInterface $languageManager,
+    protected FieldNormalizerManager $fieldNormalizers,
+    protected EntityFieldManagerInterface $entityFieldManager,
   ) {
     parent::__construct($configuration, $plugin_id, $plugin_definition);
   }
@@ -83,6 +89,8 @@ class GenericContentEntityNormalizer extends PluginBase implements EntityNormali
       $plugin_definition,
       $container->get('entity_type.manager'),
       $container->get('language_manager'),
+      $container->get('plugin.manager.content_relay_field_normalizer'),
+      $container->get('entity_field.manager'),
     );
   }
 
@@ -90,14 +98,23 @@ class GenericContentEntityNormalizer extends PluginBase implements EntityNormali
    * {@inheritdoc}
    */
   public function applies(ContentEntityTypeInterface $entity_type): bool {
-    return $entity_type->hasKey('uuid');
+    // Entity types that are never stored (a contact form message is only
+    // sent by mail) have nothing to sync.
+    return $entity_type->hasKey('uuid') && !is_a($entity_type->getStorageClass(), ContentEntityNullStorage::class, TRUE);
   }
 
   /**
    * {@inheritdoc}
    */
-  public function isEmbedded(): bool {
-    return FALSE;
+  public function isEmbedded(ContentEntityTypeInterface $entity_type): bool {
+    return self::isComposite($entity_type);
+  }
+
+  /**
+   * Whether an entity type lives only inside a parent.
+   */
+  public static function isComposite(ContentEntityTypeInterface $entity_type): bool {
+    return (bool) $entity_type->get('entity_revision_parent_id_field');
   }
 
   /**
@@ -107,10 +124,16 @@ class GenericContentEntityNormalizer extends PluginBase implements EntityNormali
     // The UUID, bundle and langcode are carried at the top of the snapshot.
     // IDs and revision IDs are local by definition, and revision metadata
     // describes how this site came to have the revision, which on a replica is
-    // "synced", not who edited it on the origin.
+    // "synced", not who edited it on the origin. A composite entity's pointer
+    // to its parent is set by the parent on each site.
     $names = [];
     foreach (['id', 'revision', 'uuid', 'bundle', 'langcode', 'default_langcode', 'revision_translation_affected'] as $key) {
       if ($name = $entity_type->getKey($key)) {
+        $names[] = $name;
+      }
+    }
+    foreach (self::PARENT_KEYS as $key) {
+      if ($name = $entity_type->get($key)) {
         $names[] = $name;
       }
     }
@@ -135,6 +158,11 @@ class GenericContentEntityNormalizer extends PluginBase implements EntityNormali
       'translations' => [],
       'metadata' => ['shared' => [], 'translations' => []],
     ];
+    $entity_type = $entity->getEntityType();
+    assert($entity_type instanceof ContentEntityTypeInterface);
+    if ($this->hasMeaningfulId($entity_type)) {
+      $snapshot['metadata']['id'] = (string) $entity->id();
+    }
 
     foreach ($langcodes as $langcode) {
       $translation = $entity->getTranslation($langcode);
@@ -172,6 +200,7 @@ class GenericContentEntityNormalizer extends PluginBase implements EntityNormali
    */
   public function denormalize(array $snapshot, ?ContentEntityInterface $entity, DenormalizationContext $context, EntitySerializer $serializer): ContentEntityInterface {
     $entity_type = $this->entityTypeManager->getDefinition($snapshot['entity_type']);
+    assert($entity_type instanceof ContentEntityTypeInterface);
     if ($entity === NULL) {
       $values = [$entity_type->getKey('uuid') => $snapshot['uuid']];
       if ($bundle_key = $entity_type->getKey('bundle')) {
@@ -179,6 +208,9 @@ class GenericContentEntityNormalizer extends PluginBase implements EntityNormali
       }
       if ($langcode_key = $entity_type->getKey('langcode')) {
         $values[$langcode_key] = $snapshot['default_langcode'];
+      }
+      if (isset($snapshot['metadata']['id']) && $this->hasMeaningfulId($entity_type)) {
+        $values[$entity_type->getKey('id')] = $snapshot['metadata']['id'];
       }
       $entity = $this->entityTypeManager->getStorage($snapshot['entity_type'])->create($values);
       assert($entity instanceof ContentEntityInterface);
@@ -194,10 +226,16 @@ class GenericContentEntityNormalizer extends PluginBase implements EntityNormali
 
     $fields = $this->getSyncedFields($entity);
     $this->recordUnknownFields($snapshot, $fields, $context);
-    $this->primeTargets($snapshot, $serializer);
+    $this->primeTargets($snapshot, $fields, $serializer);
+    $prefix = $context->prefix;
 
     foreach (Snapshot::langcodes($snapshot) as $langcode) {
-      if ($entity->hasTranslation($langcode)) {
+      // The default translation by identity, not by lookup: an entity whose
+      // language is "not specified" does not report that it "has" it.
+      if ($langcode === $entity->getUntranslated()->language()->getId()) {
+        $translation = $entity->getUntranslated();
+      }
+      elseif ($entity->hasTranslation($langcode)) {
         $translation = $entity->getTranslation($langcode);
       }
       elseif (!$entity->isTranslatable()) {
@@ -220,21 +258,22 @@ class GenericContentEntityNormalizer extends PluginBase implements EntityNormali
         if ($shared && $langcode !== $default) {
           continue;
         }
-        if ($this->isMetadataField($definition)) {
-          $items = $shared ? ($snapshot['metadata']['shared'][$name] ?? NULL) : ($snapshot['metadata']['translations'][$langcode][$name] ?? NULL);
+        $metadata = $this->isMetadataField($definition);
+        $location = $metadata
+          ? ($shared ? ['metadata', 'shared', $name] : ['metadata', 'translations', $langcode, $name])
+          : ($shared ? ['shared', $name] : ['translations', $langcode, $name]);
+        $items = $this->itemsAt($snapshot, $location);
+        if ($metadata && $items === NULL) {
           // Metadata is informative: when the sender left it out, keep ours
           // rather than clearing it.
-          if ($items === NULL) {
-            continue;
-          }
+          continue;
         }
-        else {
-          // An absent field is an empty one; see Snapshot.
-          $items = $shared ? ($snapshot['shared'][$name] ?? []) : ($snapshot['translations'][$langcode][$name] ?? []);
-        }
-        $translation->set($name, $this->denormalizeItems($items, $definition, $context, $serializer));
+        // An absent field is an empty one; see Snapshot.
+        $context->location = [...$prefix, ...$location];
+        $translation->set($name, $this->denormalizeItems($items ?? [], $definition, $context, $serializer));
       }
     }
+    $context->prefix = $prefix;
 
     // Managed translations the sender no longer has were deleted there.
     foreach (array_keys($entity->getTranslationLanguages(FALSE)) as $langcode) {
@@ -245,6 +284,21 @@ class GenericContentEntityNormalizer extends PluginBase implements EntityNormali
     }
 
     return $entity;
+  }
+
+  /**
+   * Whether an entity type's IDs are chosen rather than generated.
+   *
+   * Integer IDs are assigned by each site's database and mean nothing
+   * elsewhere. String IDs are chosen when the entity is created, nothing
+   * generates them, and an entity cannot be saved without one, so they travel
+   * with the snapshot, as metadata: identity is still the UUID, and the hash
+   * is unaffected.
+   */
+  protected function hasMeaningfulId(ContentEntityTypeInterface $entity_type): bool {
+    $id_key = (string) $entity_type->getKey('id');
+    $definition = $this->entityFieldManager->getBaseFieldDefinitions($entity_type->id())[$id_key] ?? NULL;
+    return $definition !== NULL && $definition->getType() !== 'integer';
   }
 
   /**
@@ -259,9 +313,13 @@ class GenericContentEntityNormalizer extends PluginBase implements EntityNormali
     $local = array_flip($this->getLocalFieldNames($entity_type));
     $fields = [];
     foreach ($entity->getFieldDefinitions() as $name => $definition) {
-      if (!isset($local[$name]) && !$definition->isComputed()) {
-        $fields[$name] = $definition;
+      if (isset($local[$name]) || $definition->getType() === 'password') {
+        continue;
       }
+      if ($definition->isComputed() && !$this->fieldNormalizers->getForField($definition)?->syncsComputed()) {
+        continue;
+      }
+      $fields[$name] = $definition;
     }
     ksort($fields);
     return $fields;
@@ -315,44 +373,52 @@ class GenericContentEntityNormalizer extends PluginBase implements EntityNormali
   protected function primeReferences(ContentEntityInterface $entity, array $fields, array $langcodes, EntitySerializer $serializer): void {
     $ids = [];
     foreach ($fields as $name => $definition) {
-      if (!$this->isReferenceField($definition)) {
+      $normalizer = $this->fieldNormalizers->getForField($definition);
+      if ($normalizer === NULL || $definition->isComputed()) {
         continue;
       }
-      $target_type = (string) $definition->getSetting('target_type');
       foreach ($langcodes as $langcode) {
         foreach ($entity->getTranslation($langcode)->get($name) as $item) {
-          if (isset($item->target_id)) {
-            $ids[$target_type][] = $item->target_id;
+          foreach ($normalizer->referencedIds($item) as $entity_type_id => $list) {
+            $ids[$entity_type_id] = [...($ids[$entity_type_id] ?? []), ...$list];
           }
         }
       }
     }
-    foreach ($ids as $target_type => $list) {
-      if ($this->isUuidTarget($target_type)) {
-        $serializer->getUuidResolver()->primeIds($target_type, $list);
-      }
+    foreach ($ids as $entity_type_id => $list) {
+      $serializer->getUuidResolver()->primeIds($entity_type_id, $list);
     }
   }
 
   /**
    * Looks up the local IDs of every referenced UUID in one query per type.
+   *
+   * @param array $snapshot
+   *   The snapshot.
+   * @param array<string, \Drupal\Core\Field\FieldDefinitionInterface> $fields
+   *   Local synced fields.
+   * @param \Drupal\content_relay\Serialization\EntitySerializer $serializer
+   *   The serializer.
    */
-  protected function primeTargets(array $snapshot, EntitySerializer $serializer): void {
+  protected function primeTargets(array $snapshot, array $fields, EntitySerializer $serializer): void {
     $uuids = [];
-    $collect = function (array $fields) use (&$uuids): void {
-      foreach ($fields as $items) {
-        foreach ($items as $item) {
-          if (isset($item[Snapshot::TARGET_TYPE], $item[Snapshot::TARGET_UUID])) {
-            $uuids[$item[Snapshot::TARGET_TYPE]][] = $item[Snapshot::TARGET_UUID];
+    $sections = [$snapshot['shared'], ...array_values($snapshot['translations'])];
+    foreach ($fields as $name => $definition) {
+      $normalizer = $this->fieldNormalizers->getForField($definition);
+      if ($normalizer === NULL) {
+        continue;
+      }
+      foreach ($sections as $section) {
+        foreach ($section[$name] ?? [] as $item) {
+          foreach ($normalizer->referencedUuids($item, $definition) as $entity_type_id => $list) {
+            $uuids[$entity_type_id] = [...($uuids[$entity_type_id] ?? []), ...$list];
           }
         }
       }
-    };
-    $collect($snapshot['shared']);
-    array_map($collect, $snapshot['translations']);
-    foreach ($uuids as $target_type => $list) {
-      if ($this->entityTypeManager->hasDefinition($target_type) && $this->isUuidTarget($target_type)) {
-        $serializer->getUuidResolver()->primeUuids($target_type, $list);
+    }
+    foreach ($uuids as $entity_type_id => $list) {
+      if ($this->entityTypeManager->hasDefinition($entity_type_id)) {
+        $serializer->getUuidResolver()->primeUuids($entity_type_id, $list);
       }
     }
   }
@@ -364,12 +430,13 @@ class GenericContentEntityNormalizer extends PluginBase implements EntityNormali
    *   Items.
    */
   protected function normalizeField(FieldItemListInterface $items, NormalizationContext $context, EntitySerializer $serializer): array {
+    $normalizer = $this->fieldNormalizers->getForField($items->getFieldDefinition());
     $normalized = [];
     foreach ($items as $item) {
       if ($item->isEmpty()) {
         continue;
       }
-      $value = $this->normalizeItem($item, $context, $serializer);
+      $value = $this->normalizeItem($item, $normalizer, $context, $serializer);
       if ($value !== NULL) {
         $normalized[] = $value;
       }
@@ -383,7 +450,7 @@ class GenericContentEntityNormalizer extends PluginBase implements EntityNormali
    * @return array|null
    *   The item's properties, or NULL to leave the item out.
    */
-  protected function normalizeItem(FieldItemInterface $item, NormalizationContext $context, EntitySerializer $serializer): ?array {
+  protected function normalizeItem(FieldItemInterface $item, ?FieldNormalizerInterface $normalizer, NormalizationContext $context, EntitySerializer $serializer): ?array {
     $values = [];
     // Stored properties only: computed ones are derived from these on the
     // receiving site, and include objects such as the referenced entity.
@@ -397,69 +464,7 @@ class GenericContentEntityNormalizer extends PluginBase implements EntityNormali
       // handled above because casting would turn it into 0 or "".
       $values[$name] = $property instanceof PrimitiveInterface ? $property->getCastedValue() : $this->plainValue($value, $item);
     }
-    if ($item instanceof EntityReferenceItem) {
-      return $this->normalizeReference($item, $values, $context, $serializer);
-    }
-    return $values;
-  }
-
-  /**
-   * Replaces a local target ID with something portable.
-   *
-   * @param \Drupal\Core\Field\Plugin\Field\FieldType\EntityReferenceItem $item
-   *   The item.
-   * @param array $values
-   *   Its normalized properties.
-   * @param \Drupal\content_relay\Serialization\NormalizationContext $context
-   *   The context.
-   * @param \Drupal\content_relay\Serialization\EntitySerializer $serializer
-   *   The serializer.
-   *
-   * @return array|null
-   *   The item, or NULL when its target is gone.
-   */
-  protected function normalizeReference(EntityReferenceItem $item, array $values, NormalizationContext $context, EntitySerializer $serializer): ?array {
-    $target_type = (string) $item->getFieldDefinition()->getSetting('target_type');
-    $field = $item->getFieldDefinition()->getName();
-    $id = $values['target_id'] ?? NULL;
-    unset($values['target_id'], $values['target_revision_id']);
-    if ($id === NULL) {
-      // An unsaved target: nothing on the other site can match it.
-      return NULL;
-    }
-    $values[Snapshot::TARGET_TYPE] = $target_type;
-
-    if ($this->isConfigTarget($target_type)) {
-      $values['target_id'] = (string) $id;
-      return $values;
-    }
-    if ($target_type === 'user' && (int) $id === 0) {
-      $values[Snapshot::TARGET_UUID] = self::ANONYMOUS;
-      return $values;
-    }
-    if (!$this->isUuidTarget($target_type)) {
-      $context->unresolved[] = ['field' => $field, 'entity_type' => $target_type, 'id' => $id];
-      return NULL;
-    }
-
-    if ($serializer->getNormalizer($target_type)->isEmbedded()) {
-      $target = $item->entity;
-      if (!$target instanceof ContentEntityInterface) {
-        $context->unresolved[] = ['field' => $field, 'entity_type' => $target_type, 'id' => $id];
-        return NULL;
-      }
-      $values[Snapshot::EMBEDDED] = $serializer->normalize($target, $context);
-      return $values;
-    }
-
-    $uuid = $serializer->getUuidResolver()->toUuid($target_type, $id);
-    if ($uuid === NULL) {
-      $context->unresolved[] = ['field' => $field, 'entity_type' => $target_type, 'id' => $id];
-      return NULL;
-    }
-    $values[Snapshot::TARGET_UUID] = $uuid;
-    $context->addReference($target_type, $uuid);
-    return $values;
+    return $normalizer === NULL ? $values : $normalizer->normalizeItem($item, $values, $context, $serializer);
   }
 
   /**
@@ -469,50 +474,35 @@ class GenericContentEntityNormalizer extends PluginBase implements EntityNormali
    *   Field values.
    */
   protected function denormalizeItems(array $items, FieldDefinitionInterface $definition, DenormalizationContext $context, EntitySerializer $serializer): array {
-    $values = [];
-    $is_reference = $this->isReferenceField($definition);
-    foreach ($items as $item) {
-      if ($is_reference) {
-        $item = $this->denormalizeReference($item, $definition, $context, $serializer);
-        if ($item === NULL) {
-          continue;
-        }
-      }
-      $values[] = $item;
+    $normalizer = $this->fieldNormalizers->getForField($definition);
+    if ($normalizer === NULL) {
+      return array_values($items);
     }
+    $location = $context->location;
+    $values = [];
+    foreach ($items as $delta => $item) {
+      $context->location = $location;
+      $context->delta = (int) $delta;
+      $item = $normalizer->denormalizeItem($item, $definition, $context, $serializer);
+      if ($item !== NULL) {
+        $values[] = $item;
+      }
+    }
+    $context->location = $location;
     return $values;
   }
 
   /**
-   * Resolves a portable reference to a local target.
-   *
-   * @return array|null
-   *   The item, or NULL when the target does not exist here.
+   * The item list at a location in a snapshot, or NULL if absent.
    */
-  protected function denormalizeReference(array $item, FieldDefinitionInterface $definition, DenormalizationContext $context, EntitySerializer $serializer): ?array {
-    $target_type = $item[Snapshot::TARGET_TYPE] ?? (string) $definition->getSetting('target_type');
-    $uuid = $item[Snapshot::TARGET_UUID] ?? NULL;
-    unset($item[Snapshot::TARGET_TYPE], $item[Snapshot::TARGET_UUID]);
-
-    if (isset($item[Snapshot::EMBEDDED])) {
-      $item[Snapshot::EMBEDDED] = $serializer->denormalize($item[Snapshot::EMBEDDED], $context);
-      return $item;
+  protected function itemsAt(array $snapshot, array $location): ?array {
+    foreach ($location as $key) {
+      if (!is_array($snapshot) || !array_key_exists($key, $snapshot)) {
+        return NULL;
+      }
+      $snapshot = $snapshot[$key];
     }
-    if ($this->isConfigTarget($target_type)) {
-      return isset($item['target_id']) ? $item : NULL;
-    }
-    if ($target_type === 'user' && $uuid === self::ANONYMOUS) {
-      return ['target_id' => 0] + $item;
-    }
-    if (!is_string($uuid)) {
-      return NULL;
-    }
-    $id = $serializer->getUuidResolver()->toId($target_type, $uuid);
-    if ($id === NULL) {
-      $context->addMissingReference($target_type, $uuid, $definition->getName());
-      return NULL;
-    }
-    return ['target_id' => $id] + $item;
+    return is_array($snapshot) ? $snapshot : NULL;
   }
 
   /**
@@ -536,28 +526,6 @@ class GenericContentEntityNormalizer extends PluginBase implements EntityNormali
   }
 
   /**
-   * Whether a field's items reference other entities by ID.
-   */
-  protected function isReferenceField(FieldDefinitionInterface $definition): bool {
-    return is_a($definition->getItemDefinition()->getClass(), EntityReferenceItem::class, TRUE);
-  }
-
-  /**
-   * Whether a target type is matched across sites by UUID.
-   */
-  protected function isUuidTarget(string $entity_type_id): bool {
-    $definition = $this->entityTypeManager->getDefinition($entity_type_id, FALSE);
-    return $definition instanceof ContentEntityTypeInterface && $definition->hasKey('uuid');
-  }
-
-  /**
-   * Whether a target type is configuration, matched by machine name.
-   */
-  protected function isConfigTarget(string $entity_type_id): bool {
-    return $this->entityTypeManager->getDefinition($entity_type_id, FALSE) instanceof ConfigEntityTypeInterface;
-  }
-
-  /**
    * Converts a non-primitive property value to scalars and arrays.
    *
    * @throws \InvalidArgumentException
@@ -568,7 +536,7 @@ class GenericContentEntityNormalizer extends PluginBase implements EntityNormali
       return array_map(fn ($nested) => $this->plainValue($nested, $item), $value);
     }
     if (is_object($value) || is_resource($value)) {
-      throw new \InvalidArgumentException(sprintf('Field "%s" holds a %s, which cannot be synced. Add a normalizer plugin for this entity type that handles it.', $item->getFieldDefinition()->getName(), get_debug_type($value)));
+      throw new \InvalidArgumentException(sprintf('Field "%s" holds a %s, which cannot be synced. Add a field normalizer plugin for this field type.', $item->getFieldDefinition()->getName(), get_debug_type($value)));
     }
     return $value;
   }

@@ -318,7 +318,7 @@ final class GenericNormalizerTest extends KernelTestBase {
    */
   public function testReferenceLookupsAreBatched(): void {
     $node = $this->createArticle();
-    $resolver = new class($this->container->get('entity_type.manager'), $this->container->get('database')) extends UuidResolver {
+    $resolver = new class($this->container->get('entity_type.manager'), $this->container->get('database'), $this->container->get('entity_field.manager')) extends UuidResolver {
 
       /**
        * Entity types queried, one entry per query.

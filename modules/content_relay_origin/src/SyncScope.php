@@ -30,7 +30,7 @@ class SyncScope {
       return FALSE;
     }
     try {
-      return !$this->normalizerManager->getNormalizer($entity->getEntityTypeId())->isEmbedded();
+      return !$this->normalizerManager->isEmbedded($entity->getEntityTypeId());
     }
     catch (\InvalidArgumentException) {
       return FALSE;
