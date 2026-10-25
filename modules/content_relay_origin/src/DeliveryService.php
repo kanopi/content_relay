@@ -337,6 +337,10 @@ class DeliveryService {
       if ($row === NULL) {
         continue;
       }
+      // Waiting for a retry, it holds the stream back like any other event.
+      if ((int) $row['next_attempt'] > $this->time->getCurrentTime()) {
+        return NULL;
+      }
       if (!$this->send($row, $replica, $contract, $visited)) {
         return NULL;
       }

@@ -117,6 +117,12 @@ final class DependencyTest extends OriginTestBase {
     $this->deliver();
     $this->assertSame(['Old'], $this->received());
 
+    // Until its retry is due, the dependency is not sent again, and the
+    // item waits behind it.
+    $this->deliver();
+    $this->assertSame(['Old'], $this->received());
+    $this->assertSame(1, (int) $this->container->get('content_relay_origin.outbox')->pendingRowFor($this->replica->siteId, 'node', $old->uuid())['attempts']);
+
     $this->container->get('database')->update('content_relay_outbox')->fields(['next_attempt' => 0])->execute();
     $this->deliver();
     $this->assertSame(['Old', 'Old', 'New'], $this->received());

@@ -664,3 +664,19 @@ term or node would be refused. The replica accepts such a reference when
 the target exists and is of a bundle the field accepts; who may reference
 what was decided on the origin. A missing target, or one of another bundle,
 is still refused.
+
+## 84. A dependency waiting for a retry holds the stream
+
+What an item references is sent just ahead of it. When that failed and is
+waiting for its retry, the item waits too, as behind any retrying event;
+before, the dependency was sent again on every delivery run and could use
+up its attempts within minutes of an outage instead of over hours.
+
+## 85. The report reads in order from indexes
+
+The report lists by last change, newest first, with the row ID as tie-break
+in the same direction, so a first page is read from the index on `changed`
+rather than by sorting every row. Status, "any translation out of sync" and
+bundle, the filters bulk push leans on, have indexes ending in `changed` for
+the same reason. A text search reads every label, as any "contains" search
+does; at 100,000 items it still takes a fraction of a second.

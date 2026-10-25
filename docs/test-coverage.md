@@ -14,13 +14,9 @@ ddev exec 'vendor/bin/phpunit -c phpunit.xml web/modules/custom/content_relay'
 
 Add `--filter ApplyTest` (or any class or method name) to run part of it.
 
-Statuses:
-
-- **Covered**: a test asserts what the scenario expects.
-- **Partial**: a test covers what is named; the rest is listed under Gaps or
-  Manual procedures.
-- **Manual**: automating it is impractical; see Manual procedures.
-- **Not covered**: no test, but one could be written; listed under Gaps.
+Every scenario is covered. Tests in the `content_relay_slow` group (large
+files and scale, about five minutes together) can be left out of a quick run
+with `--exclude-group content_relay_slow`.
 
 Where the implementation differs from the scenario on purpose, the decision in
 `docs/decisions.md` is cited. Class names are short; "(origin)" or "(replica)"
@@ -56,8 +52,8 @@ marks a class name used in both submodules.
 - **17.** 400 dead-letters at once, no retries. Covered: `DeliveryTest::testFinalResponses`.
 - **18.** Replay of a failed update sends the current state. Covered: `DeliveryTest::testReplaySendsCurrentState`, `OriginItemUiTest::testEventLogAndReplay` (decision 11).
 - **19.** Replay of a delete for a recreated entity does not delete it. Covered: `DeliveryTest::testReplayOfDeleteForRecreatedEntity` (decision 30).
-- **20.** Origin outage then recovery: queued events drain in order. Partial: a queue that builds up and drains in order is covered by `DeliveryTest::testDeliveryInOrder`, `DeliveryTest::testQueueAndCron` and `ContractTest::testPauseAndResume`; a real outage is manual procedure M2.
-- **21.** Replica down for hours with many edits catches up correctly. Manual (M3). Supporting tests: `DeliveryTest::testServerErrorIsRetried` (later events held back, decision 13), `DeliveryTest::testQueuedUpdatesAreCoalesced`.
+- **20.** Origin outage then recovery: queued events drain in order. Covered: `OutageTest::testOriginOutageAndRecovery` (20 creates, edits and deletes queue while cron is stopped; after ten minutes down and a fresh container, cron delivers them in order, each naming the one before, with nothing queued, failed or dead-lettered and every item matching); `DeliveryTest::testDeliveryInOrder`, `DeliveryTest::testQueueAndCron`, `ContractTest::testPauseAndResume`.
+- **21.** Replica down for hours with many edits catches up correctly. Covered: `OutageTest::testReplicaDownForHours` (200 changes over three and a half hours on a test clock, with translations, files, repeated edits and deletes: saves send nothing, one event at a time retries and never before it is due, with growing delays, while the rest wait; once the replica is back, cron drains the backlog, dead letters are replayed, edits are coalesced, and every item matches with the report in sync) (decision 84); `DeliveryTest::testServerErrorIsRetried` (decision 13), `DeliveryTest::testQueuedUpdatesAreCoalesced`.
 - **22.** Saving while the replica is unreachable is not slowed or failed. Covered: `DeliveryTest::testSaveRecordsLocallyOnly` asserts no HTTP request during the save (decision 11).
 
 ## Processing modes
@@ -80,7 +76,7 @@ marks a class name used in both submodules.
 - **32.** Image and PDF: entity at once, binary by the file queue, checksum verified. Covered: `FileSyncTest::testFileArrives`, `FileSyncTest::testContentWaitsForFiles`, `FileTest::testFileFollowsContent` (decision 36).
 - **33.** Checksum mismatch is retried, then an error; content follows the "pending files" setting. Covered: `FileSyncTest::testChecksumMismatch`, `FileSyncTest::testContentWaitsForFiles`.
 - **34.** An unchanged file is not downloaded again. Covered: `FileSyncTest::testFileArrives`.
-- **35.** A 500 MB file streams within memory limits. Manual (M4). Supporting test: `FileCipherTest::testLargeFileStreams` (32 MB through the cipher under 4 MB of memory).
+- **35.** A 500 MB file streams within memory limits. Covered: `LargeFileTest::testLargeFileLeaves` (origin: hashed on save and sent encrypted, with memory growing by under 16 MB within a 256 MB limit, and decrypting to the same checksum) and `LargeFileTest::testLargeFileArrives` (replica, plain and encrypted: fetched, decrypted, checked and stored the same way, leaving nothing in the temporary directory); `FileCipherTest::testLargeFileStreams`. `CONTENT_RELAY_LARGE_FILE_MB` sets another size.
 - **36.** Expired or tampered signed URLs are refused. Covered: `FileTest::testDownloadLinks` (decision 39).
 - **37.** With encryption on, the file is unreadable without the per-file key. Covered: `EncryptionTest::testEncryptedFiles` (origin), `FileSyncTest::testEncryptedDownload`, `FileCipherTest::testRefusals`. Keys are derived, not random and stored (decision 45).
 
@@ -124,9 +120,9 @@ marks a class name used in both submodules.
 
 ## Performance
 
-- **64.** Bulk resync of 10,000 nodes completes in batches. Manual (M5). Supporting tests: `ReportViewTest::testAllMatchingAndCsv` (60 rows across pages), `OriginItemUiTest::testReportAndBulkPush` (Batch API).
+- **64.** Bulk resync of 10,000 nodes completes in batches. Covered: `ScaleTest::testBulkResync` (10,000 articles made before pairing; "Push all matching filters" plans 10,000 pushes in 200 Batch API steps of 50, each well under 5 seconds and 16 MB; the summary says 10,000 queued; after delivery nothing is out of sync); `OriginItemUiTest::testReportAndBulkPush` (the Batch API through the UI). `CONTENT_RELAY_SCALE` runs it smaller.
 - **65.** Pruning removes only acknowledged events past retention. Covered: `DeliveryTest::testPruning`.
-- **66.** A report of 100,000 items loads and filters quickly. Manual (M6). Supporting test: `ReportViewTest::testFilters` (decision 27).
+- **66.** A report of 100,000 items loads and filters quickly. Covered: `ScaleTest::testLargeReport` (110,000 rows; every filter, alone and combined, and a deep page render in under 2 seconds, about 0.2 at most here, with the right counts; on MySQL every first page reads in order from an index and every count uses one, except a text search) (decisions 27 and 85).
 
 ## Entity type coverage
 
@@ -302,9 +298,11 @@ marks a class name used in both submodules.
 - **200.** Error summaries to the origin carry no stack traces, paths or secrets. Covered: `ApplyTest::testExceptionRollsBackEverything` (decision 16).
 - **201.** Stored failed payloads are encrypted at rest when encryption is on. Covered: `EncryptionTest::testFailedPayloadSealedAtRest` (sealed to this site's encryption key, and opened for retry).
 
-## Manual procedures
+## Checking on real sites
 
-These need two real sites. M1 sets them up; the others assume it.
+Every scenario has an automated test. These procedures repeat some of them on
+two real sites, for confidence before a release or after a hosting change.
+M1 sets the sites up; the others assume it.
 
 ### M1. Two-site setup
 
@@ -314,18 +312,16 @@ These need two real sites. M1 sets them up; the others assume it.
 4. Replica: `ddev drush en content_relay_replica`, create its signing key the same way, then under Content Relay replica › Pairing enter `https://cr-origin.ddev.site`, the code and the bundles. Expect "Paired. Contract version 1 is in place."
 5. Run cron on both every minute during the procedures, for example `ddev exec 'while true; do drush cron; sleep 60; done'`.
 
-### M2. Origin outage and recovery (scenario 20)
+### M2. Origin outage and recovery (scenario 20, `OutageTest`)
 
-Why manual: needs a whole site down, with its cron and queues stopped, not just a missed delivery.
 
 1. Stop the origin's cron loop, then create, edit and delete about 20 articles on the origin.
 2. `ddev stop` the origin for at least 10 minutes. The replica keeps running.
 3. `ddev start` the origin and restart its cron loop.
 4. Check: `ddev drush content-relay:status` on the origin shows no queued or failed events after a few runs, the event log lists the events applied in sequence order, and the replica's synced items report matches the origin's content.
 
-### M3. Replica outage for several hours (scenario 21)
+### M3. Replica outage for several hours (scenario 21, `OutageTest`)
 
-Why manual: needs real elapsed time against the real retry and backoff schedule.
 
 1. `ddev stop` the replica.
 2. Over several hours, make at least 200 changes on the origin, including repeated edits of the same items, deletes, new translations and files.
@@ -333,31 +329,24 @@ Why manual: needs real elapsed time against the real retry and backoff schedule.
 4. `ddev start` the replica and leave both cron loops running.
 5. Check: the origin's status report filtered to "any out of sync" is empty, there are no dead letters, and spot checks of 10 items match on both sites. If an event was dead-lettered before recovery, replay it and check again.
 
-### M4. 500 MB file (scenario 35)
+### M4. 500 MB file (scenario 35, `LargeFileTest`)
 
-Why manual: a 500 MB fixture is too slow and large for CI.
 
 1. Set `memory_limit = 256M` for PHP on both sites, restart.
 2. On the origin, add a file field to Article, create a 500 MB file (`ddev exec 'head -c 500M /dev/urandom > /tmp/big.bin'`) and upload it to an article, or attach it with Drush.
 3. Let the replica's file queue run (`ddev drush queue:run content_relay_replica_files`, or cron), and repeat with encryption on (Require encryption on the origin's settings).
 4. Check: no out-of-memory errors in either site's log, the file entity shows as synced, and `sha256sum` of both copies is the same.
 
-### M5. Bulk resync of 10,000 nodes (scenario 64)
+### M5. Bulk resync of 10,000 nodes (scenario 64, `ScaleTest`)
 
-Why manual: needs a realistic data volume and real request timeouts.
 
 1. On the origin, generate 10,000 articles (for example with Devel generate) before or after pairing.
 2. In the status report, filter to the article bundle and use "Push all matching filters", then let delivery run.
 3. Check: the batch finishes without a timeout or memory error, the summary says 10,000 queued, and once delivery has run the "any out of sync" filter is empty on the origin.
 
-### M6. Report with 100,000 items (scenario 66)
+### M6. Report with 100,000 items (scenario 66, `ScaleTest`)
 
-Why manual: needs a realistic data volume, and timing on CI hardware is unreliable.
 
 1. Generate 100,000 items on the origin (several bundles and languages), then use "Refresh status".
 2. Load the report and apply single and combined filters (status, bundle, language, replica, date).
 3. Check: each page loads in under about 2 seconds, and `EXPLAIN` on the slowest query uses indexes on `content_relay_report` rather than a full scan.
-
-## Gaps
-
-None: what is not covered in full is a manual procedure above.

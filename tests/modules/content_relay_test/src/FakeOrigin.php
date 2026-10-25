@@ -47,8 +47,9 @@ use Psr\Http\Message\RequestInterface;
  * - stream: what the stream endpoint knows, entries by sequence.
  * - rate_limited: the number of read requests (items, hashes, stream) to
  *   answer 429, counting down; rate_limited_items the same for items only.
- * - files: files it serves, by UUID: content, uri and, to serve it
- *   encrypted, key (base64 file key). Downloads are
+ * - files: files it serves, by UUID: content (or path, to stream a file
+ *   from disk), uri and, to serve it encrypted, key (base64 file key).
+ *   Downloads are
  *   answered 410 while expire_downloads is positive and with wrong bytes
  *   while corrupt_downloads is, each counting down; downloads counts them.
  */
@@ -118,6 +119,14 @@ final class FakeOrigin {
       if (preg_match('#^/content-relay/v1/files/([0-9a-f\-]{36})(/download)?$#', $path, $m)) {
         [$status, $answer] = empty($m[2]) ? $this->fileInfo($config, $m[1], $request) : $this->download($config, $m[1]);
         $this->state->set(self::STATE, $config);
+        if ($answer instanceof \Closure) {
+          // Streamed from disk into the client's sink, never held in memory.
+          $sink = is_string($options['sink'] ?? NULL) ? $options['sink'] : 'php://temp';
+          $out = fopen($sink, 'w+b');
+          $answer($out);
+          rewind($out);
+          return Create::promiseFor(new Response($status, ['Content-Type' => 'application/octet-stream'], $out));
+        }
         if (is_string($answer)) {
           // A file: written where the client asked, as a real download is.
           if (isset($options['sink']) && is_string($options['sink'])) {
@@ -232,12 +241,26 @@ final class FakeOrigin {
    * Metadata for a file, as the origin puts it in events and file answers.
    */
   public static function fileMeta(string $uuid, string $content, string $uri, int $expires = 0, ?string $key = NULL): array {
+    return self::meta($uuid, hash('sha256', $content), strlen($content), $uri, $expires, $key);
+  }
+
+  /**
+   * Metadata for a file served from disk.
+   */
+  public static function fileMetaFromPath(string $uuid, string $path, string $uri, int $expires = 0, ?string $key = NULL): array {
+    return self::meta($uuid, (string) hash_file('sha256', $path), (int) filesize($path), $uri, $expires, $key);
+  }
+
+  /**
+   * Metadata for a file, from its checksum and size.
+   */
+  private static function meta(string $uuid, string $sha256, int $size, string $uri, int $expires, ?string $key): array {
     return [
       'encryption' => $key === NULL ? 'none' : ['cipher' => FileCipher::NAME, 'key' => $key],
       'uuid' => $uuid,
       'uri' => $uri,
-      'sha256' => hash('sha256', $content),
-      'size' => strlen($content),
+      'sha256' => $sha256,
+      'size' => $size,
       'download' => '/content-relay/v1/files/' . $uuid . '/download?token=' . bin2hex(random_bytes(4)),
       'expires' => $expires ?: time() + 3600,
       'url' => '/sites/default/files/' . explode('://', $uri, 2)[1],
@@ -255,17 +278,18 @@ final class FakeOrigin {
     if ($file === NULL) {
       return [404, ['result' => 'not_found']];
     }
-    return [
-      200,
-      $this->sign($config, 'file_info', self::fileMeta($uuid, $file['content'], $file['uri'], 0, $file['key'] ?? NULL)),
-    ];
+    $meta = isset($file['path'])
+      ? self::fileMetaFromPath($uuid, $file['path'], $file['uri'], 0, $file['key'] ?? NULL)
+      : self::fileMeta($uuid, $file['content'], $file['uri'], 0, $file['key'] ?? NULL);
+    return [200, $this->sign($config, 'file_info', $meta)];
   }
 
   /**
    * Answers a download.
    *
-   * @return array{0: int, 1: array|string}
-   *   Status, and the bytes or an error answer.
+   * @return array{0: int, 1: array|string|\Closure}
+   *   Status, and the bytes, a function writing them to a stream, or an
+   *   error answer.
    */
   private function download(array &$config, string $uuid): array {
     $config['downloads'] = ($config['downloads'] ?? 0) + 1;
@@ -280,6 +304,16 @@ final class FakeOrigin {
     if (($config['corrupt_downloads'] ?? 0) > 0) {
       $config['corrupt_downloads']--;
       return [200, 'corrupted ' . $file['content']];
+    }
+    if (isset($file['path'])) {
+      return [
+        200,
+        function ($out) use ($file): void {
+          $in = fopen($file['path'], 'rb');
+          isset($file['key']) ? FileCipher::encrypt($in, $out, base64_decode($file['key'])) : stream_copy_to_stream($in, $out);
+          fclose($in);
+        },
+      ];
     }
     if (isset($file['key'])) {
       $in = fopen('php://memory', 'w+');

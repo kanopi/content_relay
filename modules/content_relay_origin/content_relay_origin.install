@@ -378,11 +378,16 @@ function content_relay_origin_schema(): array {
     ],
     'primary key' => ['id'],
     'unique keys' => ['row' => ['entity_type', 'uuid', 'replica_id', 'langcode']],
+    // The report lists by last change, newest first; the filters bulk push
+    // relies on read in that order too.
     'indexes' => [
       'status' => ['replica_id', 'status'],
       'bundle' => ['entity_type', 'bundle'],
       'entity' => ['entity_type', 'entity_id'],
       'changed' => ['changed'],
+      'status_changed' => ['status', 'changed'],
+      'out_of_sync_changed' => ['item_out_of_sync', 'changed'],
+      'bundle_changed' => ['bundle', 'changed'],
     ],
   ];
   return $schema;
