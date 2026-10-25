@@ -14,8 +14,8 @@ or refine, the original specification.
 | Module | Role | Status |
 | --- | --- | --- |
 | `content_relay` | Shared base: event schema, entity serialization, hashing, signing, keys | Phase 1 |
-| `content_relay_origin` | Publishes changes to replicas | Phases 2–6: event log, delivery, hash store, pairing, contracts, not syncable, push, status report, files |
-| `content_relay_replica` | Receives and applies changes | Phases 2–6: endpoint, transactional apply, failures, pairing, contracts, detach, files |
+| `content_relay_origin` | Publishes changes to replicas | Phases 2–7: event log, delivery, hash store, pairing, contracts, not syncable, push, status report, files, encryption |
+| `content_relay_replica` | Receives and applies changes | Phases 2–7: endpoint, transactional apply, failures, pairing, contracts, detach, files, encryption |
 
 ## Requirements
 
@@ -91,6 +91,57 @@ minutes) and replays.
 Sync events (`Event\SyncEvent`) are message bodies with their own versioned
 schema (`v: 1`).
 
+### Encryption
+
+Messages are signed, then optionally sealed: the signed message and its
+signature are encrypted together to the recipient's X25519 key with
+libsodium's sealed boxes, so in transit only the sender, the key IDs and the
+mode are visible. The mode is inside the signed message too, so a sealed
+message cannot be passed on unsealed, nor the other way round. HTTPS is
+required either way.
+
+Whether messages are sealed is part of the subscription contract. The
+replica asks for it on its Contract page ("Encrypt messages and files"), and
+it is granted when both sites have an encryption key. Each site can also
+**require encryption** (origin settings, or the replica's Contract page;
+`content_relay.settings:encryption.require`): it then refuses unencrypted
+messages from every peer however they are signed, and every new contract is
+encrypted.
+
+Downgrade protection: unencrypted messages from a peer are accepted only
+while the contract in force with it (or, on the origin, the one awaiting
+acknowledgement) is unencrypted, and for `encryption.transition_window`
+seconds (default an hour) after a contract switched encryption on, for
+messages already on their way. Encrypted messages are always accepted. Every
+mode change is logged with the contract version and the user.
+
+Files follow the same setting: the download is encrypted as it streams, with
+libsodium secretstream and a key for that file, replica and content, which
+travels inside the sealed event and is kept on the replica only until the
+file is in place.
+
+### Key rotation
+
+Rotation keeps a key both sides trust at every step:
+
+```
+drush content-relay:generate-key signing relay_signing_2027 /path/outside/webroot/relay_signing_2027.key
+drush content-relay:rotate-key signing relay_signing_2027
+# once every peer has confirmed:
+drush content-relay:retire-key signing relay_signing_2026
+```
+
+`generate-key` writes a new key file (mode 0600) and adds it as an active key.
+`rotate-key` first tells peers about it, signed with the current key: the
+origin sends each replica a new contract version listing its keys; a replica
+sends its origin a subscription update. Then the new key becomes primary and
+the old one stays active, so both are accepted and both decrypt. A replica
+does not switch until its origin has confirmed. The origin switches at once
+but keeps signing for each replica with a key that replica has confirmed, so
+an offline replica catches up when it next accepts a contract. `retire-key`
+stops using the old key and tells peers to stop accepting it. `content-relay:
+keys` lists keys and their status. The same works for encryption keys.
+
 ### Keys
 
 Each site has a site ID (a UUID generated on install) and key pairs for
@@ -111,15 +162,9 @@ configuration and state providers are refused, on the key form and at
 runtime, so a private key never appears in a config export or the database.
 Key IDs used in messages are derived from the public key.
 
-To create a key, generate its value and store it where the provider will read
-it, then add the key entity pointing at it:
-
-```php
-[, $value] = \Drupal\content_relay\Key\KeyPair::generate(\Drupal\content_relay\Key\KeyPurpose::Signing);
-file_put_contents('/path/outside/webroot/content_relay_signing.key', $value);
-```
-
-A Drush command for this arrives with the admin tooling.
+To create a key, `drush content-relay:generate-key signing <name> <path>` writes
+the value to a file and adds the key entity as active; make the first one
+primary on its edit form, or with `content-relay:rotate-key`.
 
 ## Origin
 
@@ -268,9 +313,8 @@ with a placeholder, instead of a plain 404; for public files this relies on
 the web server passing requests for missing files to Drupal, as Drupal's
 default `.htaccess` and common nginx configurations do.
 
-**Encryption.** Files are fetched unencrypted over HTTPS for now. Streaming
-per-file encryption (libsodium secretstream, `Drupal\content_relay\Crypto\FileCipher`)
-is in place and is switched on with message encryption in phase 7.
+**Encryption.** When the contract is encrypted, downloads are too; see
+Encryption above.
 
 ## Not syncable items and detaching
 
@@ -363,6 +407,10 @@ Every push, flag, detach and reattach is logged with the user who did it.
 | `content-relay:reattach <type> <uuid> [--accept-origin]` | replica |
 | `content-relay:pull-file <uuid>` | replica |
 | `content-relay:pull-missing-files [<type> <uuid>] [--all]` | replica |
+| `content-relay:keys` | both |
+| `content-relay:generate-key <purpose> <key id> <path>` | both |
+| `content-relay:rotate-key <purpose> <key id>` | both |
+| `content-relay:retire-key <purpose> <key id>` | both |
 
 Each exits non-zero when it could not do what was asked.
 

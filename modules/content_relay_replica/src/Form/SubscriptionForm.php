@@ -135,6 +135,18 @@ final class SubscriptionForm extends FormBase {
       '#description' => $this->t('The origin keeps recording changes and delivers them in order when delivery resumes.'),
       '#default_value' => !empty($terms['delivery']['paused']),
     ];
+    $form['terms']['encryption'] = [
+      '#type' => 'checkbox',
+      '#title' => $this->t('Encrypt messages and files'),
+      '#description' => $this->t('Both sites need an encryption key. Messages are always signed and sent over HTTPS either way.'),
+      '#default_value' => ($terms['encryption'] ?? 'none') !== 'none',
+    ];
+    $form['terms']['require_encryption'] = [
+      '#type' => 'checkbox',
+      '#title' => $this->t('Require encryption'),
+      '#description' => $this->t('This site then refuses unencrypted messages, however they are signed.'),
+      '#default_value' => (bool) $this->configFactory()->get('content_relay.settings')->get('encryption.require'),
+    ];
     $form['terms']['submit'] = ['#type' => 'submit', '#value' => $this->t('Propose changes')];
 
     $form['history'] = $this->renderer->history($history);
@@ -169,6 +181,8 @@ final class SubscriptionForm extends FormBase {
     $terms['processing']['default'] = $values['processing'];
     $terms['delivery']['max_events_per_minute'] = $values['max_events_per_minute'] === '' || $values['max_events_per_minute'] === NULL ? NULL : (int) $values['max_events_per_minute'];
     $terms['delivery']['paused'] = (bool) $values['paused'];
+    $terms['encryption'] = empty($values['encryption']) ? 'none' : 'sealed';
+    $this->configFactory()->getEditable('content_relay.settings')->set('encryption.require', (bool) $values['require_encryption'])->save();
 
     $contract = $this->subscription->propose($terms, (int) $this->currentUser()->id());
     if ($contract) {

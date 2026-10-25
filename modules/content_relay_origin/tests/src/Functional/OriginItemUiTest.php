@@ -272,4 +272,23 @@ final class OriginItemUiTest extends BrowserTestBase {
     $this->assertStringContainsString(self::REPLICA . ': 1 to push', $this->getOutput());
   }
 
+  /**
+   * Requiring encryption in settings sends replicas a new contract.
+   */
+  public function testRequireEncryptionSetting(): void {
+    $this->drupalLogin($this->drupalCreateUser(['administer content relay origin']));
+    $this->drupalGet('admin/config/services/content-relay/origin');
+    $this->submitForm(['encryption[require]' => TRUE, 'encryption[transition_window]' => 30], 'Save configuration');
+    $this->assertSession()->pageTextContains('Replicas will be sent new contract versions with the encryption policy.');
+    $config = $this->config('content_relay.settings');
+    $this->assertTrue($config->get('encryption.require'));
+    $this->assertSame(1800, $config->get('encryption.transition_window'));
+    $pending = $this->container->get('content_relay_origin.contract_manager')->getPending(self::REPLICA);
+    $this->assertSame(2, $pending->version());
+    $this->assertTrue($pending->terms['joint']['require_encryption']['origin']);
+    // Neither side has an encryption key here, so it is said, not granted.
+    $this->assertSame('none', $pending->encryption());
+    $this->assertSame('encryption', $pending->notGranted()[0]['term']);
+  }
+
 }

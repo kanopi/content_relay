@@ -18,6 +18,11 @@ namespace Drupal\content_relay\Crypto;
 final class FileCipher {
 
   /**
+   * The name events use for this cipher.
+   */
+  public const NAME = 'secretstream-xchacha20poly1305';
+
+  /**
    * Plain bytes per chunk.
    */
   public const CHUNK = 65536;

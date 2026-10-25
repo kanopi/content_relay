@@ -6,3 +6,6 @@ users:
   sync_roles: false
 files:
   own_domains: []
+encryption:
+  require: false
+  transition_window: 3600

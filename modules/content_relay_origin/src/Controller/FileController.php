@@ -6,8 +6,13 @@ namespace Drupal\content_relay_origin\Controller;
 
 use Drupal\content_relay\Auth\AuthenticationException;
 use Drupal\content_relay\Auth\PullAuthenticatorInterface;
+use Drupal\content_relay\Crypto\EncryptionMode;
+use Drupal\content_relay\Crypto\FileCipher;
+use Drupal\content_relay\Crypto\MessageSigner;
+use Drupal\content_relay\Crypto\PeerPolicy;
 use Drupal\content_relay\File\FileChecksums;
 use Drupal\content_relay_origin\File\FileAccess;
+use Drupal\content_relay_origin\File\FileKeys;
 use Drupal\content_relay_origin\File\FileLinks;
 use Drupal\Core\DependencyInjection\ContainerInjectionInterface;
 use Drupal\Core\Entity\EntityRepositoryInterface;
@@ -19,15 +24,18 @@ use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 /**
  * Serves files to replicas.
  *
  * - GET /content-relay/v1/files/{uuid}: fresh metadata and download link,
- *   for a replica authenticated with its short-lived JWT.
+ *   for a replica authenticated with its short-lived JWT. The answer is a
+ *   signed message, sealed when the contract is encrypted, because it can
+ *   carry the file's key.
  * - GET /content-relay/v1/files/{uuid}/download: the file itself, for the
  *   holder of a valid signed link. Streamed from storage, never read into
- *   memory.
+ *   memory; encrypted on the way when the link names an encryption key.
  *
  * Both serve a file only while the replica may have it; see FileAccess.
  */
@@ -46,6 +54,9 @@ final class FileController implements ContainerInjectionInterface {
     private readonly FileUrlGeneratorInterface $fileUrlGenerator,
     private readonly PullAuthenticatorInterface $authenticator,
     private readonly LoggerInterface $logger,
+    private readonly FileKeys $fileKeys,
+    private readonly MessageSigner $signer,
+    private readonly PeerPolicy $peerPolicy,
   ) {}
 
   /**
@@ -60,6 +71,9 @@ final class FileController implements ContainerInjectionInterface {
       $container->get('file_url_generator'),
       $container->get('content_relay.pull_authenticator'),
       $container->get('logger.channel.content_relay_origin'),
+      $container->get('content_relay_origin.file_keys'),
+      $container->get('content_relay.message_signer'),
+      $container->get('content_relay.peer_policy'),
     );
   }
 
@@ -90,7 +104,10 @@ final class FileController implements ContainerInjectionInterface {
     if ($checksum === NULL) {
       return $this->refuse(404, 'missing', 'The file is missing from storage on the origin.');
     }
-    return new JsonResponse(self::metadata($file, $checksum, $this->links->build($file, $replica_id), $this->fileUrlGenerator), 200, ['Cache-Control' => 'no-store']);
+    $encrypted = $this->peerPolicy->sendMode($replica_id) === EncryptionMode::Sealed;
+    $key_id = $encrypted ? $this->fileKeys->currentKeyId() : NULL;
+    $metadata = self::metadata($file, $checksum, $this->links->build($file, $replica_id, $key_id), $this->fileUrlGenerator, $key_id === NULL ? NULL : $this->fileKeys->derive($key_id, (string) $file->uuid(), $replica_id, $checksum['sha256']));
+    return new JsonResponse($this->signer->sign($replica_id, 'file_info', $metadata)->toArray(), 200, ['Cache-Control' => 'no-store']);
   }
 
   /**
@@ -98,7 +115,8 @@ final class FileController implements ContainerInjectionInterface {
    */
   public function download(string $uuid, Request $request): Response {
     $replica_id = (string) $request->query->get('replica', '');
-    $problem = $this->links->check($uuid, $replica_id, (int) $request->query->get('expires', 0), (string) $request->query->get('key', ''), (string) $request->query->get('signature', ''));
+    $encryption_key_id = (string) $request->query->get('ek', '');
+    $problem = $this->links->check($uuid, $replica_id, (int) $request->query->get('expires', 0), (string) $request->query->get('key', ''), (string) $request->query->get('signature', ''), $encryption_key_id);
     if ($problem === 'expired') {
       return $this->refuse(410, 'expired', 'The link has expired; ask for a new one.');
     }
@@ -116,6 +134,25 @@ final class FileController implements ContainerInjectionInterface {
     $checksum = $this->checksums->forUri($file->getFileUri());
     if ($checksum === NULL) {
       return $this->refuse(404, 'missing', 'The file is missing from storage on the origin.');
+    }
+    if ($encryption_key_id !== '') {
+      try {
+        $file_key = $this->fileKeys->derive($encryption_key_id, $uuid, $replica_id, $checksum['sha256']);
+      }
+      catch (\RuntimeException) {
+        return $this->refuse(410, 'expired', 'The link names a retired key; ask for a new one.');
+      }
+      $uri = $file->getFileUri();
+      return new StreamedResponse(function () use ($uri, $file_key): void {
+        $in = fopen($uri, 'rb');
+        $out = fopen('php://output', 'wb');
+        FileCipher::encrypt($in, $out, $file_key);
+        fclose($in);
+        fclose($out);
+      }, 200, [
+        'Content-Type' => 'application/octet-stream',
+        'Cache-Control' => 'private, no-store',
+      ]);
     }
     $response = new BinaryFileResponse($file->getFileUri(), 200, [
       'Content-Type' => 'application/octet-stream',
@@ -137,8 +174,11 @@ final class FileController implements ContainerInjectionInterface {
    *   A signed link.
    * @param \Drupal\Core\File\FileUrlGeneratorInterface $url_generator
    *   Builds the file's public URL.
+   * @param string|null $file_key
+   *   The file's key when the download is encrypted, raw bytes. Only ever
+   *   sent inside a sealed message.
    */
-  public static function metadata(FileInterface $file, array $checksum, array $link, FileUrlGeneratorInterface $url_generator): array {
+  public static function metadata(FileInterface $file, array $checksum, array $link, FileUrlGeneratorInterface $url_generator, ?string $file_key = NULL): array {
     return [
       'uuid' => (string) $file->uuid(),
       'uri' => $file->getFileUri(),
@@ -149,7 +189,10 @@ final class FileController implements ContainerInjectionInterface {
       // Where the file is on this site, root-relative, for replicas that
       // link to the origin's copy rather than their own.
       'url' => $url_generator->generateString($file->getFileUri()),
-      'encryption' => 'none',
+      'encryption' => $file_key === NULL ? 'none' : [
+        'cipher' => FileCipher::NAME,
+        'key' => base64_encode($file_key),
+      ],
     ];
   }
 

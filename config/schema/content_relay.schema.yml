@@ -24,6 +24,16 @@ content_relay.settings:
         sync_roles:
           type: boolean
           label: 'Sync user roles'
+    encryption:
+      type: mapping
+      label: 'Encryption'
+      mapping:
+        require:
+          type: boolean
+          label: 'Refuse unencrypted messages from every peer'
+        transition_window:
+          type: integer
+          label: 'Seconds after an encryption mode change during which messages in the previous mode are still accepted'
     files:
       type: mapping
       label: 'Files'

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Drupal\content_relay_replica\File;
 
 use Drupal\Component\Datetime\TimeInterface;
+use Drupal\content_relay\Crypto\FileCipher;
 use Drupal\content_relay\File\FileChecksums;
 use Drupal\content_relay\File\FileUrlMapper;
 use Drupal\content_relay\Hash\RevisionHasher;
@@ -31,7 +32,9 @@ use Psr\Log\LoggerInterface;
  *
  * A file entity is saved as soon as its event arrives; its binary is fetched
  * by the content_relay_replica_files queue through the file transport,
- * checked against the origin's SHA-256, and only then moved into place. A
+ * decrypted when the contract encrypts files (with the per-file key from the
+ * sealed event, kept only until the file is in place), checked against the
+ * origin's SHA-256, and only then moved into place. A
  * binary already here with the right checksum is not fetched again. Failed
  * fetches are retried with backoff; an expired link is renewed through the
  * origin's file endpoint.
@@ -92,6 +95,8 @@ class FileSync {
         'download' => $meta['download'] ?? NULL,
         'expires' => isset($meta['expires']) ? (int) $meta['expires'] : NULL,
         'url' => $meta['url'] ?? NULL,
+        'cipher' => $done ? NULL : self::encryptionFields($meta)['cipher'],
+        'file_key' => $done ? NULL : self::encryptionFields($meta)['file_key'],
         'status' => $done ? self::DONE : self::PENDING,
         'attempts' => 0,
         'next_attempt' => 0,
@@ -184,6 +189,9 @@ class FileSync {
         // The link ran out while the download waited: get a new one.
         $record = $this->renew($uuid) ?? throw $e;
         $this->transport->fetch($record, $temporary);
+      }
+      if ($record['file_key'] !== NULL) {
+        $temporary = $this->decrypt($record, $temporary);
       }
       $actual = hash_file('sha256', $temporary);
       if ($actual !== $record['sha256']) {
@@ -438,10 +446,55 @@ class FileSync {
         'url' => $info['url'] ?? NULL,
         'origin_uri' => (string) $info['uri'],
         'updated' => $this->time->getCurrentTime(),
-      ])
+      ] + self::encryptionFields($info))
       ->condition('uuid', $uuid)
       ->execute();
     return $this->get($uuid);
+  }
+
+  /**
+   * The encryption columns for file metadata from the origin.
+   *
+   * @return array{cipher: string|null, file_key: string|null}
+   *   Column values.
+   */
+  protected static function encryptionFields(array $meta): array {
+    $encryption = $meta['encryption'] ?? 'none';
+    if (!is_array($encryption) || !is_string($encryption['key'] ?? NULL)) {
+      return ['cipher' => NULL, 'file_key' => NULL];
+    }
+    return ['cipher' => (string) ($encryption['cipher'] ?? ''), 'file_key' => $encryption['key']];
+  }
+
+  /**
+   * Decrypts a downloaded file into a new temporary file.
+   *
+   * @return string
+   *   The decrypted file; the encrypted one is removed.
+   *
+   * @throws \RuntimeException
+   *   When it cannot be decrypted.
+   */
+  protected function decrypt(array $record, string $encrypted): string {
+    if ($record['cipher'] !== FileCipher::NAME) {
+      throw new \RuntimeException(sprintf('Unknown file cipher "%s".', $record['cipher']));
+    }
+    $key = base64_decode((string) $record['file_key'], TRUE);
+    $plain = $this->fileSystem->tempnam('temporary://', 'content_relay_');
+    if ($key === FALSE || $plain === FALSE) {
+      throw new \RuntimeException('The file cannot be decrypted.');
+    }
+    $in = fopen($encrypted, 'rb');
+    $out = fopen($plain, 'wb');
+    try {
+      FileCipher::decrypt($in, $out, $key);
+    }
+    finally {
+      fclose($in);
+      fclose($out);
+      @unlink($encrypted);
+    }
+    return $plain;
   }
 
   /**
@@ -496,7 +549,13 @@ class FileSync {
    */
   protected function complete(array $record): void {
     $this->database->update(self::TABLE)
-      ->fields(['status' => self::DONE, 'last_error' => NULL, 'updated' => $this->time->getCurrentTime()])
+      ->fields([
+        'status' => self::DONE,
+        'last_error' => NULL,
+        'file_key' => NULL,
+        'cipher' => NULL,
+        'updated' => $this->time->getCurrentTime(),
+      ])
       ->condition('uuid', $record['uuid'])
       ->execute();
     foreach ($this->waiting($record['uuid']) as $item) {

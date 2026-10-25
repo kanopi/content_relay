@@ -9,8 +9,8 @@ use Drupal\Component\Uuid\Uuid;
 use Drupal\content_relay\Contract\SubscriptionContract;
 use Drupal\content_relay\Crypto\PairingRequest;
 use Drupal\content_relay\Crypto\VerificationException;
-use Drupal\content_relay\Key\KeyPair;
 use Drupal\content_relay\Key\KeyPurpose;
+use Drupal\content_relay\Key\PeerKeys;
 use Drupal\content_relay\Key\KeyStore;
 use Drupal\content_relay\SiteIdentity;
 use Drupal\Core\Config\ConfigFactoryInterface;
@@ -158,18 +158,11 @@ class PairingService {
    *   The keys.
    */
   protected function checkKeys(mixed $keys, KeyPurpose $purpose): array {
-    if (!is_array($keys)) {
-      throw new PairingException('malformed', sprintf('The %s keys are missing.', $purpose->value), 400);
+    try {
+      $checked = PeerKeys::check($keys, $purpose);
     }
-    $size = $purpose === KeyPurpose::Signing ? \SODIUM_CRYPTO_SIGN_PUBLICKEYBYTES : \SODIUM_CRYPTO_BOX_PUBLICKEYBYTES;
-    $checked = [];
-    foreach ($keys as $id => $key) {
-      $public = is_string($key['public_key'] ?? NULL) ? base64_decode($key['public_key'], TRUE) : FALSE;
-      if ($public === FALSE || strlen($public) !== $size || KeyPair::idFor($purpose, $public) !== $id) {
-        throw new PairingException('malformed', sprintf('A %s key is malformed.', $purpose->value), 400);
-      }
-      $status = in_array($key['status'] ?? NULL, [KeyStore::PRIMARY, KeyStore::ACTIVE], TRUE) ? $key['status'] : KeyStore::ACTIVE;
-      $checked[(string) $id] = ['public_key' => $key['public_key'], 'status' => $status];
+    catch (\InvalidArgumentException $e) {
+      throw new PairingException('malformed', $e->getMessage(), 400);
     }
     if ($purpose === KeyPurpose::Signing && $checked === []) {
       throw new PairingException('malformed', 'At least one signing key is required.', 400);

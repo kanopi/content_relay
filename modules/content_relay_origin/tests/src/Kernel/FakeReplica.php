@@ -10,6 +10,7 @@ use Drupal\content_relay\Crypto\EncryptionMode;
 use Drupal\content_relay\Crypto\Message;
 use Drupal\content_relay\Crypto\MessageSigner;
 use Drupal\content_relay\Crypto\PairingRequest;
+use Drupal\content_relay\Crypto\SignedEnvelope;
 use Drupal\content_relay\Key\KeyPair;
 use Drupal\content_relay\Key\KeyPurpose;
 use GuzzleHttp\Exception\ConnectException;
@@ -33,6 +34,30 @@ final class FakeReplica {
   public KeyPair $key;
 
   /**
+   * The replica's encryption key.
+   */
+  public KeyPair $encryption;
+
+  /**
+   * The origin's encryption key to seal messages to, once known.
+   *
+   * @var array{id: string, public_key: string}|null
+   */
+  public ?array $originEncryptionKey = NULL;
+
+  /**
+   * Seal messages to the origin.
+   */
+  public bool $seal = FALSE;
+
+  /**
+   * Envelopes received, as sent.
+   *
+   * @var array[]
+   */
+  public array $envelopes = [];
+
+  /**
    * The replica's site ID.
    */
   public string $siteId;
@@ -50,6 +75,13 @@ final class FakeReplica {
    * @var int[]
    */
   public array $contracts = [];
+
+  /**
+   * Contracts received, in full.
+   *
+   * @var array[]
+   */
+  public array $contractTerms = [];
 
   /**
    * Responses to give to events, in order: [status, body]. Empty for 200.
@@ -72,6 +104,7 @@ final class FakeReplica {
     public string $originId,
   ) {
     [$this->key] = KeyPair::generate(KeyPurpose::Signing);
+    [$this->encryption] = KeyPair::generate(KeyPurpose::Encryption);
     $this->siteId = (new PhpUuid())->generate();
   }
 
@@ -89,24 +122,68 @@ final class FakeReplica {
       'signing_keys' => [
         $this->key->id() => ['public_key' => base64_encode($this->key->publicKey), 'status' => 'primary'],
       ],
-      'encryption_keys' => [],
+      'encryption_keys' => [
+        $this->encryption->id() => ['public_key' => base64_encode($this->encryption->publicKey), 'status' => 'primary'],
+      ],
       'requested' => ['bundles' => $bundles] + SubscriptionContract::defaultReplicaTerms(),
     ], $this->key);
   }
 
   /**
-   * A signed message from this replica to the origin.
+   * A signed message from this replica to the origin, sealed when set to.
    */
-  public function message(string $type, array $body): array {
-    $message = new Message((new PhpUuid())->generate(), $type, $this->siteId, $this->originId, time(), EncryptionMode::None, $body);
+  public function message(string $type, array $body, ?KeyPair $key = NULL): array {
+    $key ??= $this->key;
+    $mode = $this->seal ? EncryptionMode::Sealed : EncryptionMode::None;
+    $message = new Message((new PhpUuid())->generate(), $type, $this->siteId, $this->originId, time(), $mode, $body);
+    $envelope = new SignedEnvelope($this->siteId, $key->id(), $mode, $message->toArray(), base64_encode($key->sign(MessageSigner::signedBytes($key->id(), $message->toArray()))));
+    if ($this->seal) {
+      return MessageSigner::seal($envelope, $this->originEncryptionKey['id'], $this->originEncryptionKey['public_key'])->toArray();
+    }
     return [
       'v' => 1,
       'sender' => $this->siteId,
-      'signing_key_id' => $this->key->id(),
+      'signing_key_id' => $key->id(),
       'encryption' => 'none',
-      'message' => $message->toArray(),
-      'signature' => base64_encode($this->key->sign(MessageSigner::signedBytes($this->key->id(), $message->toArray()))),
+      'message' => $envelope->message,
+      'signature' => $envelope->signature,
     ];
+  }
+
+  /**
+   * This replica's public keys, as it announces them.
+   *
+   * @param \Drupal\content_relay\Key\KeyPair[] $signing
+   *   Signing keys, the first primary.
+   * @param \Drupal\content_relay\Key\KeyPair|null $encryption
+   *   The encryption key, if any.
+   */
+  public static function keySet(array $signing, ?KeyPair $encryption = NULL): array {
+    $keys = ['signing' => [], 'encryption' => []];
+    foreach (array_values($signing) as $i => $key) {
+      $keys['signing'][$key->id()] = [
+        'public_key' => base64_encode($key->publicKey),
+        'status' => $i === 0 ? 'primary' : 'active',
+      ];
+    }
+    if ($encryption !== NULL) {
+      $keys['encryption'][$encryption->id()] = [
+        'public_key' => base64_encode($encryption->publicKey),
+        'status' => 'primary',
+      ];
+    }
+    return $keys;
+  }
+
+  /**
+   * Opens an envelope as received, sealed or not.
+   */
+  public function open(array $envelope): array {
+    if (($envelope['encryption'] ?? 'none') === 'none') {
+      return $envelope['message'];
+    }
+    $inner = json_decode((string) $this->encryption->open(base64_decode($envelope['ciphertext'])), TRUE);
+    return $inner['message'];
   }
 
   /**
@@ -117,9 +194,11 @@ final class FakeReplica {
       return Create::rejectionFor(new ConnectException('Replica is down', $request));
     }
     $envelope = json_decode((string) $request->getBody(), TRUE);
-    $message = $envelope['message'];
+    $this->envelopes[] = $envelope;
+    $message = $this->open($envelope);
     if ($message['type'] === 'contract') {
       $this->contracts[] = $message['body']['version'];
+      $this->contractTerms[] = $message['body'];
       $body = ['result' => 'acknowledged'];
       if (!$this->dropAcks) {
         $body['ack'] = $this->message('contract_ack', ['version' => $message['body']['version']]);

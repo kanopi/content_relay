@@ -6,8 +6,11 @@ namespace Drupal\content_relay_origin\Controller;
 
 use Drupal\content_relay\Crypto\MessageVerifier;
 use Drupal\content_relay\Crypto\VerificationException;
+use Drupal\content_relay\Key\KeyPurpose;
+use Drupal\content_relay\Key\PeerKeys;
 use Drupal\content_relay_origin\ContractManager;
 use Drupal\content_relay_origin\ItemSyncControl;
+use Drupal\content_relay_origin\ReplicaRegistry;
 use Drupal\Core\DependencyInjection\ContainerInjectionInterface;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\DependencyInjection\ContainerInterface;
@@ -21,8 +24,10 @@ use Symfony\Component\HttpFoundation\Request;
  * the signature check.
  *
  * - contract_ack: the replica stored a contract version.
- * - subscription_update: the replica proposes new terms. The answer is the
- *   resulting contract, signed, which the replica then acknowledges.
+ * - subscription_update: the replica proposes new terms, and announces its
+ *   current public keys. The answer is the resulting contract, signed, which
+ *   the replica then acknowledges. A key the replica no longer lists is no
+ *   longer accepted from it.
  * - detach_notice and attach_notice: the replica detached or reattached an
  *   item. A reattach queues the item for it again.
  */
@@ -32,6 +37,7 @@ final class InboxController implements ContainerInjectionInterface {
     private readonly MessageVerifier $verifier,
     private readonly ContractManager $contracts,
     private readonly ItemSyncControl $control,
+    private readonly ReplicaRegistry $registry,
     private readonly LoggerInterface $logger,
   ) {}
 
@@ -43,6 +49,7 @@ final class InboxController implements ContainerInjectionInterface {
       $container->get('content_relay.message_verifier'),
       $container->get('content_relay_origin.contract_manager'),
       $container->get('content_relay_origin.item_sync_control'),
+      $container->get('content_relay_origin.replica_registry'),
       $container->get('logger.channel.content_relay_origin'),
     );
   }
@@ -79,6 +86,19 @@ final class InboxController implements ContainerInjectionInterface {
         $terms = $message->body['replica_terms'] ?? NULL;
         if (!is_array($terms)) {
           return new JsonResponse(['result' => 'malformed', 'message' => 'A subscription update needs replica_terms.'], 400);
+        }
+        if (isset($message->body['keys'])) {
+          try {
+            $signing = PeerKeys::check($message->body['keys']['signing'] ?? NULL, KeyPurpose::Signing);
+            $encryption = PeerKeys::check($message->body['keys']['encryption'] ?? [], KeyPurpose::Encryption);
+          }
+          catch (\InvalidArgumentException $e) {
+            return new JsonResponse(['result' => 'malformed', 'message' => $e->getMessage()], 400);
+          }
+          if ($signing === []) {
+            return new JsonResponse(['result' => 'malformed', 'message' => 'At least one signing key is required.'], 400);
+          }
+          $this->registry->setKeys($message->sender, $signing, $encryption);
         }
         $contract = $this->contracts->propose($message->sender, $terms, NULL, 'replica');
         return new JsonResponse(['result' => 'contract', 'contract' => $this->contracts->sign($contract)->toArray()]);

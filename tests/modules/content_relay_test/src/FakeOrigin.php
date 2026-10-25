@@ -7,6 +7,7 @@ namespace Drupal\content_relay_test;
 use Drupal\Component\Uuid\Php as PhpUuid;
 use Drupal\content_relay\Contract\SubscriptionContract;
 use Drupal\content_relay\Crypto\EncryptionMode;
+use Drupal\content_relay\Crypto\FileCipher;
 use Drupal\content_relay\Crypto\Message;
 use Drupal\content_relay\Crypto\MessageSigner;
 use Drupal\content_relay\Key\KeyPair;
@@ -34,7 +35,8 @@ use Psr\Http\Message\RequestInterface;
  * - down: TRUE to fail every request with a connection error.
  * - versions: contracts issued; acks: versions acknowledged; requests: log.
  * - notices: detach and attach notices received, each type and body.
- * - files: files it serves, by UUID: content, uri and url. Downloads are
+ * - files: files it serves, by UUID: content, uri and, to serve it
+ *   encrypted, key (base64 file key). Downloads are
  *   answered 410 while expire_downloads is positive and with wrong bytes
  *   while corrupt_downloads is, each counting down; downloads counts them.
  */
@@ -160,8 +162,9 @@ final class FakeOrigin {
   /**
    * Metadata for a file, as the origin puts it in events and file answers.
    */
-  public static function fileMeta(string $uuid, string $content, string $uri, int $expires = 0): array {
+  public static function fileMeta(string $uuid, string $content, string $uri, int $expires = 0, ?string $key = NULL): array {
     return [
+      'encryption' => $key === NULL ? 'none' : ['cipher' => FileCipher::NAME, 'key' => $key],
       'uuid' => $uuid,
       'uri' => $uri,
       'sha256' => hash('sha256', $content),
@@ -169,7 +172,6 @@ final class FakeOrigin {
       'download' => '/content-relay/v1/files/' . $uuid . '/download?token=' . bin2hex(random_bytes(4)),
       'expires' => $expires ?: time() + 3600,
       'url' => '/sites/default/files/' . explode('://', $uri, 2)[1],
-      'encryption' => 'none',
     ];
   }
 
@@ -184,7 +186,10 @@ final class FakeOrigin {
     if ($file === NULL) {
       return [404, ['result' => 'not_found']];
     }
-    return [200, self::fileMeta($uuid, $file['content'], $file['uri'])];
+    return [
+      200,
+      $this->sign($config, 'file_info', self::fileMeta($uuid, $file['content'], $file['uri'], 0, $file['key'] ?? NULL)),
+    ];
   }
 
   /**
@@ -206,6 +211,15 @@ final class FakeOrigin {
     if (($config['corrupt_downloads'] ?? 0) > 0) {
       $config['corrupt_downloads']--;
       return [200, 'corrupted ' . $file['content']];
+    }
+    if (isset($file['key'])) {
+      $in = fopen('php://memory', 'w+');
+      fwrite($in, $file['content']);
+      rewind($in);
+      $out = fopen('php://memory', 'w+');
+      FileCipher::encrypt($in, $out, base64_decode($file['key']));
+      rewind($out);
+      return [200, (string) stream_get_contents($out)];
     }
     return [200, $file['content']];
   }

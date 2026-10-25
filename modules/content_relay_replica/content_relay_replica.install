@@ -227,6 +227,17 @@ function content_relay_replica_schema(): array {
         'not null' => FALSE,
         'description' => 'The file on the origin, relative to the origin URL.',
       ],
+      'cipher' => [
+        'type' => 'varchar_ascii',
+        'length' => 64,
+        'not null' => FALSE,
+        'description' => 'How the download is encrypted, if it is.',
+      ],
+      'file_key' => [
+        'type' => 'text',
+        'not null' => FALSE,
+        'description' => 'Base64 key to decrypt the download; cleared once the file is in place.',
+      ],
       'status' => ['type' => 'varchar_ascii', 'length' => 16, 'not null' => TRUE],
       'attempts' => ['type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE, 'default' => 0],
       'next_attempt' => ['type' => 'int', 'size' => 'big', 'not null' => TRUE, 'default' => 0],

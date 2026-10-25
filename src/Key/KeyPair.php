@@ -100,6 +100,33 @@ final class KeyPair {
   }
 
   /**
+   * Seals bytes to a peer's X25519 public key.
+   *
+   * Anyone can seal to a public key; only the holder of the secret key can
+   * open the result. Authenticity comes from the signature inside.
+   */
+  public static function seal(string $bytes, string $public_key): string {
+    return sodium_crypto_box_seal($bytes, $public_key);
+  }
+
+  /**
+   * Opens bytes sealed to this key.
+   *
+   * @return string|null
+   *   The bytes, or NULL when they were not sealed to this key or were
+   *   altered.
+   */
+  public function open(string $sealed): ?string {
+    if ($this->purpose !== KeyPurpose::Encryption) {
+      throw new \LogicException('This is not an encryption key.');
+    }
+    $pair = sodium_crypto_box_keypair_from_secretkey_and_publickey($this->secretKey, $this->publicKey);
+    $bytes = sodium_crypto_box_seal_open($sealed, $pair);
+    sodium_memzero($pair);
+    return $bytes === FALSE ? NULL : $bytes;
+  }
+
+  /**
    * Hands the secret key to a libsodium call.
    *
    * @param callable(string): mixed $operation

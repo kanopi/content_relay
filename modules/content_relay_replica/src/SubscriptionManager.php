@@ -14,6 +14,8 @@ use Drupal\content_relay\Crypto\SignedEnvelope;
 use Drupal\content_relay\Crypto\VerificationException;
 use Drupal\content_relay\Key\KeyPurpose;
 use Drupal\content_relay\Key\KeyStore;
+use Drupal\content_relay\Key\PeerKeys;
+use Drupal\content_relay_replica\Crypto\OriginPolicy;
 use Drupal\content_relay\SiteIdentity;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Database\Connection;
@@ -37,6 +39,10 @@ use Psr\Log\LoggerInterface;
  *
  * Whenever a stored version removes a bundle, items of that bundle are marked
  * detached by the origin: kept, no longer updated.
+ *
+ * Proposals carry this site's current public keys, so the origin learns new
+ * ones before they are used, and contracts carry the origin's, so this site
+ * learns of the origin's rotations.
  */
 class SubscriptionManager {
 
@@ -60,6 +66,7 @@ class SubscriptionManager {
     protected ConfigFactoryInterface $configFactory,
     protected TimeInterface $time,
     protected LoggerInterface $logger,
+    protected OriginPolicy $policy,
   ) {}
 
   /**
@@ -108,7 +115,7 @@ class SubscriptionManager {
       'webhook_url' => $webhook,
       'signing_keys' => $this->keyStore->getPublicKeys(KeyPurpose::Signing),
       'encryption_keys' => $this->keyStore->getPublicKeys(KeyPurpose::Encryption),
-      'requested' => $replica_terms + SubscriptionContract::defaultReplicaTerms(),
+      'requested' => ['require_encryption' => $this->requiresEncryption()] + $replica_terms + SubscriptionContract::defaultReplicaTerms(),
     ], $signing);
 
     [$status, $body] = $this->post($origin_url . '/content-relay/v1/pair', $request);
@@ -158,6 +165,7 @@ class SubscriptionManager {
    */
   public function propose(array $replica_terms, ?int $uid = NULL): ?SubscriptionContract {
     $replica_terms['webhook_url'] = $this->getWebhookUrl();
+    $replica_terms['require_encryption'] = $this->requiresEncryption();
     $this->state->set(self::PENDING_PROPOSAL, [
       'terms' => $replica_terms,
       'uid' => $uid,
@@ -180,7 +188,13 @@ class SubscriptionManager {
     $pending['attempts']++;
     $this->state->set(self::PENDING_PROPOSAL, $pending);
 
-    $envelope = $this->signer->sign($origin['site_id'], 'subscription_update', ['replica_terms' => $pending['terms']]);
+    $envelope = $this->signer->sign($origin['site_id'], 'subscription_update', [
+      'replica_terms' => $pending['terms'],
+      'keys' => [
+        'signing' => $this->keyStore->getPublicKeys(KeyPurpose::Signing),
+        'encryption' => $this->keyStore->getPublicKeys(KeyPurpose::Encryption),
+      ],
+    ]);
     try {
       [$status, $body] = $this->post($origin['url'] . '/content-relay/v1/messages', $envelope->toArray());
       if ($status !== 200 || !is_array($body['contract'] ?? NULL)) {
@@ -223,6 +237,13 @@ class SubscriptionManager {
    */
   public function getReplicaTerms(): array {
     return ($this->contracts->getCurrent()?->terms['replica_terms'] ?? []) + SubscriptionContract::defaultReplicaTerms();
+  }
+
+  /**
+   * Whether this site refuses unencrypted messages, by its own setting.
+   */
+  protected function requiresEncryption(): bool {
+    return (bool) $this->configFactory->get('content_relay.settings')->get('encryption.require');
   }
 
   /**
@@ -274,9 +295,45 @@ class SubscriptionManager {
     }
     if ($this->contracts->save($contract, $uid)) {
       $this->applyBundleChanges($previous, $contract);
+      $this->takeOriginKeys($contract);
+      if ($previous !== NULL && $previous->encryption() !== $contract->encryption()) {
+        if ($contract->encryption() !== 'none') {
+          $this->policy->recordChange();
+        }
+        $this->logger->notice('Encryption changed from @old to @new with contract version @version (user @uid).', [
+          '@old' => $previous->encryption(),
+          '@new' => $contract->encryption(),
+          '@version' => $contract->version(),
+          '@uid' => $uid ?? 0,
+        ]);
+      }
       $this->logger->notice('Stored contract version @version from the origin.', ['@version' => $contract->version()]);
     }
     return $contract;
+  }
+
+  /**
+   * Takes the origin's current public keys from a contract it signed.
+   */
+  protected function takeOriginKeys(SubscriptionContract $contract): void {
+    $keys = $contract->terms['joint']['origin_keys'] ?? NULL;
+    if (!is_array($keys) || !is_array($keys['signing'] ?? NULL) || array_is_list($keys['signing'])) {
+      return;
+    }
+    try {
+      $signing = PeerKeys::check($keys['signing'], KeyPurpose::Signing);
+      $encryption = PeerKeys::check($keys['encryption'] ?? [], KeyPurpose::Encryption);
+    }
+    catch (\InvalidArgumentException $e) {
+      $this->logger->error('The origin\'s keys in contract version @version are malformed and were ignored: @message', [
+        '@version' => $contract->version(),
+        '@message' => $e->getMessage(),
+      ]);
+      return;
+    }
+    if ($signing !== []) {
+      $this->origin->setKeys($signing, $encryption);
+    }
   }
 
   /**

@@ -73,6 +73,7 @@ services:
       - '@config.factory'
       - '@datetime.time'
       - '@logger.channel.content_relay_replica'
+      - '@content_relay_replica.origin_policy'
 
   content_relay_replica.local_changes:
     class: Drupal\content_relay_replica\LocalChanges
@@ -87,6 +88,7 @@ services:
       - '@state'
       - '@logger.channel.content_relay_replica'
       - '@content_relay.pull_authenticator'
+      - '@content_relay.message_verifier'
 
   content_relay_replica.detacher:
     class: Drupal\content_relay_replica\ItemDetacher
@@ -141,3 +143,21 @@ services:
       - '@config.factory'
     tags:
       - { name: event_subscriber }
+
+  content_relay_replica.origin_policy:
+    class: Drupal\content_relay_replica\Crypto\OriginPolicy
+    arguments:
+      - '@content_relay_replica.origin'
+      - '@content_relay_replica.contracts'
+      - '@state'
+      - '@config.factory'
+      - '@datetime.time'
+    tags:
+      - { name: content_relay_peer_policy }
+
+  content_relay.key_announcer:
+    class: Drupal\content_relay_replica\Crypto\OriginKeyAnnouncer
+    arguments:
+      - '@content_relay_replica.subscription'
+      - '@content_relay_replica.origin'
+      - '@current_user'

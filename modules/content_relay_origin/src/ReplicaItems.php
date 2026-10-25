@@ -122,9 +122,11 @@ class ReplicaItems {
       'detached_at' => $at ?? $this->time->getCurrentTime(),
       'detached_by' => $by === NULL ? NULL : mb_substr($by, 0, 255),
     ];
+    $keys = ['replica_id' => $replica_id, 'entity_type' => $entity_type_id, 'uuid' => $uuid];
+    // insertFields() replaces what keys() would insert, so the keys go in too.
     $this->database->merge(self::TABLE)
-      ->keys(['replica_id' => $replica_id, 'entity_type' => $entity_type_id, 'uuid' => $uuid])
-      ->insertFields($fields + [
+      ->keys($keys)
+      ->insertFields($keys + $fields + [
         'bundle' => $bundle,
         'status' => self::APPLIED,
         'last_event_id' => '',

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Drupal\Tests\content_relay_replica\Kernel;
 
+use Drupal\content_relay\Crypto\FileCipher;
 use Drupal\content_relay\Event\Operation;
 use Drupal\content_relay\Key\KeyPair;
 use Drupal\content_relay\Key\KeyPurpose;
@@ -75,7 +76,17 @@ final class FileSyncTest extends ReplicaTestBase {
       ],
       'key_input' => 'none',
     ])->save();
-    FakeOrigin::install($this->container->get('state'), 'UNUSED', []);
+    // File requests go to the fake origin, which signs its answers.
+    $origin_key = FakeOrigin::install($this->container->get('state'), 'UNUSED', []);
+    $this->updateOrigin(fn (array &$config) => $config['replica'] = $this->container->get('content_relay.site_identity')->getSiteId());
+    $this->container->get('content_relay_replica.origin')->set([
+      'site_id' => FakeOrigin::SITE_ID,
+      'label' => 'Fake origin',
+      'url' => 'https://' . FakeOrigin::HOST,
+      'signing_keys' => [
+        $origin_key->id() => ['public_key' => base64_encode($origin_key->publicKey), 'status' => 'primary'],
+      ],
+    ]);
     $this->files = $this->container->get('content_relay_replica.file_sync');
   }
 
@@ -340,6 +351,34 @@ final class FileSyncTest extends ReplicaTestBase {
     $event = new ResponseEvent($this->container->get('http_kernel'), Request::create($url), HttpKernelInterface::MAIN_REQUEST, new Response('Not found', 404));
     $this->container->get('content_relay_replica.fetch_on_miss')->onResponse($event);
     return $event->getResponse();
+  }
+
+  /**
+   * An encrypted download is decrypted with the key from the event.
+   */
+  public function testEncryptedDownload(): void {
+    [$snapshot, $meta] = $this->originFile('sealed.pdf', 'sealed bytes');
+    $key = base64_encode(FileCipher::generateKey());
+    $this->updateOrigin(function (array &$config) use ($snapshot, $key): void {
+      $config['files'][$snapshot['uuid']]['key'] = $key;
+    });
+    $meta = FakeOrigin::fileMeta($snapshot['uuid'], 'sealed bytes', 'public://sealed.pdf', 0, $key);
+    $this->applyFile($snapshot, $meta);
+    $this->assertSame($key, $this->files->get($snapshot['uuid'])['file_key']);
+    $this->runQueue();
+    $this->assertSame('sealed bytes', file_get_contents('public://sealed.pdf'));
+    // The key is not kept once the file is in place.
+    $this->assertNull($this->files->get($snapshot['uuid'])['file_key']);
+
+    // With the wrong key, the download is refused rather than stored.
+    [$snapshot, $meta] = $this->originFile('wrong.pdf', 'other bytes');
+    $this->updateOrigin(function (array &$config) use ($snapshot): void {
+      $config['files'][$snapshot['uuid']]['key'] = base64_encode(FileCipher::generateKey());
+    });
+    $this->applyFile($snapshot, FakeOrigin::fileMeta($snapshot['uuid'], 'other bytes', 'public://wrong.pdf', 0, base64_encode(FileCipher::generateKey())));
+    $this->runQueue();
+    $this->assertFileDoesNotExist('public://wrong.pdf');
+    $this->assertStringContainsString('altered or the key is wrong', $this->files->get($snapshot['uuid'])['last_error']);
   }
 
   /**

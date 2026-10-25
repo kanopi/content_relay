@@ -48,6 +48,24 @@ class OriginPeer {
   }
 
   /**
+   * Replaces the origin's public keys.
+   *
+   * @param array $signing_keys
+   *   Checked signing keys; see PeerKeys::check().
+   * @param array $encryption_keys
+   *   Checked encryption keys.
+   */
+  public function setKeys(array $signing_keys, array $encryption_keys): void {
+    $origin = $this->get();
+    if ($origin === NULL) {
+      return;
+    }
+    $origin['signing_keys'] = $signing_keys;
+    $origin['encryption_keys'] = $encryption_keys;
+    $this->state->set(self::STATE_KEY, $origin);
+  }
+
+  /**
    * Stores the origin.
    *
    * @param array $origin

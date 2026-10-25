@@ -349,10 +349,9 @@ exists is still checked.
 ## 41. File encryption arrives with message encryption
 
 Encrypting a file only helps if its key travels inside an encrypted event,
-and encrypted events are phase 7. The streaming cipher is built and tested
-now (including a 32 MB file without memory growth, and refusal of altered,
-truncated or wrongly keyed files); phase 7 switches it on with the encryption
-mode in the contract.
+and encrypted events are phase 7. The streaming cipher was built and tested
+in phase 6 and is switched on with the encryption mode in the contract; see
+decision 45.
 
 ## 42. Links left at the origin use derivative URLs by convention
 
@@ -360,4 +359,55 @@ With `files.links: origin`, a link to an image style derivative is rebuilt as
 the origin's standard derivative path, without `itok`. That works where the
 derivative already exists on the origin (served by the web server) or where
 the origin allows derivatives without a token; otherwise prefer local links.
+
+## 43. Sign, then seal, with sealed boxes
+
+A sealed message is the signed message and its signature, encrypted together
+with `sodium_crypto_box_seal` to the recipient's X25519 key. Sealed boxes are
+anonymous; the signature inside is what authenticates the sender. The
+envelope shows only the version, sender, signing key ID, encryption key ID,
+mode and ciphertext, as the specification asks.
+
+## 44. The contract decides the mode; a peer policy applies it
+
+Every message to a peer is sent in the mode of the contract in force with it
+(before the first acknowledgement, the pending one), so the existing callers
+did not change: the signer asks a per-peer policy, which each role module
+provides. A stronger mode than expected is always accepted; a weaker one only
+under the rules in the README (contract unencrypted, or within the
+transition window). The window starts when the origin activates the contract
+and when the replica stores it.
+
+## 45. File keys are derived, not random and stored
+
+The specification asks for a random key per file. Downloads can happen hours
+after the event is built, so a random key would have to be stored on the
+origin until then. Instead the key is a keyed hash, under the origin's
+private encryption key, of the file's UUID, the replica and the content
+checksum: unique per file, replica and version, unpredictable without the
+private key, and recomputed when the file is downloaded. The signed link
+names which encryption key to derive from, so it can be checked and survives
+a rotation while the old key is active.
+
+## 46. The file endpoint answers with a signed message
+
+Its answer can carry a file key, so it is a signed message from the origin,
+sealed when the contract is encrypted, like every other message, rather than
+plain JSON over the JWT-authenticated request.
+
+## 47. Key rotation announces before it switches
+
+A new key is announced, signed with the current key, before it is used: in a
+new contract version from the origin, in a subscription update from a
+replica. A replica waits for its origin's confirmation; the origin does not
+wait for every replica but signs for each with a key that replica has
+confirmed in its acknowledged contract. Retiring a key removes it from what
+the peer is told, and the peer stops accepting it.
+
+## 48. "Require encryption" is a site setting
+
+Each side's policy is `content_relay.settings:encryption.require`: not a
+secret, and per site. It is set on the origin's settings form and on the
+replica's Contract page, and each contract records both sides' settings.
+Changing it on the origin issues new contract versions to every replica.
 

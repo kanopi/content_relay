@@ -25,7 +25,7 @@ class ContractNegotiator {
    * @return array{effective: array, not_granted: array}
    *   The effective section and the list of refusals.
    */
-  public function negotiate(array $origin_terms, array $replica_terms): array {
+  public function negotiate(array $origin_terms, array $replica_terms, bool $encryption_possible = FALSE): array {
     $origin_terms += SubscriptionContract::defaultOriginTerms();
     $replica_terms += SubscriptionContract::defaultReplicaTerms();
     $published = $this->scope->getPublishedBundles();
@@ -70,9 +70,16 @@ class ContractNegotiator {
       $languages['selected'] = array_slice($languages['selected'], 0, $max);
     }
 
+    // Encrypted when the replica asks for it or either side requires it,
+    // and both sides have an encryption key to make it possible.
     $encryption = 'none';
     if ($replica_terms['encryption'] !== 'none' || $replica_terms['require_encryption'] || $origin_terms['require_encryption']) {
-      $not_granted[] = ['term' => 'encryption', 'value' => 'sealed', 'reason' => 'Encryption is not available yet.'];
+      if ($encryption_possible) {
+        $encryption = 'sealed';
+      }
+      else {
+        $not_granted[] = ['term' => 'encryption', 'value' => 'sealed', 'reason' => 'Both sites need an encryption key.'];
+      }
     }
 
     $limits = array_filter([

@@ -10,6 +10,8 @@ use Drupal\content_relay\Crypto\EncryptionMode;
 use Drupal\content_relay\Crypto\Message;
 use Drupal\content_relay\Crypto\MessageSigner;
 use Drupal\content_relay\Crypto\MessageVerifier;
+use Drupal\content_relay\Crypto\PeerPolicy;
+use Drupal\content_relay\Crypto\PeerPolicyInterface;
 use Drupal\content_relay\Crypto\PublicKeyResolverInterface;
 use Drupal\content_relay\Crypto\ReplayGuardInterface;
 use Drupal\content_relay\Crypto\SignedEnvelope;
@@ -64,22 +66,49 @@ final class MessageSignatureTest extends UnitTestCase {
   private int $now = self::NOW;
 
   /**
+   * The replica's encryption key.
+   */
+  private KeyPair $replicaEncryption;
+
+  /**
+   * Whether the replica refuses unencrypted messages by its own setting.
+   */
+  private bool $require = FALSE;
+
+  /**
+   * What the replica's contract says about unencrypted messages.
+   */
+  private ?bool $contractAllowsUnencrypted = NULL;
+
+  /**
    * {@inheritdoc}
    */
   protected function setUp(): void {
     parent::setUp();
     [$this->key] = KeyPair::generate(KeyPurpose::Signing);
     $this->known[$this->key->id()] = $this->key->publicKey;
+    [$this->replicaEncryption] = KeyPair::generate(KeyPurpose::Encryption);
   }
 
   /**
-   * Signs a message from the origin to the replica.
+   * Signs a message from the origin to the replica, sealed or not.
    */
-  private function sign(array $body = ['event' => 'x'], string $recipient = self::REPLICA, ?KeyPair $key = NULL, int $timestamp = self::NOW): array {
-    $message = new Message((new PhpUuid())->generate(), 'event', self::ORIGIN, $recipient, $timestamp, EncryptionMode::None, $body, 1);
-    return (new MessageSigner($this->createMock(KeyStore::class), $this->createMock(SiteIdentity::class), $this->createMock(TimeInterface::class), new PhpUuid()))
-      ->signMessage($message, $key ?? $this->key)
-      ->toArray();
+  private function sign(array $body = ['event' => 'x'], string $recipient = self::REPLICA, ?KeyPair $key = NULL, int $timestamp = self::NOW, EncryptionMode $mode = EncryptionMode::None, ?EncryptionMode $signed_mode = NULL): array {
+    $message = new Message((new PhpUuid())->generate(), 'event', self::ORIGIN, $recipient, $timestamp, $signed_mode ?? $mode, $body, 1);
+    $signer = new MessageSigner($this->createMock(KeyStore::class), $this->createMock(SiteIdentity::class), $this->createMock(TimeInterface::class), new PhpUuid(), new PeerPolicy($this->getConfigFactoryStub([])));
+    $envelope = $signer->signMessage($message, $key ?? $this->key);
+    if ($mode === EncryptionMode::Sealed) {
+      return MessageSigner::seal($envelope, $this->replicaEncryption->id(), $this->replicaEncryption->publicKey)->toArray();
+    }
+    // Sent in the clear, whatever the message says.
+    return [
+      'v' => SignedEnvelope::SCHEMA_VERSION,
+      'sender' => $envelope->sender,
+      'signing_key_id' => $envelope->signingKeyId,
+      'encryption' => EncryptionMode::None->value,
+      'message' => $envelope->message,
+      'signature' => $envelope->signature,
+    ];
   }
 
   /**
@@ -124,7 +153,49 @@ final class MessageSignatureTest extends UnitTestCase {
     $identity->method('getSiteId')->willReturn(self::REPLICA);
     $time = $this->createMock(TimeInterface::class);
     $time->method('getCurrentTime')->willReturnCallback(fn () => $this->now);
-    return new MessageVerifier($keys, $guard, $identity, $this->getConfigFactoryStub(['content_relay.settings' => ['signature' => ['clock_window' => 300]]]), $time);
+    $config = $this->getConfigFactoryStub([
+      'content_relay.settings' => [
+        'signature' => ['clock_window' => 300],
+        'encryption' => ['require' => $this->require],
+      ],
+    ]);
+    $key_store = $this->createMock(KeyStore::class);
+    $key_store->method('get')->willReturnCallback(fn (KeyPurpose $purpose, string $id) => $purpose === KeyPurpose::Encryption && $id === $this->replicaEncryption->id() ? $this->replicaEncryption : NULL);
+    $policy = new PeerPolicy($config);
+    $policy->addPolicy(new class($this->contractAllowsUnencrypted) implements PeerPolicyInterface {
+
+      public function __construct(private ?bool $allows) {}
+
+      /**
+       * {@inheritdoc}
+       */
+      public function sendMode(string $peer): ?EncryptionMode {
+        return NULL;
+      }
+
+      /**
+       * {@inheritdoc}
+       */
+      public function peerEncryptionKey(string $peer): ?array {
+        return NULL;
+      }
+
+      /**
+       * {@inheritdoc}
+       */
+      public function trustedSigningKeyIds(string $peer): ?array {
+        return NULL;
+      }
+
+      /**
+       * {@inheritdoc}
+       */
+      public function allowsUnencrypted(string $peer): ?bool {
+        return $this->allows;
+      }
+
+    });
+    return new MessageVerifier($keys, $guard, $identity, $config, $time, $key_store, $policy);
   }
 
   /**
@@ -183,8 +254,35 @@ final class MessageSignatureTest extends UnitTestCase {
         $envelope['v'] = 2;
         break;
 
-      case 'encrypted':
-        $envelope = ['encryption' => 'sealed', 'ciphertext' => 'x', 'encryption_key_id' => 'y'] + $envelope;
+      case 'sealed_to_unknown_key':
+        $envelope = $this->sign(mode: EncryptionMode::Sealed);
+        $envelope['encryption_key_id'] = '0000000000000000';
+        break;
+
+      case 'sealed_garbage':
+        $envelope = $this->sign(mode: EncryptionMode::Sealed);
+        $envelope['ciphertext'] = base64_encode(random_bytes(200));
+        break;
+
+      case 'sealed_tampered':
+        $envelope = $this->sign(mode: EncryptionMode::Sealed);
+        $raw = base64_decode($envelope['ciphertext']);
+        $raw[60] = chr(ord($raw[60]) ^ 1);
+        $envelope['ciphertext'] = base64_encode($raw);
+        break;
+
+      case 'unsealed_in_transit':
+        // Signed as sealed, then sent in the clear by someone who opened it.
+        $envelope = $this->sign(signed_mode: EncryptionMode::Sealed);
+        break;
+
+      case 'sealed_after_signing_plain':
+        // Signed as unencrypted, then sealed: the mode does not match.
+        $envelope = $this->sign(mode: EncryptionMode::Sealed, signed_mode: EncryptionMode::None);
+        break;
+
+      case 'envelope_mode':
+        $envelope['encryption'] = 'sealed';
         break;
 
       case 'recipient':
@@ -222,7 +320,12 @@ final class MessageSignatureTest extends UnitTestCase {
       'garbage signature' => ['garbage_signature', VerificationException::BAD_SIGNATURE],
       'missing signature' => ['missing_signature', VerificationException::MALFORMED],
       'unknown envelope version' => ['envelope_version', VerificationException::MALFORMED],
-      'encrypted, not yet supported' => ['encrypted', VerificationException::UNSUPPORTED_ENCRYPTION],
+      'sealed to a key this site does not have' => ['sealed_to_unknown_key', VerificationException::UNKNOWN_KEY],
+      'sealed garbage' => ['sealed_garbage', VerificationException::DECRYPTION_FAILED],
+      'tampered ciphertext' => ['sealed_tampered', VerificationException::DECRYPTION_FAILED],
+      'unsealed in transit' => ['unsealed_in_transit', VerificationException::HEADER_MISMATCH],
+      'sealed after signing unencrypted' => ['sealed_after_signing_plain', VerificationException::HEADER_MISMATCH],
+      'tampered envelope encryption mode' => ['envelope_mode', VerificationException::MALFORMED],
       'addressed to another replica' => ['recipient', VerificationException::WRONG_RECIPIENT],
       'too old' => ['old', VerificationException::STALE],
       'from the future' => ['future', VerificationException::STALE],
@@ -275,6 +378,46 @@ final class MessageSignatureTest extends UnitTestCase {
     $verifier = $this->verifier();
     $this->assertSame(self::ORIGIN, $verifier->verify($this->sign())->sender);
     $this->assertSame(self::ORIGIN, $verifier->verify($this->sign(key: $new))->sender);
+  }
+
+  /**
+   * A sealed message verifies, and nothing of it can be read in transit.
+   */
+  public function testSealedMessage(): void {
+    $envelope = json_decode(json_encode($this->sign(['secret' => 'the quarterly numbers'], mode: EncryptionMode::Sealed)), TRUE);
+    $this->assertArrayNotHasKey('message', $envelope);
+    $this->assertArrayNotHasKey('signature', $envelope);
+    $this->assertStringNotContainsString('quarterly', json_encode($envelope));
+    $this->assertStringNotContainsString('quarterly', (string) base64_decode($envelope['ciphertext']));
+    $message = $this->verifier()->verify($envelope);
+    $this->assertSame(['secret' => 'the quarterly numbers'], $message->body);
+    $this->assertSame(EncryptionMode::Sealed, $message->encryption);
+  }
+
+  /**
+   * Unencrypted messages are refused when this site or the contract says so.
+   */
+  public function testDowngradeIsRefused(): void {
+    $this->contractAllowsUnencrypted = FALSE;
+    try {
+      $this->verifier()->verify($this->sign());
+      $this->fail('An unencrypted message was accepted.');
+    }
+    catch (VerificationException $e) {
+      $this->assertSame(VerificationException::ENCRYPTION_REQUIRED, $e->reason);
+    }
+    $this->assertSame(self::ORIGIN, $this->verifier()->verify($this->sign(mode: EncryptionMode::Sealed))->sender);
+
+    // This site's own setting wins over a contract that would allow it.
+    $this->contractAllowsUnencrypted = TRUE;
+    $this->require = TRUE;
+    try {
+      $this->verifier()->verify($this->sign());
+      $this->fail('An unencrypted message was accepted.');
+    }
+    catch (VerificationException $e) {
+      $this->assertSame(VerificationException::ENCRYPTION_REQUIRED, $e->reason);
+    }
   }
 
 }

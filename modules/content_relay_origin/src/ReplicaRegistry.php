@@ -67,6 +67,23 @@ class ReplicaRegistry {
   }
 
   /**
+   * Replaces a replica's public keys, as it announced them.
+   *
+   * @param string $id
+   *   The replica.
+   * @param array $signing_keys
+   *   Checked signing keys; see PeerKeys::check().
+   * @param array $encryption_keys
+   *   Checked encryption keys.
+   */
+  public function setKeys(string $id, array $signing_keys, array $encryption_keys): void {
+    $this->update($id, [
+      'signing_keys' => json_encode($signing_keys, \JSON_THROW_ON_ERROR),
+      'encryption_keys' => json_encode($encryption_keys, \JSON_THROW_ON_ERROR),
+    ]);
+  }
+
+  /**
    * A replica by ID.
    */
   public function get(string $id): ?Replica {

@@ -185,7 +185,11 @@ final class FileTest extends OriginTestBase {
     $this->articleWith($file);
     $response = $this->get('/content-relay/v1/files/' . $file->uuid(), ['Authorization' => 'Bearer ' . $this->token()]);
     $this->assertSame(200, $response->getStatusCode(), (string) $response->getContent());
-    $info = $this->json($response);
+    // A signed message from the origin to this replica.
+    $answer = $this->json($response);
+    $this->assertSame('file_info', $answer['message']['type']);
+    $this->assertSame($this->replica->siteId, $answer['message']['recipient']);
+    $info = $answer['message']['body'];
     $this->assertSame(hash('sha256', 'shared'), $info['sha256']);
     $this->assertSame(200, $this->get($info['download'])->getStatusCode());
 

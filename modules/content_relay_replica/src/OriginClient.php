@@ -6,6 +6,8 @@ namespace Drupal\content_relay_replica;
 
 use Drupal\content_relay\Auth\PullAuthenticatorInterface;
 use Drupal\content_relay\Crypto\MessageSigner;
+use Drupal\content_relay\Crypto\MessageVerifier;
+use Drupal\content_relay\Crypto\VerificationException;
 use Drupal\Core\State\StateInterface;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
@@ -32,6 +34,7 @@ class OriginClient {
     protected StateInterface $state,
     protected LoggerInterface $logger,
     protected PullAuthenticatorInterface $authenticator,
+    protected MessageVerifier $verifier,
   ) {}
 
   /**
@@ -63,9 +66,20 @@ class OriginClient {
     catch (\RuntimeException $e) {
       throw new SubscriptionException(sprintf('No token could be issued: %s', $e->getMessage()), 0, $e);
     }
-    $info = json_decode((string) $response->getBody(), TRUE);
-    if ($response->getStatusCode() !== 200 || !is_array($info) || !is_string($info['sha256'] ?? NULL) || !is_string($info['download'] ?? NULL)) {
-      throw new SubscriptionException(sprintf('The origin answered HTTP %d%s.', $response->getStatusCode(), is_array($info) && is_string($info['result'] ?? NULL) ? ' (' . $info['result'] . ')' : ''));
+    $answer = json_decode((string) $response->getBody(), TRUE);
+    if ($response->getStatusCode() !== 200 || !is_array($answer)) {
+      throw new SubscriptionException(sprintf('The origin answered HTTP %d%s.', $response->getStatusCode(), is_array($answer) && is_string($answer['result'] ?? NULL) ? ' (' . $answer['result'] . ')' : ''));
+    }
+    // A signed message: it can carry the file's key.
+    try {
+      $message = $this->verifier->verify($answer);
+    }
+    catch (VerificationException $e) {
+      throw new SubscriptionException(sprintf('The origin\'s answer does not verify: %s', $e->reason), 0, $e);
+    }
+    $info = $message->body;
+    if ($message->type !== 'file_info' || $message->sender !== $origin['site_id'] || !is_string($info['sha256'] ?? NULL) || !is_string($info['download'] ?? NULL)) {
+      throw new SubscriptionException('The origin\'s answer is not file metadata.');
     }
     return $info;
   }

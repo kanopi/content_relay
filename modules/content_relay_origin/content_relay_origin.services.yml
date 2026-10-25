@@ -65,6 +65,7 @@ services:
       - '@content_relay_origin.file_links'
       - '@content_relay.file_checksums'
       - '@file_url_generator'
+      - '@content_relay_origin.file_keys'
 
   content_relay_origin.delivery:
     class: Drupal\content_relay_origin\DeliveryService
@@ -118,6 +119,7 @@ services:
       - '@config.factory'
       - '@datetime.time'
       - '@logger.channel.content_relay_origin'
+      - '@content_relay_origin.replica_policy'
 
   content_relay_origin.pairing:
     class: Drupal\content_relay_origin\PairingService
@@ -247,3 +249,25 @@ services:
       - '@content_relay_origin.not_syncable'
       - '@content_relay_origin.replica_registry'
       - '@entity.repository'
+
+  content_relay_origin.replica_policy:
+    class: Drupal\content_relay_origin\Crypto\ReplicaPolicy
+    arguments:
+      - '@database'
+      - '@content_relay_origin.replica_registry'
+      - '@state'
+      - '@config.factory'
+      - '@datetime.time'
+    tags:
+      - { name: content_relay_peer_policy }
+
+  content_relay.key_announcer:
+    class: Drupal\content_relay_origin\Crypto\ReplicaKeyAnnouncer
+    arguments:
+      - '@content_relay_origin.replica_registry'
+      - '@content_relay_origin.contract_manager'
+      - '@current_user'
+
+  content_relay_origin.file_keys:
+    class: Drupal\content_relay_origin\File\FileKeys
+    arguments: ['@content_relay.key_store']

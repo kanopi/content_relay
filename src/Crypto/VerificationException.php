@@ -20,6 +20,7 @@ final class VerificationException extends \RuntimeException {
   public const REPLAYED = 'replayed';
   public const ENCRYPTION_REQUIRED = 'encryption_required';
   public const UNSUPPORTED_ENCRYPTION = 'unsupported_encryption';
+  public const DECRYPTION_FAILED = 'decryption_failed';
 
   public function __construct(
     public readonly string $reason,

@@ -16,6 +16,7 @@ use Drupal\content_relay\Hash\RevisionHasher;
 use Drupal\content_relay\Key\KeyPurpose;
 use Drupal\content_relay\Key\KeyStore;
 use Drupal\content_relay\SiteIdentity;
+use Drupal\content_relay_origin\Crypto\ReplicaPolicy;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Database\Connection;
 use GuzzleHttp\ClientInterface;
@@ -67,6 +68,7 @@ class ContractManager {
     protected ConfigFactoryInterface $configFactory,
     protected TimeInterface $time,
     protected LoggerInterface $logger,
+    protected ReplicaPolicy $policy,
   ) {}
 
   /**
@@ -88,7 +90,10 @@ class ContractManager {
     $latest = $this->getLatest($replica_id);
     $replica_terms = ($replica_terms ?? $latest?->terms['replica_terms'] ?? []) + SubscriptionContract::defaultReplicaTerms();
     $origin_terms = ($origin_terms ?? $latest?->terms['origin_terms'] ?? []) + SubscriptionContract::defaultOriginTerms();
-    $negotiated = $this->negotiator->negotiate($origin_terms, $replica_terms);
+    // This site's own policy, whatever was proposed.
+    $origin_terms['require_encryption'] = (bool) $this->configFactory->get('content_relay.settings')->get('encryption.require');
+    $origin_encryption_keys = $this->keyStore->getPublicKeys(KeyPurpose::Encryption);
+    $negotiated = $this->negotiator->negotiate($origin_terms, $replica_terms, $origin_encryption_keys !== [] && $replica->encryptionKeys !== []);
     $version = ($latest?->version() ?? 0) + 1;
     $effective_from = $this->registry->peekSequence($replica_id);
 
@@ -105,13 +110,19 @@ class ContractManager {
         'event_schema' => SyncEvent::SCHEMA_VERSION,
         'hash_algorithm' => RevisionHasher::CURRENT_VERSION,
         'encryption' => $negotiated['effective']['encryption'],
+        'require_encryption' => [
+          'origin' => $origin_terms['require_encryption'],
+          'replica' => (bool) $replica_terms['require_encryption'],
+        ],
+        // Each side's public keys and their status. The replica takes the
+        // origin's keys from here, so a rotation reaches it with the contract.
         'origin_keys' => [
-          'signing' => array_keys($this->keyStore->getPublicKeys(KeyPurpose::Signing)),
-          'encryption' => array_keys($this->keyStore->getPublicKeys(KeyPurpose::Encryption)),
+          'signing' => $this->keyStore->getPublicKeys(KeyPurpose::Signing),
+          'encryption' => $origin_encryption_keys,
         ],
         'replica_keys' => [
-          'signing' => array_keys($replica->signingKeys),
-          'encryption' => array_keys($replica->encryptionKeys),
+          'signing' => $replica->signingKeys,
+          'encryption' => $replica->encryptionKeys,
         ],
       ],
       'effective' => $negotiated['effective'],
@@ -160,6 +171,8 @@ class ContractManager {
     if ($row['status'] === self::ACTIVE) {
       return TRUE;
     }
+    $previous_mode = $this->getActive($replica_id)?->encryption();
+    $new_mode = SubscriptionContract::fromArray(json_decode($row['terms'], TRUE))->encryption();
     // Events already sent went out under the previous version; this one
     // starts with the first that has not.
     $effective_from = max((int) $row['effective_from_sequence'], $this->outbox->lastSentSequence($replica_id) + 1);
@@ -181,6 +194,19 @@ class ContractManager {
     $this->registry->setContractVersion($replica_id, $version);
     unset($transaction);
     $this->activateIfReady($replica_id);
+    if ($previous_mode !== NULL && $previous_mode !== $new_mode) {
+      if ($new_mode !== 'none') {
+        $this->policy->recordChange($replica_id);
+      }
+      $this->logger->notice('Encryption for replica @replica changed from @old to @new with contract version @version (proposed by @side, user @uid).', [
+        '@replica' => $replica_id,
+        '@old' => $previous_mode,
+        '@new' => $new_mode,
+        '@version' => $version,
+        '@side' => $row['initiated_by'],
+        '@uid' => $row['created_by'] ?? 0,
+      ]);
+    }
     $this->logger->notice('Replica @replica acknowledged contract version @version, in force from event @sequence.', [
       '@replica' => $replica_id,
       '@version' => $version,

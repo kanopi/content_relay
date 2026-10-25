@@ -57,6 +57,15 @@ services:
     class: Drupal\content_relay\Key\KeyStore
     arguments: ['@key.repository']
 
+  content_relay.key_rotation:
+    class: Drupal\content_relay\Key\KeyRotation
+    arguments:
+      - '@entity_type.manager'
+      - '@content_relay.key_store'
+      - '@logger.channel.content_relay'
+      - '@current_user'
+      - '@?content_relay.key_announcer'
+
   # Role modules add resolvers for their peers by tagging a service with
   # content_relay_public_key_resolver.
   content_relay.public_key_resolver:
@@ -75,6 +84,7 @@ services:
       - '@content_relay.site_identity'
       - '@datetime.time'
       - '@uuid'
+      - '@content_relay.peer_policy'
 
   content_relay.message_verifier:
     class: Drupal\content_relay\Crypto\MessageVerifier
@@ -84,6 +94,16 @@ services:
       - '@content_relay.site_identity'
       - '@config.factory'
       - '@datetime.time'
+      - '@content_relay.key_store'
+      - '@content_relay.peer_policy'
+
+  # Role modules add a policy for their peers by tagging a service with
+  # content_relay_peer_policy.
+  content_relay.peer_policy:
+    class: Drupal\content_relay\Crypto\PeerPolicy
+    arguments: ['@config.factory']
+    tags:
+      - { name: service_collector, tag: content_relay_peer_policy, call: addPolicy }
 
   content_relay.contract_summarizer:
     class: Drupal\content_relay\Contract\ContractSummarizer

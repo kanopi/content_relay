@@ -11,6 +11,7 @@ use Drupal\content_relay\Event\ProcessingMode;
 use Drupal\content_relay\Event\SyncEvent;
 use Drupal\content_relay\File\FileChecksums;
 use Drupal\content_relay_origin\Controller\FileController;
+use Drupal\content_relay_origin\File\FileKeys;
 use Drupal\content_relay_origin\File\FileLinks;
 use Drupal\content_relay\Hash\RevisionHasher;
 use Drupal\content_relay\Serialization\EntitySerializer;
@@ -39,6 +40,7 @@ class EventBuilder {
     protected FileLinks $fileLinks,
     protected FileChecksums $checksums,
     protected FileUrlGeneratorInterface $fileUrlGenerator,
+    protected FileKeys $fileKeys,
   ) {}
 
   /**
@@ -115,7 +117,7 @@ class EventBuilder {
       contractVersion: $contract->version(),
       created: $this->time->getCurrentTime(),
       dependencies: $dependencies,
-      files: $this->files($entity, $row['replica_id']),
+      files: $this->files($entity, $row['replica_id'], $contract->encryption() !== 'none'),
       process: $process,
       previousSequence: $previous_sequence,
       externalReferences: $external,
@@ -126,11 +128,14 @@ class EventBuilder {
   /**
    * The binaries a replica fetches for an event: a file entity's own.
    *
+   * When the contract is encrypted the download is too, and the metadata
+   * carries the file's key; the event itself is then sealed.
+   *
    * @return array[]
    *   File metadata with a signed download link; empty for other entities and
    *   for a file missing from storage, whose entity still goes.
    */
-  protected function files(ContentEntityInterface $entity, string $replica_id): array {
+  protected function files(ContentEntityInterface $entity, string $replica_id, bool $encrypted): array {
     if (!$entity instanceof FileInterface) {
       return [];
     }
@@ -138,7 +143,9 @@ class EventBuilder {
     if ($checksum === NULL) {
       return [];
     }
-    return [FileController::metadata($entity, $checksum, $this->fileLinks->build($entity, $replica_id), $this->fileUrlGenerator)];
+    $key_id = $encrypted ? $this->fileKeys->currentKeyId() : NULL;
+    $file_key = $key_id === NULL ? NULL : $this->fileKeys->derive($key_id, (string) $entity->uuid(), $replica_id, $checksum['sha256']);
+    return [FileController::metadata($entity, $checksum, $this->fileLinks->build($entity, $replica_id, $key_id), $this->fileUrlGenerator, $file_key)];
   }
 
   /**

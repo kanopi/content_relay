@@ -7,7 +7,6 @@ namespace Drupal\Tests\content_relay_replica\Kernel;
 use Drupal\Component\Uuid\Php as PhpUuid;
 use Drupal\content_relay\Crypto\EncryptionMode;
 use Drupal\content_relay\Crypto\Message;
-use Drupal\content_relay\Crypto\MessageSigner;
 use Drupal\content_relay\Event\Operation;
 use Drupal\content_relay\Event\SyncEvent;
 use Drupal\content_relay\Key\KeyPair;
@@ -39,12 +38,7 @@ final class EndpointTest extends ReplicaTestBase {
    */
   private function envelope(SyncEvent $event, ?KeyPair $key = NULL, string $sender = self::ORIGIN, string $type = 'event'): array {
     $message = new Message((new PhpUuid())->generate(), $type, $sender, $this->container->get('content_relay.site_identity')->getSiteId(), time(), EncryptionMode::None, $event->toArray(), $event->sequence);
-    return (new MessageSigner(
-      $this->container->get('content_relay.key_store'),
-      $this->container->get('content_relay.site_identity'),
-      $this->container->get('datetime.time'),
-      $this->container->get('uuid'),
-    ))->signMessage($message, $key ?? $this->originKey)->toArray();
+    return $this->container->get('content_relay.message_signer')->signMessage($message, $key ?? $this->originKey)->toArray();
   }
 
   /**

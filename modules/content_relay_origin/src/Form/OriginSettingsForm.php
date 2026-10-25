@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace Drupal\content_relay_origin\Form;
 
 use Drupal\content_relay\Serialization\SyncableEntityTypes;
+use Drupal\content_relay_origin\ContractManager;
 use Drupal\content_relay_origin\NotSyncableFlags;
 use Drupal\content_relay_origin\PairingCodes;
+use Drupal\content_relay_origin\ReplicaRegistry;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Config\TypedConfigManagerInterface;
 use Drupal\Core\Form\ConfigFormBase;
@@ -22,6 +24,8 @@ final class OriginSettingsForm extends ConfigFormBase {
     ConfigFactoryInterface $config_factory,
     TypedConfigManagerInterface $typed_config_manager,
     protected SyncableEntityTypes $syncableTypes,
+    protected ContractManager $contracts,
+    protected ReplicaRegistry $registry,
   ) {
     parent::__construct($config_factory, $typed_config_manager);
   }
@@ -34,6 +38,8 @@ final class OriginSettingsForm extends ConfigFormBase {
       $container->get('config.factory'),
       $container->get('config.typed'),
       $container->get('content_relay.syncable_entity_types'),
+      $container->get('content_relay_origin.contract_manager'),
+      $container->get('content_relay_origin.replica_registry'),
     );
   }
 
@@ -48,7 +54,7 @@ final class OriginSettingsForm extends ConfigFormBase {
    * {@inheritdoc}
    */
   protected function getEditableConfigNames(): array {
-    return ['content_relay_origin.settings'];
+    return ['content_relay_origin.settings', 'content_relay.settings'];
   }
 
   /**
@@ -137,6 +143,24 @@ final class OriginSettingsForm extends ConfigFormBase {
       '#min' => 1,
       '#default_value' => $config->get('retention_days'),
     ];
+    $form['encryption'] = [
+      '#type' => 'details',
+      '#title' => $this->t('Encryption'),
+      '#tree' => TRUE,
+    ];
+    $form['encryption']['require'] = [
+      '#type' => 'checkbox',
+      '#title' => $this->t('Require encryption'),
+      '#description' => $this->t('Refuse unencrypted messages from every replica, however they are signed, and make every contract encrypted. Each replica then needs an encryption key. Without this, a replica chooses encryption in its contract.'),
+      '#default_value' => (bool) $this->config('content_relay.settings')->get('encryption.require'),
+    ];
+    $form['encryption']['transition_window'] = [
+      '#type' => 'number',
+      '#title' => $this->t('Transition window, in minutes'),
+      '#description' => $this->t('After a contract switches encryption on, unencrypted messages from that replica are still accepted this long, for those already on their way.'),
+      '#min' => 0,
+      '#default_value' => intdiv((int) $this->config('content_relay.settings')->get('encryption.transition_window'), 60),
+    ];
     $form['not_syncable_behavior'] = [
       '#type' => 'radios',
       '#title' => $this->t('When an item replicas already have is marked not syncable'),
@@ -188,6 +212,21 @@ final class OriginSettingsForm extends ConfigFormBase {
       ->set('retention_days', (int) $form_state->getValue('retention_days'))
       ->set('not_syncable.behavior', (string) $form_state->getValue('not_syncable_behavior'))
       ->save();
+    $require = (bool) $form_state->getValue(['encryption', 'require']);
+    $changed = $require !== (bool) $this->config('content_relay.settings')->get('encryption.require');
+    $this->config('content_relay.settings')
+      ->set('encryption.require', $require)
+      ->set('encryption.transition_window', 60 * (int) $form_state->getValue(['encryption', 'transition_window']))
+      ->save();
+    if ($changed) {
+      // Every contract states each side's policy: new versions carry it.
+      foreach ($this->registry->getAll() as $replica) {
+        if ($replica->receivesEvents() && $this->contracts->getLatest($replica->id) !== NULL) {
+          $this->contracts->propose($replica->id, NULL, NULL, 'origin', (int) $this->currentUser()->id());
+        }
+      }
+      $this->messenger()->addStatus($this->t('Replicas will be sent new contract versions with the encryption policy.'));
+    }
     parent::submitForm($form, $form_state);
   }
 

@@ -6,6 +6,7 @@ namespace Drupal\content_relay\Crypto;
 
 use Drupal\Component\Datetime\TimeInterface;
 use Drupal\content_relay\Key\KeyPurpose;
+use Drupal\content_relay\Key\KeyStore;
 use Drupal\content_relay\SiteIdentity;
 use Drupal\Core\Config\ConfigFactoryInterface;
 
@@ -19,10 +20,13 @@ use Drupal\Core\Config\ConfigFactoryInterface;
  * messages.
  *
  * 1. The envelope is well formed and its version known.
- * 2. Its encryption mode is supported.
+ * 2. If sealed, it opens with one of this site's unretired encryption keys;
+ *    if not, unencrypted messages from the sender are acceptable now
+ *    (downgrade protection, see PeerPolicy).
  * 3. The sender and key ID name a known, unretired key.
  * 4. The signature verifies.
- * 5. The envelope's sender and mode match the signed message's.
+ * 5. The envelope's sender and mode match the signed message's, so a sealed
+ *    message cannot be passed on unsealed or the other way round.
  * 6. The message is addressed to this site.
  * 7. Its timestamp is within the clock window.
  * 8. Its ID has not been seen before.
@@ -35,6 +39,8 @@ class MessageVerifier {
     protected SiteIdentity $siteIdentity,
     protected ConfigFactoryInterface $configFactory,
     protected TimeInterface $time,
+    protected KeyStore $keyStore,
+    protected PeerPolicy $peerPolicy,
   ) {}
 
   /**
@@ -51,8 +57,13 @@ class MessageVerifier {
    */
   public function verify(array $data): Message {
     $envelope = SignedEnvelope::fromArray($data);
-    if ($envelope->encryption !== EncryptionMode::None) {
-      throw new VerificationException(VerificationException::UNSUPPORTED_ENCRYPTION, 'Encrypted messages are not supported yet.');
+    if ($envelope->encryption === EncryptionMode::None) {
+      if (!$this->peerPolicy->allowsUnencrypted($envelope->sender)) {
+        throw new VerificationException(VerificationException::ENCRYPTION_REQUIRED, 'This site accepts only encrypted messages from that sender.');
+      }
+    }
+    else {
+      $envelope = $this->open($envelope);
     }
 
     $public_key = $this->publicKeys->getPublicKey($envelope->sender, KeyPurpose::Signing, $envelope->signingKeyId);
@@ -95,6 +106,26 @@ class MessageVerifier {
       throw new VerificationException(VerificationException::REPLAYED, 'The message was already received.');
     }
     return $message;
+  }
+
+  /**
+   * Opens a sealed envelope into the signed envelope inside.
+   *
+   * @throws \Drupal\content_relay\Crypto\VerificationException
+   *   When no key of this site opens it.
+   */
+  protected function open(SignedEnvelope $sealed): SignedEnvelope {
+    $key = $this->keyStore->get(KeyPurpose::Encryption, (string) $sealed->encryptionKeyId);
+    if ($key === NULL) {
+      throw new VerificationException(VerificationException::UNKNOWN_KEY, sprintf('No usable encryption key "%s" on this site.', $sealed->encryptionKeyId));
+    }
+    $ciphertext = base64_decode((string) $sealed->ciphertext, TRUE);
+    $plain = $ciphertext === FALSE ? NULL : $key->open($ciphertext);
+    $inner = $plain === NULL ? NULL : json_decode($plain, TRUE);
+    if (!is_array($inner) || !is_array($inner['message'] ?? NULL) || !is_string($inner['signature'] ?? NULL)) {
+      throw new VerificationException(VerificationException::DECRYPTION_FAILED, 'The message could not be decrypted.');
+    }
+    return new SignedEnvelope($sealed->sender, $sealed->signingKeyId, $sealed->encryption, $inner['message'], $inner['signature']);
   }
 
   /**
