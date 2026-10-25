@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 namespace Drupal\content_relay_origin\Report;
 
+use Drupal\content_relay\Event\Operation;
 use Drupal\content_relay\Serialization\SyncableEntityTypes;
+use Drupal\content_relay_origin\EventStatus;
+use Drupal\content_relay_origin\Outbox;
 use Drupal\Core\StringTranslation\StringTranslationTrait;
 use Drupal\Core\StringTranslation\TranslatableMarkup;
 
@@ -111,7 +114,69 @@ final class ReportViewsData {
         ],
       ];
     }
+    return $data + $this->eventLogData();
+  }
+
+  /**
+   * Views data for the event log: the outbox, one row per event and replica.
+   */
+  protected function eventLogData(): array {
+    $table = Outbox::TABLE;
+    $data[$table]['table'] = [
+      'group' => $this->t('Content Relay event log'),
+      'provider' => 'content_relay_origin',
+      'base' => [
+        'field' => 'id',
+        'title' => $this->t('Content Relay event log'),
+        'help' => $this->t('Every event for every replica, with its delivery state.'),
+        'weight' => 11,
+      ],
+    ];
+    $data[$table]['id'] = $this->numeric($this->t('Entry'));
+    $data[$table]['event_id'] = $this->string($this->t('Event ID'));
+    $data[$table]['replica_id'] = $this->options($this->t('Replica'), [self::class, 'replicaOptions']);
+    $data[$table]['sequence'] = $this->numeric($this->t('Sequence'));
+    $data[$table]['operation'] = $this->options($this->t('Operation'), [self::class, 'operationOptions']);
+    $data[$table]['entity_type'] = $this->options($this->t('Entity type'), [self::class, 'entityTypeOptions']);
+    $data[$table]['bundle'] = $this->options($this->t('Bundle'), [self::class, 'bundleOptions']);
+    $data[$table]['entity_uuid'] = $this->string($this->t('UUID'));
+    $data[$table]['source_revision'] = $this->numeric($this->t('Revision'));
+    $data[$table]['status'] = $this->options($this->t('Status'), [EventStatus::class, 'labels']);
+    $data[$table]['attempts'] = $this->numeric($this->t('Attempts'));
+    $data[$table]['last_http_status'] = $this->numeric($this->t('Last HTTP status'));
+    $data[$table]['result_code'] = $this->string($this->t('Result'));
+    $data[$table]['last_response'] = $this->string($this->t('Last response'));
+    $data[$table]['triggered_by'] = $this->numeric($this->t('Triggered by'));
+    $data[$table]['triggered_by']['relationship'] = [
+      'id' => 'standard',
+      'base' => 'users_field_data',
+      'base field' => 'uid',
+      'label' => $this->t('User who triggered it'),
+    ];
+    $data[$table]['replay_of'] = $this->numeric($this->t('Replay of entry'));
+    $data[$table]['reason'] = $this->string($this->t('Reason'));
+    $data[$table]['process'] = $this->string($this->t('Processing requested'));
+    $data[$table]['created'] = $this->date($this->t('Recorded'));
+    $data[$table]['changed'] = $this->date($this->t('Changed'));
+    $data[$table]['first_sent'] = $this->date($this->t('First sent'));
+    $data[$table]['completed'] = $this->date($this->t('Completed'));
+    $data[$table]['content_relay_event_operations'] = [
+      'title' => $this->t('Event operations'),
+      'help' => $this->t('Links to the entry and, when it failed, to replay it.'),
+      'field' => ['id' => 'content_relay_event_operations', 'real field' => 'id'],
+    ];
     return $data;
+  }
+
+  /**
+   * Event operation options.
+   */
+  public static function operationOptions(): array {
+    $options = [];
+    foreach (Operation::cases() as $operation) {
+      $options[$operation->value] = $operation->value;
+    }
+    return $options;
   }
 
   /**

@@ -92,6 +92,21 @@ class Conflicts {
   }
 
   /**
+   * What differs between the local copy and a snapshot, such as a failed one.
+   *
+   * @return list<array{field: string, langcode: string, local: string, origin: string}>
+   *   Rows; see diff(). Empty when the item is not here yet.
+   */
+  public function diffSnapshot(string $entity_type_id, string $uuid, array $snapshot): array {
+    $state = $this->syncState->get($entity_type_id, $uuid);
+    $entity = $state === NULL ? NULL : $this->localChanges->localCopy($entity_type_id, $uuid, $state);
+    if ($state === NULL || $entity === NULL) {
+      return [];
+    }
+    return $this->compare($entity, $this->build($this->languageMap->snapshotToLocal($snapshot), $entity, $state));
+  }
+
+  /**
    * Takes the origin's version.
    *
    * @return \Drupal\content_relay_replica\Apply\ApplyResult|null

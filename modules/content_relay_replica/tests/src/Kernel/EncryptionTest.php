@@ -14,6 +14,7 @@ use Drupal\content_relay\Key\KeyPair;
 use Drupal\content_relay\Key\KeyPurpose;
 use Drupal\content_relay\Key\KeyStore;
 use Drupal\content_relay_replica\Crypto\OriginPolicy;
+use Drupal\content_relay_replica\FailedEventStore;
 use Drupal\content_relay_test\FakeOrigin;
 use Drupal\key\Entity\Key;
 use Drupal\key\KeyInterface;
@@ -223,6 +224,24 @@ final class EncryptionTest extends ReplicaTestBase {
     $terms = $this->contract($version, ['node' => ['article'], 'taxonomy_term' => ['tags']])->toArray();
     $terms['effective']['encryption'] = 'sealed';
     return SubscriptionContract::fromArray($terms);
+  }
+
+  /**
+   * With encryption on, a failed event is stored sealed to this site's key.
+   */
+  public function testFailedPayloadSealedAtRest(): void {
+    $this->container->get('content_relay_replica.contracts')->save($this->sealedContract(2));
+    $snapshot = $this->retitle($this->originArticle('Short enough'), str_repeat('x', 300));
+    $result = $this->apply($this->event($snapshot, Operation::Create, 1, ['contract_version' => 2]));
+    $this->assertSame('validation_failed', $result->code);
+
+    $failures = $this->container->get('content_relay_replica.failed_events');
+    $failure = $failures->find()[0];
+    $stored = (string) $this->container->get('database')->select(FailedEventStore::TABLE, 'f')->fields('f', ['payload'])->condition('id', $failure['id'])->execute()->fetchField();
+    $this->assertStringStartsWith('sealed:' . $this->encryption->id() . ':', $stored);
+    $this->assertStringNotContainsString(str_repeat('x', 300), $stored);
+    // Retries open it.
+    $this->assertSame($snapshot['uuid'], $failures->getEvent($failures->load((int) $failure['id']))->entityUuid);
   }
 
 }

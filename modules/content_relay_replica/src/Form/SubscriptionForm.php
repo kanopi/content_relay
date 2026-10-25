@@ -160,6 +160,39 @@ final class SubscriptionForm extends FormBase {
       '#default_value' => $terms['languages']['selected'] ?? [],
       '#states' => ['visible' => [':input[name="terms[language_mode]"]' => ['value' => SubscriptionContract::LANGUAGES_SELECTED]]],
     ];
+    // Overrides for bundles already subscribed to.
+    $form['terms']['per_bundle'] = [
+      '#type' => 'details',
+      '#title' => $this->t('Languages per bundle'),
+      '#access' => $may_change_languages && ($terms['bundles'] ?? []) !== [],
+      '#description' => $this->t('A bundle can receive other languages than the rest of the site.'),
+    ];
+    foreach ($terms['bundles'] ?? [] as $entity_type_id => $bundles) {
+      foreach ($bundles as $bundle) {
+        $key = $entity_type_id . '.' . $bundle;
+        $override = $terms['languages']['per_bundle'][$key] ?? NULL;
+        $name = 'terms[per_bundle][' . $key . '][mode]';
+        $form['terms']['per_bundle'][$key] = [
+          '#type' => 'container',
+          'mode' => [
+            '#type' => 'select',
+            '#title' => $this->t('@type: @bundle', ['@type' => $entity_type_id, '@bundle' => $bundle]),
+            '#options' => [
+              '' => $this->t('As for the whole site'),
+              SubscriptionContract::LANGUAGES_ALL => $this->t('All languages'),
+              SubscriptionContract::LANGUAGES_SELECTED => $this->t('Only these languages'),
+            ],
+            '#default_value' => $override['mode'] ?? '',
+          ],
+          'selected' => [
+            '#type' => 'checkboxes',
+            '#options' => $this->languageOptions(),
+            '#default_value' => $override['selected'] ?? [],
+            '#states' => ['visible' => [':input[name="' . $name . '"]' => ['value' => SubscriptionContract::LANGUAGES_SELECTED]]],
+          ],
+        ];
+      }
+    }
     $form['terms']['removed_languages'] = [
       '#type' => 'radios',
       '#access' => $may_change_languages,
@@ -280,6 +313,20 @@ final class SubscriptionForm extends FormBase {
       sort($selected);
       $terms['languages']['mode'] = $values['language_mode'];
       $terms['languages']['selected'] = $values['language_mode'] === SubscriptionContract::LANGUAGES_SELECTED ? $selected : [];
+      $per_bundle = [];
+      foreach ($values['per_bundle'] ?? [] as $key => $override) {
+        if (!is_array($override) || empty($override['mode'])) {
+          continue;
+        }
+        $chosen = array_values(array_filter($override['selected'] ?? []));
+        sort($chosen);
+        $per_bundle[(string) $key] = [
+          'mode' => $override['mode'],
+          'selected' => $override['mode'] === SubscriptionContract::LANGUAGES_SELECTED ? $chosen : [],
+        ];
+      }
+      ksort($per_bundle);
+      $terms['languages']['per_bundle'] = $per_bundle;
       $this->languages->setRemovalMode((string) ($values['removed_languages'] ?? 'keep'));
     }
     $terms['processing']['default'] = $values['processing'];

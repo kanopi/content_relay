@@ -122,8 +122,25 @@ final class KeyPair {
     }
     $pair = sodium_crypto_box_keypair_from_secretkey_and_publickey($this->secretKey, $this->publicKey);
     $bytes = sodium_crypto_box_seal_open($sealed, $pair);
-    sodium_memzero($pair);
+    self::wipe($pair);
     return $bytes === FALSE ? NULL : $bytes;
+  }
+
+  /**
+   * Clears secret bytes from memory as well as PHP allows.
+   *
+   * With the sodium extension the memory is wiped. Its pure-PHP fallback
+   * cannot do that, so the string is overwritten with zeros instead.
+   */
+  public static function wipe(?string &$secret): void {
+    if ($secret === NULL) {
+      return;
+    }
+    if (extension_loaded('sodium')) {
+      sodium_memzero($secret);
+      return;
+    }
+    $secret = str_repeat("\0", strlen($secret));
   }
 
   /**

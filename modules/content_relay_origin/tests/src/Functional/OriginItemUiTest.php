@@ -291,4 +291,70 @@ final class OriginItemUiTest extends BrowserTestBase {
     $this->assertSame('encryption', $pending->notGranted()[0]['term']);
   }
 
+  /**
+   * The event log lists events, shows one, and replays a failed one.
+   */
+  public function testEventLogAndReplay(): void {
+    // The replica refuses the first event for good.
+    $this->container->get('state')->set(FakeReplicaEndpoint::STATE, [
+      'responses' => [[400, ['result' => 'rejected']]],
+      'events' => [],
+    ]);
+    $node = $this->drupalCreateNode(['type' => 'article', 'title' => 'Refused once']);
+    $this->container->get('content_relay_origin.delivery')->deliver(self::REPLICA);
+    $row = $this->outbox($node)[0];
+    $this->assertSame('dead_letter', $row['status']);
+
+    $this->drupalLogin($this->drupalCreateUser(['view content relay event log']));
+    $this->drupalGet('admin/reports/content-relay/events');
+    $this->assertSession()->statusCodeEquals(200);
+    $this->assertSession()->pageTextContains($node->uuid());
+    $this->assertSession()->linkExists('Details');
+    $this->assertSession()->linkNotExists('Replay');
+    $this->drupalGet('admin/reports/content-relay/events/' . $row['id']);
+    $this->assertSession()->pageTextContains('Dead-lettered');
+    $this->assertSession()->pageTextContains('rejected');
+    $this->drupalGet('admin/reports/content-relay/events/' . $row['id'] . '/replay');
+    $this->assertSession()->statusCodeEquals(403);
+
+    $this->drupalLogin($this->drupalCreateUser(['view content relay event log', 'replay content relay events']));
+    $this->drupalGet('admin/reports/content-relay/events');
+    $this->clickLink('Replay');
+    $this->submitForm([], 'Replay');
+    $this->assertSession()->pageTextContains('Replayed as event log entry');
+    $rows = $this->outbox($node);
+    $this->assertSame('replayed', $rows[0]['status']);
+    $this->assertSame((string) $row['id'], (string) $rows[1]['replay_of']);
+    $this->assertSame((string) $this->loggedInUser->id(), (string) $rows[1]['triggered_by']);
+
+    // Only failed entries can be replayed.
+    $this->drupalGet('admin/reports/content-relay/events/' . $rows[1]['id'] . '/replay');
+    $this->assertSame(404, $this->getSession()->getStatusCode());
+  }
+
+  /**
+   * More Drush commands, with exit codes.
+   */
+  public function testMoreDrush(): void {
+    $this->drush('content-relay:replicas');
+    $this->assertStringContainsString('Mirror', $this->getOutput());
+    $this->drush('content-relay:pairing-code', [], ['bundles' => 'node:article']);
+    $this->assertMatchesRegularExpression('/[A-Z0-9-]{8,}/', $this->getOutput());
+    $this->drush('content-relay:pairing-code', [], ['bundles' => 'article'], NULL, NULL, 1);
+
+    $this->container->get('state')->set(FakeReplicaEndpoint::STATE, [
+      'responses' => [[400, ['result' => 'rejected']]],
+      'events' => [],
+    ]);
+    $node = $this->drupalCreateNode(['type' => 'article', 'title' => 'Will fail']);
+    $this->container->get('content_relay_origin.delivery')->deliver(self::REPLICA);
+    // Dead letters make the status command fail.
+    $this->drush('content-relay:status', [], [], NULL, NULL, 1);
+    $this->assertStringContainsString('dead_letter', $this->getOutput());
+    $this->drush('content-relay:replay', [(string) $this->outbox($node)[0]['id']]);
+    $this->drush('content-relay:replay', ['999999'], [], NULL, NULL, 1);
+    $this->drush('content-relay:backfill-hashes');
+    $this->drush('content-relay:reconcile');
+  }
+
 }

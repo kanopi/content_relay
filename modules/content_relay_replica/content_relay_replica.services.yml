@@ -27,7 +27,7 @@ services:
 
   content_relay_replica.failed_events:
     class: Drupal\content_relay_replica\FailedEventStore
-    arguments: ['@database', '@queue', '@config.factory', '@datetime.time']
+    arguments: ['@database', '@queue', '@config.factory', '@datetime.time', '@content_relay_replica.contracts', '@content_relay.key_store', '@cache_tags.invalidator']
 
   content_relay_replica.failure_classifier:
     class: Drupal\content_relay_replica\Apply\FailureClassifier

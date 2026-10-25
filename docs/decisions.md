@@ -189,9 +189,9 @@ cannot be used to recover them.
 ## 21. Switching the replica to selected languages
 
 The specification asks that switching from "all languages" to "selected"
-pre-selects the languages currently received. Until the origin's language list
-is available from its schema endpoint (phase 9), the form pre-selects the
-replica's own enabled languages when none are ticked.
+pre-selects the languages currently received. The form offers, and
+pre-selects when none are ticked, the origin's languages as of its last
+schema check together with the replica's own.
 
 ## 22. Entity coverage is by field kind, not by entity type
 
@@ -599,4 +599,38 @@ applying it again. Without moderation, draft means overwrite.
 
 Items in "not specified" or "not applicable" are sent to replicas whatever
 languages they receive, and are never reported as "no languages".
+
+## 76. libsodium is preferred, not required
+
+The sodium extension ships with PHP and is in nearly every build, but not
+all. `paragonie/sodium_compat` is a dependency, so the module works without
+the extension, in plain PHP, much more slowly; the status report warns. The
+fallback cannot wipe memory, so secrets are overwritten with zeros instead,
+and it lacks one secretstream constant, which the module defines itself.
+
+## 77. Failed payloads are sealed to the replica's own key
+
+When the contract is encrypted, a stored failed event is sealed to the
+replica's primary encryption key, with the key ID, and opened for retries. If
+that key is retired the event cannot be retried, and the item is pulled
+fresh instead. The label stays in the clear so failures can be listed.
+
+## 78. Validation can be started from the origin
+
+"Validate on replicas" asks each replica, in a signed hash_request answered
+from its sync state and a fresh hash of its copy, and records the answer as
+what the replica has. This complements decision 64: the replica's own
+Validate compares from its side.
+
+## 79. Address allowlists are optional and per peer
+
+Signatures authenticate every message; an allowlist is a second barrier,
+empty by default. The origin keeps one per replica (inbox and read
+endpoints); a replica keeps one for its origin.
+
+## 80. The event log is a view
+
+Like the status report, the event log is a Views listing of the outbox
+table, so sites can add columns and filters. Replay stays a confirmation
+form behind its own permission.
 

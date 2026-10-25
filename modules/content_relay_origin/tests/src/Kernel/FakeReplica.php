@@ -124,6 +124,11 @@ final class FakeReplica {
    */
   public array $languageNotices = [];
 
+  /**
+   * What it answers hash requests with, by "entity_type:uuid".
+   */
+  public array $hashAnswers = [];
+
   public function __construct(
     public string $originId,
   ) {
@@ -228,6 +233,17 @@ final class FakeReplica {
         $body['ack'] = $this->message('contract_ack', ['version' => $message['body']['version']]);
       }
       return Create::promiseFor(new Response(200, [], json_encode($body)));
+    }
+    if ($message['type'] === 'hash_request') {
+      $items = [];
+      foreach ($message['body']['items'] as $item) {
+        $key = $item['entity_type'] . ':' . $item['uuid'];
+        $items[$key] = $this->hashAnswers[$key] ?? ['synced' => FALSE];
+      }
+      return Create::promiseFor(new Response(200, [], json_encode([
+        'result' => 'hashes',
+        'hashes' => $this->message('hashes', ['items' => $items]),
+      ])));
     }
     if ($message['type'] === 'language_notice') {
       $this->languageNotices[] = $message['body']['changes'];

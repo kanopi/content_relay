@@ -4,16 +4,23 @@ declare(strict_types=1);
 
 namespace Drupal\content_relay_origin\Drush\Commands;
 
+use Consolidation\OutputFormatters\StructuredData\RowsOfFields;
+use Drupal\Component\Uuid\Uuid;
 use Drupal\content_relay\Event\ProcessingMode;
 use Drupal\content_relay_origin\BulkPush;
+use Drupal\content_relay_origin\ContractManager;
 use Drupal\content_relay_origin\EventStatus;
 use Drupal\content_relay_origin\HashBackfill;
 use Drupal\content_relay_origin\ItemSyncControl;
+use Drupal\content_relay_origin\ItemValidator;
 use Drupal\content_relay_origin\ManualPush;
 use Drupal\content_relay_origin\NotSyncableFlags;
 use Drupal\content_relay_origin\OriginReconciler;
+use Drupal\content_relay_origin\Outbox;
+use Drupal\content_relay_origin\PairingCodes;
+use Drupal\content_relay_origin\ReplayService;
+use Drupal\content_relay_origin\ReplicaRegistry;
 use Drupal\content_relay_origin\Report\ReportIndex;
-use Drupal\Component\Uuid\Uuid;
 use Drupal\Core\Entity\ContentEntityInterface;
 use Drupal\Core\Entity\EntityRepositoryInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
@@ -48,6 +55,18 @@ final class OriginCommands extends DrushCommands {
     private readonly HashBackfill $backfill,
     #[Autowire(service: 'content_relay_origin.reconciler')]
     private readonly OriginReconciler $reconciler,
+    #[Autowire(service: 'content_relay_origin.replay')]
+    private readonly ReplayService $replay,
+    #[Autowire(service: 'content_relay_origin.replica_registry')]
+    private readonly ReplicaRegistry $registry,
+    #[Autowire(service: 'content_relay_origin.pairing_codes')]
+    private readonly PairingCodes $pairingCodes,
+    #[Autowire(service: 'content_relay_origin.outbox')]
+    private readonly Outbox $outbox,
+    #[Autowire(service: 'content_relay_origin.contract_manager')]
+    private readonly ContractManager $contracts,
+    #[Autowire(service: 'content_relay_origin.item_validator')]
+    private readonly ItemValidator $validator,
   ) {
     parent::__construct();
   }
@@ -280,6 +299,124 @@ final class OriginCommands extends DrushCommands {
     }
     $this->logger()->success(dt('@queued more item(s) queued for cron.', ['@queued' => $result['queued']]));
     return self::EXIT_SUCCESS;
+  }
+
+  /**
+   * Sends a failed or dead-lettered event to its replica again.
+   */
+  #[CLI\Command(name: 'content-relay:replay', aliases: ['cr-replay'])]
+  #[CLI\Argument(name: 'entry', description: 'The event log entry number.')]
+  public function replay(int $entry): int {
+    try {
+      $new = $this->replay->replay($entry);
+    }
+    catch (\InvalidArgumentException $e) {
+      $this->logger()->error($e->getMessage());
+      return self::EXIT_FAILURE;
+    }
+    $this->logger()->success(dt('Replayed as event log entry @id.', ['@id' => $new]));
+    return self::EXIT_SUCCESS;
+  }
+
+  /**
+   * Lists the replicas paired with this origin.
+   */
+  #[CLI\Command(name: 'content-relay:replicas', aliases: ['cr-replicas'])]
+  #[CLI\FieldLabels(labels: [
+    'id' => 'ID',
+    'label' => 'Label',
+    'status' => 'Status',
+    'contract' => 'Contract',
+    'endpoint' => 'Endpoint',
+    'last_success' => 'Last success',
+  ])]
+  public function replicas(array $options = ['format' => 'table']): RowsOfFields {
+    $rows = [];
+    foreach ($this->registry->getAll() as $replica) {
+      $rows[$replica->id] = [
+        'id' => $replica->id,
+        'label' => $replica->label,
+        'status' => $replica->status . ($replica->approved ? '' : ' (not approved)'),
+        'contract' => $this->contracts->getActive($replica->id)?->version() ?? '-',
+        'endpoint' => $replica->endpoint,
+        'last_success' => $replica->lastSuccess === NULL ? '-' : date('Y-m-d H:i:s', $replica->lastSuccess),
+      ];
+    }
+    return new RowsOfFields($rows);
+  }
+
+  /**
+   * Generates a pairing code for a replica to pair with.
+   */
+  #[CLI\Command(name: 'content-relay:pairing-code', aliases: ['cr-pairing-code'])]
+  #[CLI\Option(name: 'bundles', description: 'Limit what the replica may receive, as entity_type:bundle pairs, comma-separated.')]
+  public function pairingCode(array $options = ['bundles' => self::REQ]): int {
+    $allowed = NULL;
+    foreach ($this->list($options['bundles']) ?? [] as $pair) {
+      [$entity_type_id, $bundle] = explode(':', $pair, 2) + [1 => ''];
+      if ($bundle === '') {
+        $this->logger()->error(dt('Bundles are entity_type:bundle pairs.'));
+        return self::EXIT_FAILURE;
+      }
+      $allowed[$entity_type_id][] = $bundle;
+    }
+    $code = $this->pairingCodes->generate($allowed, 0);
+    $this->output()->writeln($code['code']);
+    $this->logger()->notice(dt('Valid until @time. It is shown only now.', ['@time' => date('Y-m-d H:i:s', $code['expires'])]));
+    return self::EXIT_SUCCESS;
+  }
+
+  /**
+   * Shows each replica's delivery state.
+   */
+  #[CLI\Command(name: 'content-relay:status', aliases: ['cr-status'])]
+  public function status(): int {
+    $replicas = $this->registry->getAll();
+    if ($replicas === []) {
+      $this->logger()->warning(dt('No replicas are paired.'));
+      return self::EXIT_SUCCESS;
+    }
+    $problems = FALSE;
+    foreach ($replicas as $replica) {
+      $counts = $this->outbox->countsByStatus($replica->id);
+      $problems = $problems || ($counts[EventStatus::DEAD_LETTER] ?? 0) > 0 || ($counts[EventStatus::FAILED_ON_REPLICA] ?? 0) > 0;
+      $this->output()->writeln(dt('@label (@id): @status, contract @contract, last success @success', [
+        '@label' => $replica->label,
+        '@id' => $replica->id,
+        '@status' => $replica->status,
+        '@contract' => $this->contracts->getActive($replica->id)?->version() ?? '-',
+        '@success' => $replica->lastSuccess === NULL ? '-' : date('Y-m-d H:i:s', $replica->lastSuccess),
+      ]));
+      foreach ($counts as $status => $count) {
+        $this->output()->writeln(sprintf('  %-20s %d', $status, $count));
+      }
+    }
+    return $problems ? self::EXIT_FAILURE : self::EXIT_SUCCESS;
+  }
+
+  /**
+   * Checks an item's hashes here and on every replica that gets it.
+   */
+  #[CLI\Command(name: 'content-relay:validate', aliases: ['cr-validate'])]
+  #[CLI\Argument(name: 'entity_type', description: 'Entity type ID.')]
+  #[CLI\Argument(name: 'id', description: 'Entity ID or UUID.')]
+  public function validate(string $entity_type, string $id): int {
+    $result = $this->validator->validate($this->load($entity_type, $id));
+    if ($result['origin_stale']) {
+      $this->logger()->warning(dt('The stored hash here was out of date and has been recomputed.'));
+    }
+    $labels = ItemValidator::resultLabels();
+    $failed = FALSE;
+    foreach ($result['replicas'] as $replica_id => $row) {
+      $failed = $failed || !in_array($row['result'], [
+        ItemValidator::IN_SYNC,
+        ItemValidator::NOT_SYNCABLE,
+        ItemValidator::NO_LANGUAGES,
+        ItemValidator::DETACHED,
+      ], TRUE);
+      $this->output()->writeln(sprintf('%s (%s): %s%s', $row['label'], $replica_id, $labels[$row['result']], $row['differing'] === [] ? '' : ' [' . implode(', ', $row['differing']) . ']'));
+    }
+    return $failed ? self::EXIT_FAILURE : self::EXIT_SUCCESS;
   }
 
 }

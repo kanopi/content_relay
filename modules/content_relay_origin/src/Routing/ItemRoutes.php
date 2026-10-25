@@ -7,6 +7,7 @@ namespace Drupal\content_relay_origin\Routing;
 use Drupal\content_relay\Serialization\SyncableEntityTypes;
 use Drupal\content_relay_origin\Form\NotSyncableForm;
 use Drupal\content_relay_origin\Form\PushForm;
+use Drupal\content_relay_origin\Form\ValidateForm;
 use Symfony\Component\Routing\Route;
 
 /**
@@ -29,7 +30,7 @@ final class ItemRoutes {
    * @param string $entity_type_id
    *   The entity type.
    * @param string $page
-   *   The page: push or not_syncable.
+   *   The page: push, not_syncable or validate.
    */
   public static function name(string $entity_type_id, string $page): string {
     return "entity.$entity_type_id.content_relay_$page";
@@ -50,6 +51,7 @@ final class ItemRoutes {
       $pages = [
         'push' => [PushForm::class, 'Push', 'push'],
         'not_syncable' => [NotSyncableForm::class, 'Not syncable', 'not-syncable'],
+        'validate' => [ValidateForm::class, 'Validate', 'validate'],
       ];
       foreach ($pages as $page => [$form, $title, $path]) {
         $routes[self::name($entity_type_id, $page)] = new Route(

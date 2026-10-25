@@ -129,6 +129,14 @@ content_relay_origin.replica_contract:
   requirements:
     _permission: 'administer content relay replicas'
 
+content_relay_origin.replica_addresses:
+  path: '/admin/config/services/content-relay/origin/replicas/{replica_id}/addresses'
+  defaults:
+    _form: '\Drupal\content_relay_origin\Form\ReplicaAddressesForm'
+    _title: 'Allowed addresses'
+  requirements:
+    _permission: 'administer content relay replicas'
+
 content_relay_origin.replica_action:
   path: '/admin/config/services/content-relay/origin/replicas/{replica_id}/{action}'
   defaults:
@@ -161,3 +169,21 @@ content_relay_origin.report_export:
     _controller: '\Drupal\content_relay_origin\Controller\ReportController::export'
   requirements:
     _permission: 'view content relay status report'
+
+content_relay_origin.event:
+  path: '/admin/reports/content-relay/events/{row_id}'
+  defaults:
+    _controller: '\Drupal\content_relay_origin\Controller\EventLogController::view'
+    _title: 'Event log entry'
+  requirements:
+    _permission: 'view content relay event log'
+    row_id: '\d+'
+
+content_relay_origin.event_replay:
+  path: '/admin/reports/content-relay/events/{row_id}/replay'
+  defaults:
+    _form: '\Drupal\content_relay_origin\Form\ReplayForm'
+    _title: 'Replay'
+  requirements:
+    _permission: 'replay content relay events'
+    row_id: '\d+'

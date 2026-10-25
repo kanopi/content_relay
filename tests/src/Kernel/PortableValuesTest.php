@@ -253,10 +253,10 @@ final class PortableValuesTest extends KernelTestBase {
   }
 
   /**
-   * Moderation state travels per translation of the default revision.
+   * Moderation state travels per translation.
    *
-   * Pending drafts of a published item (forward revisions) are not part of
-   * the default revision and are not sent yet; see docs/decisions.md.
+   * Drafts on top of a published item (forward revisions) are sent too, as
+   * the latest revision; ModerationTest on the replica covers those.
    */
   public function testModerationState(): void {
     $workflow = $this->createEditorialWorkflow();

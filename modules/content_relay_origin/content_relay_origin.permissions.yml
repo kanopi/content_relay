@@ -22,3 +22,9 @@ view content relay status report:
 mark content relay items not syncable:
   title: 'Mark Content Relay items not syncable'
   description: 'Stop or resume sending individual items to replicas.'
+view content relay event log:
+  title: 'View the Content Relay event log'
+  description: 'See every event sent to replicas, with its delivery state and the replica''s answer.'
+replay content relay events:
+  title: 'Replay Content Relay events'
+  description: 'Send a failed or dead-lettered event to its replica again.'

@@ -160,17 +160,30 @@ final class OriginAdminTest extends BrowserTestBase {
       'admin/config/services/content-relay/origin/replicas/' . self::REPLICA . '/contract' => 'administer content relay replicas',
       'admin/config/services/content-relay/origin/replicas/' . self::REPLICA . '/suspend' => 'administer content relay replicas',
       'admin/config/services/content-relay/origin/pairing-code' => 'generate content relay pairing codes',
+      'admin/reports/content-relay' => 'view content relay status report',
+      'admin/reports/content-relay/events' => 'view content relay event log',
+    ];
+    $all = [
+      'administer content relay origin',
+      'administer content relay replicas',
+      'generate content relay pairing codes',
+      'view content relay status report',
+      'view content relay event log',
     ];
     foreach ($pages as $path => $permission) {
-      $others = array_diff([
-        'administer content relay origin',
-        'administer content relay replicas',
-        'generate content relay pairing codes',
-      ], [$permission]);
+      $others = array_diff($all, [$permission]);
       $this->drupalLogin($this->drupalCreateUser(array_values($others)));
       $this->drupalGet($path);
       $this->assertSession()->statusCodeEquals(403);
     }
+    // An item's not syncable page needs its own permission.
+    $node = $this->drupalCreateNode(['type' => 'article', 'title' => 'Guarded']);
+    $this->drupalLogin($this->drupalCreateUser(array_merge($all, ['push content relay items', 'access content'])));
+    $this->drupalGet('node/' . $node->id() . '/content-relay/not-syncable');
+    $this->assertSession()->statusCodeEquals(403);
+    $this->drupalLogin($this->drupalCreateUser(['mark content relay items not syncable', 'access content']));
+    $this->drupalGet('node/' . $node->id() . '/content-relay/not-syncable');
+    $this->assertSession()->statusCodeEquals(200);
   }
 
 }

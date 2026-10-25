@@ -132,6 +132,36 @@ display:
           plugin_id: standard
           label: 'Last error'
           exclude: false
+        local_translations:
+          id: local_translations
+          table: content_relay_sync_state
+          field: local_translations
+          relationship: none
+          group_type: group
+          admin_label: ''
+          plugin_id: content_relay_json_list
+          label: 'Local translations'
+          exclude: false
+        detached_translations:
+          id: detached_translations
+          table: content_relay_sync_state
+          field: detached_translations
+          relationship: none
+          group_type: group
+          admin_label: ''
+          plugin_id: content_relay_json_list
+          label: 'Detached translations'
+          exclude: false
+        notes:
+          id: notes
+          table: content_relay_sync_state
+          field: notes
+          relationship: none
+          group_type: group
+          admin_label: ''
+          plugin_id: content_relay_json_list
+          label: Notes
+          exclude: false
       pager:
         type: full
         options:
@@ -315,6 +345,9 @@ display:
             detached_at: detached_at
             origin_detached_at: origin_detached_at
             last_error: last_error
+            local_translations: local_translations
+            detached_translations: detached_translations
+            notes: notes
           default: '-1'
           info:
             content_relay_bulk_detach:
@@ -388,6 +421,27 @@ display:
               empty_column: false
               responsive: ''
             last_error:
+              sortable: true
+              default_sort_order: asc
+              align: ''
+              separator: ''
+              empty_column: false
+              responsive: ''
+            local_translations:
+              sortable: true
+              default_sort_order: asc
+              align: ''
+              separator: ''
+              empty_column: false
+              responsive: ''
+            detached_translations:
+              sortable: true
+              default_sort_order: asc
+              align: ''
+              separator: ''
+              empty_column: false
+              responsive: ''
+            notes:
               sortable: true
               default_sort_order: asc
               align: ''

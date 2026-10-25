@@ -7,9 +7,28 @@
 
 declare(strict_types=1);
 
+use Drupal\Core\Routing\RouteMatchInterface;
+
 /**
  * Implements hook_cron().
  */
 function content_relay_cron(): void {
   \Drupal::service('content_relay.replay_guard')->prune(\Drupal::time()->getRequestTime());
+}
+
+/**
+ * Implements hook_help().
+ */
+function content_relay_help(string $route_name, RouteMatchInterface $route_match): ?string {
+  if ($route_name !== 'help.page.content_relay') {
+    return NULL;
+  }
+  return '<h2>' . t('About') . '</h2>'
+    . '<p>' . t('Content Relay keeps content in step between sites without database dumps. One site is the <em>origin</em>, where content is edited; any number of <em>replicas</em> receive it. Enable Content Relay Origin on the first, Content Relay Replica on the others; a site is one or the other.') . '</p>'
+    . '<h2>' . t('Uses') . '</h2>'
+    . '<dl>'
+    . '<dt>' . t('Keys') . '</dt><dd>' . t('Each site signs everything it sends with an Ed25519 key, and can encrypt with an X25519 key. Keys are Key module keys; create them with <code>drush content-relay:generate-key</code>, kept outside the database. The configuration and state key providers are refused.') . '</dd>'
+    . '<dt>' . t('Pairing') . '</dt><dd>' . t('The origin generates a one-time code; the replica pairs with it and the origin URL, which exchanges keys and agrees a subscription contract: which bundles and languages, how, and whether encrypted.') . '</dd>'
+    . '<dt>' . t('Identity and hashes') . '</dt><dd>' . t('Items are matched by UUID. Every revision has a canonical hash, per translation too, which both sides can recompute to tell whether a copy is current.') . '</dd>'
+    . '</dl>';
 }

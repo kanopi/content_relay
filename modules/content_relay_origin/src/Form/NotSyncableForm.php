@@ -7,6 +7,7 @@ namespace Drupal\content_relay_origin\Form;
 use Drupal\content_relay_origin\ItemSyncControl;
 use Drupal\content_relay_origin\ManualPush;
 use Drupal\content_relay_origin\NotSyncableFlags;
+use Drupal\content_relay_origin\TranslationBlocks;
 use Drupal\Core\Entity\ContentEntityInterface;
 use Drupal\Core\Form\FormBase;
 use Drupal\Core\Form\FormStateInterface;
@@ -23,6 +24,7 @@ final class NotSyncableForm extends FormBase {
     protected ItemSyncControl $control,
     protected NotSyncableFlags $flags,
     protected ManualPush $push,
+    protected TranslationBlocks $translationBlocks,
   ) {}
 
   /**
@@ -33,6 +35,7 @@ final class NotSyncableForm extends FormBase {
       $container->get('content_relay_origin.item_sync_control'),
       $container->get('content_relay_origin.not_syncable'),
       $container->get('content_relay_origin.manual_push'),
+      $container->get('content_relay_origin.translation_blocks'),
     );
   }
 
@@ -53,6 +56,21 @@ final class NotSyncableForm extends FormBase {
     }
     $form_state->set('entity', $entity);
     $form += self::elements($entity, $this->flags, $this->push, $this->control);
+    $languages = $entity->getTranslationLanguages();
+    if (count($languages) > 1) {
+      $options = [];
+      foreach ($languages as $langcode => $language) {
+        $options[$langcode] = $language->getName();
+      }
+      $form['translations'] = [
+        '#type' => 'checkboxes',
+        '#title' => $this->t('Translations not syncable'),
+        '#description' => $this->t('Stop sending only these translations, to every replica. Replicas keep what they have of them; the rest of the item keeps syncing.'),
+        '#options' => $options,
+        '#default_value' => $this->blockedTranslations($entity),
+        '#states' => ['invisible' => [':input[name="not_syncable"]' => ['checked' => TRUE]]],
+      ];
+    }
     $form['actions'] = ['#type' => 'actions'];
     $form['actions']['submit'] = ['#type' => 'submit', '#value' => $this->t('Save')];
     return $form;
@@ -158,9 +176,33 @@ final class NotSyncableForm extends FormBase {
   public function submitForm(array &$form, FormStateInterface $form_state): void {
     /** @var \Drupal\Core\Entity\ContentEntityInterface $entity */
     $entity = $form_state->get('entity');
-    if (self::apply($entity, $form_state->getValues(), $this->flags, $this->control)) {
+    $changed = self::apply($entity, $form_state->getValues(), $this->flags, $this->control);
+    if (is_array($form_state->getValue('translations'))) {
+      $before = $this->blockedTranslations($entity);
+      $after = array_values(array_filter($form_state->getValue('translations')));
+      foreach (array_diff($after, $before) as $langcode) {
+        $this->control->setTranslationSyncable($entity, (string) $langcode, FALSE);
+        $changed = TRUE;
+      }
+      foreach (array_diff($before, $after) as $langcode) {
+        $this->control->setTranslationSyncable($entity, (string) $langcode, TRUE);
+        $changed = TRUE;
+      }
+    }
+    if ($changed) {
       $this->messenger()->addStatus($this->t('Content Relay settings for %label saved.', ['%label' => $entity->label()]));
     }
+  }
+
+  /**
+   * Translations of an item this site keeps from every replica.
+   *
+   * @return string[]
+   *   Langcodes.
+   */
+  protected function blockedTranslations(ContentEntityInterface $entity): array {
+    $blocks = $this->translationBlocks->forReplica($entity->getEntityTypeId(), (string) $entity->uuid(), NotSyncableFlags::ALL);
+    return array_keys(array_filter($blocks, fn (array $block) => $block['side'] === TranslationBlocks::ORIGIN));
   }
 
 }

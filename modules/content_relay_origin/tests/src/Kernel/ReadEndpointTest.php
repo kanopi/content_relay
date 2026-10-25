@@ -212,4 +212,25 @@ final class ReadEndpointTest extends OriginTestBase {
     $this->assertSame(429, $this->read('/content-relay/v1/stream?sequences=1')->getStatusCode());
   }
 
+  /**
+   * The read endpoints only read: other methods are refused.
+   */
+  public function testReadOnly(): void {
+    $this->pairAndAcknowledge();
+    $node = $this->node('article', 'Not writable');
+    foreach (['POST', 'PATCH', 'PUT', 'DELETE'] as $method) {
+      foreach ([
+        '/content-relay/v1/items/node/' . $node->uuid(),
+        '/content-relay/v1/hashes',
+        '/content-relay/v1/schema',
+        '/content-relay/v1/stream',
+      ] as $path) {
+        $request = Request::create($path, $method, [], [], [], [], json_encode(['title' => 'Changed']));
+        $request->headers->set('Authorization', 'Bearer ' . $this->token());
+        $this->assertSame(405, $this->container->get('http_kernel')->handle($request)->getStatusCode(), "$method $path");
+      }
+    }
+    $this->assertSame('Not writable', $this->container->get('entity_type.manager')->getStorage('node')->loadUnchanged($node->id())->label());
+  }
+
 }

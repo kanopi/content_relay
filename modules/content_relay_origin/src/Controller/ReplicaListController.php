@@ -123,6 +123,10 @@ final class ReplicaListController extends ControllerBase {
         'title' => $this->t('Contract'),
         'url' => Url::fromRoute('content_relay_origin.replica_contract', ['replica_id' => $replica->id]),
       ],
+      'addresses' => [
+        'title' => $this->t('Allowed addresses'),
+        'url' => Url::fromRoute('content_relay_origin.replica_addresses', ['replica_id' => $replica->id]),
+      ],
     ];
     $actions = match ($replica->status) {
       Replica::PENDING => $replica->approved ? ['revoke'] : ['approve', 'revoke'],

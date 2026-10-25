@@ -245,4 +245,45 @@ final class ProcessingTest extends ReplicaTestBase {
     $this->assertSame(['a' => ['state' => 'unknown']], $this->askStatus(['a'])['events']);
   }
 
+  /**
+   * The origin's validation asks what this site has; the answer is signed.
+   */
+  public function testHashRequest(): void {
+    $snapshot = $this->originArticle('Asked about');
+    $this->deliver($this->event($snapshot, Operation::Create, 1));
+    $response = $this->send('hash_request', [
+      'items' => [
+      ['entity_type' => 'node', 'uuid' => $snapshot['uuid']],
+      ['entity_type' => 'node', 'uuid' => '00000000-0000-4000-8000-000000000000'],
+      ],
+    ]);
+    $this->assertSame(200, $response->getStatusCode(), (string) $response->getContent());
+    $hashes = json_decode((string) $response->getContent(), TRUE)['hashes'];
+    $this->assertSame('hashes', $hashes['message']['type']);
+    $items = $hashes['message']['body']['items'];
+    $item = $items['node:' . $snapshot['uuid']];
+    $this->assertTrue($item['synced']);
+    $this->assertTrue($item['local_ok']);
+    $this->assertSame(1, $item['revision']);
+    $this->assertSame($this->container->get('content_relay.revision_hasher')->hash($snapshot)->translations, $item['translation_hashes']);
+    $this->assertSame(['synced' => FALSE], $items['node:00000000-0000-4000-8000-000000000000']);
+
+    // An edit here shows.
+    $this->local($snapshot['uuid'])->setTitle('Edited here')->save();
+    $response = $this->send('hash_request', ['items' => [['entity_type' => 'node', 'uuid' => $snapshot['uuid']]]]);
+    $this->assertFalse(json_decode((string) $response->getContent(), TRUE)['hashes']['message']['body']['items']['node:' . $snapshot['uuid']]['local_ok']);
+  }
+
+  /**
+   * With an allowlist, the origin is heard only from its addresses.
+   */
+  public function testOriginAllowlist(): void {
+    $this->config('content_relay_replica.settings')->set('origin_allowed_ips', ['198.51.100.0/24'])->save();
+    $response = $this->send('status_request', ['event_ids' => []]);
+    $this->assertSame(403, $response->getStatusCode());
+    $this->assertSame('address_not_allowed', json_decode((string) $response->getContent(), TRUE)['result']);
+    $this->config('content_relay_replica.settings')->set('origin_allowed_ips', ['127.0.0.1'])->save();
+    $this->assertSame(200, $this->send('status_request', ['event_ids' => []])->getStatusCode());
+  }
+
 }

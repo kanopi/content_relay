@@ -18,6 +18,14 @@ namespace Drupal\content_relay\Crypto;
 final class FileCipher {
 
   /**
+   * Libsodium's tag for a chunk that is not the last.
+   *
+   * Defined here because paragonie/sodium_compat, the fallback when the
+   * extension is missing, does not define the constant.
+   */
+  private const TAG_MESSAGE = 0;
+
+  /**
    * The name events use for this cipher.
    */
   public const NAME = 'secretstream-xchacha20poly1305';
@@ -51,7 +59,7 @@ final class FileCipher {
     do {
       $next = feof($in) ? '' : self::read($in, self::CHUNK);
       $final = $next === '' && feof($in);
-      $cipher = sodium_crypto_secretstream_xchacha20poly1305_push($state, $chunk, '', $final ? SODIUM_CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_TAG_FINAL : SODIUM_CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_TAG_MESSAGE);
+      $cipher = sodium_crypto_secretstream_xchacha20poly1305_push($state, $chunk, '', $final ? SODIUM_CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_TAG_FINAL : self::TAG_MESSAGE);
       self::write($out, pack('N', strlen($cipher)) . $cipher);
       $chunk = $next;
     } while (!$final);

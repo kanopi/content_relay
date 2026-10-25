@@ -101,6 +101,43 @@ class ReplicaItems {
   }
 
   /**
+   * Records what a replica said it has, when asked by validation.
+   *
+   * @param string $replica_id
+   *   The replica.
+   * @param string $entity_type_id
+   *   Entity type.
+   * @param string $uuid
+   *   UUID.
+   * @param string $bundle
+   *   Bundle.
+   * @param int $revision
+   *   The revision it last received.
+   * @param int $algorithm
+   *   The hash algorithm of its hashes.
+   * @param array<string, string> $translation_hashes
+   *   What it received, by langcode.
+   */
+  public function recordValidated(string $replica_id, string $entity_type_id, string $uuid, string $bundle, int $revision, int $algorithm, array $translation_hashes): void {
+    $fields = [
+      'bundle' => $bundle,
+      'status' => self::APPLIED,
+      'revision' => $revision,
+      'algorithm' => $algorithm,
+      'translation_hashes' => json_encode($translation_hashes, \JSON_THROW_ON_ERROR),
+      'updated' => $this->time->getCurrentTime(),
+    ];
+    $keys = ['replica_id' => $replica_id, 'entity_type' => $entity_type_id, 'uuid' => $uuid];
+    // An item this site has no record of sending gets one, from no event.
+    // Insert fields replace the keys, so they are named again.
+    $this->database->merge(self::TABLE)
+      ->keys($keys)
+      ->insertFields($keys + $fields + ['last_event_id' => ''])
+      ->updateFields($fields)
+      ->execute();
+  }
+
+  /**
    * Whether a replica has, or is about to have, an item.
    *
    * An item it accepted or failed to save still counts: it holds the event,

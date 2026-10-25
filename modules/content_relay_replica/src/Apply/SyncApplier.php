@@ -181,6 +181,8 @@ class SyncApplier {
    *
    * @throws \InvalidArgumentException
    *   When the failure does not exist or is no longer open.
+   * @throws \RuntimeException
+   *   When its stored event cannot be read.
    */
   public function retry(int $failure_id): ApplyResult {
     $failure = $this->failures->load($failure_id);

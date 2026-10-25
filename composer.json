@@ -10,9 +10,12 @@
     },
     "require": {
         "php": ">=8.3",
-        "ext-sodium": "*",
         "drupal/key": "^1.17",
-        "lcobucci/jwt": "^5.5"
+        "lcobucci/jwt": "^5.5",
+        "paragonie/sodium_compat": "^2.5"
+    },
+    "suggest": {
+        "ext-sodium": "Much faster signing and encryption, especially of large files; without it a pure-PHP implementation is used."
     },
     "require-dev": {
         "drupal/paragraphs": "^1.18"

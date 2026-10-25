@@ -331,3 +331,21 @@ services:
   content_relay_origin.translation_blocks:
     class: Drupal\content_relay_origin\TranslationBlocks
     arguments: ['@database', '@datetime.time']
+
+  content_relay_origin.item_validator:
+    class: Drupal\content_relay_origin\ItemValidator
+    arguments:
+      - '@content_relay_origin.hash_store'
+      - '@content_relay.entity_serializer'
+      - '@content_relay.revision_hasher'
+      - '@content_relay_origin.replica_registry'
+      - '@content_relay_origin.contract_manager'
+      - '@content_relay_origin.not_syncable'
+      - '@content_relay_origin.replica_items'
+      - '@content_relay_origin.event_builder'
+      - '@content_relay_origin.report'
+      - '@content_relay.message_signer'
+      - '@content_relay.message_verifier'
+      - '@http_client'
+      - '@entity_type.manager'
+      - '@logger.channel.content_relay_origin'

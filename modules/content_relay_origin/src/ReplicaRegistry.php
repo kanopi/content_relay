@@ -154,6 +154,18 @@ class ReplicaRegistry {
   }
 
   /**
+   * Sets the addresses a replica may connect from.
+   *
+   * @param string $id
+   *   The replica.
+   * @param string[] $allowed
+   *   Addresses and ranges; empty for any.
+   */
+  public function setAllowedIps(string $id, array $allowed): void {
+    $this->update($id, ['allowed_ips' => $allowed === [] ? NULL : json_encode(array_values($allowed))]);
+  }
+
+  /**
    * Records the acknowledged contract version in force.
    */
   public function setContractVersion(string $id, int $version): void {
@@ -190,6 +202,7 @@ class ReplicaRegistry {
       (int) $row['contract_version'],
       $row['last_success'] === NULL ? NULL : (int) $row['last_success'],
       (bool) $row['approved'],
+      json_decode((string) ($row['allowed_ips'] ?? ''), TRUE) ?: [],
     );
   }
 

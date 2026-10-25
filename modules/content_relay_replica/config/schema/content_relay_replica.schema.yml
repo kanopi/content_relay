@@ -5,6 +5,12 @@ content_relay_replica.settings:
     webhook_url:
       type: string
       label: 'Endpoint URL to give the origin, when the site cannot work it out (for example behind a proxy). Empty to use this site''s own address.'
+    origin_allowed_ips:
+      type: sequence
+      label: 'Addresses and ranges the origin may post from; empty for any'
+      sequence:
+        type: string
+        label: 'Address or range'
     failures:
       type: mapping
       label: 'Save failures'

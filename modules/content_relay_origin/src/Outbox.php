@@ -179,6 +179,24 @@ class Outbox {
   }
 
   /**
+   * The number of events in each state, for one replica.
+   *
+   * @return array<string, int>
+   *   Counts by status.
+   */
+  public function countsByStatus(string $replica_id): array {
+    $query = $this->database->select(self::TABLE, 'o')->condition('replica_id', $replica_id);
+    $query->addField('o', 'status');
+    $query->addExpression('COUNT(*)', 'total');
+    $counts = [];
+    foreach ($query->groupBy('o.status')->execute()->fetchAll() as $row) {
+      $counts[(string) $row->status] = (int) $row->total;
+    }
+    ksort($counts);
+    return $counts;
+  }
+
+  /**
    * A replica's rows with given sequence numbers.
    *
    * @param string $replica_id

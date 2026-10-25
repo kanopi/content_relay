@@ -50,7 +50,8 @@ final class PeerKeysTest extends UnitTestCase {
   public function testNumericKeyId(): void {
     for ($i = 0; $i < 200000; $i++) {
       [$key] = KeyPair::generate(KeyPurpose::Signing);
-      if (ctype_digit($key->id())) {
+      // Without a leading zero, so PHP turns it into an integer key.
+      if (ctype_digit($key->id()) && $key->id()[0] !== '0') {
         break;
       }
     }

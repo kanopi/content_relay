@@ -40,6 +40,8 @@ final class Replica {
    *   When a delivery last succeeded.
    * @param bool $approved
    *   Whether an administrator approved it, where approval is required.
+   * @param string[] $allowedIps
+   *   Addresses and ranges it may connect from; empty for any.
    */
   public function __construct(
     public readonly string $id,
@@ -51,6 +53,7 @@ final class Replica {
     public readonly int $contractVersion = 0,
     public readonly ?int $lastSuccess = NULL,
     public readonly bool $approved = FALSE,
+    public readonly array $allowedIps = [],
   ) {
     if (!str_starts_with(strtolower($endpoint), 'https://')) {
       throw new \InvalidArgumentException('Replica endpoints must use HTTPS.');

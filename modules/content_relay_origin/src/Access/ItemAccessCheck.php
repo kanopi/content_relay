@@ -27,6 +27,7 @@ final class ItemAccessCheck implements AccessInterface {
   public const PERMISSIONS = [
     'push' => 'push content relay items',
     'not_syncable' => 'mark content relay items not syncable',
+    'validate' => 'view content relay status report',
   ];
 
   public function __construct(

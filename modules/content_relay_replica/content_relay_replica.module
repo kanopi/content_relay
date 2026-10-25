@@ -10,6 +10,8 @@ declare(strict_types=1);
 use Drupal\Core\Cache\CacheableMetadata;
 use Drupal\Core\Entity\ContentEntityInterface;
 use Drupal\Core\Entity\EntityInterface;
+use Drupal\Core\Routing\RouteMatchInterface;
+use Drupal\Core\Url;
 
 /**
  * Implements hook_cron().
@@ -66,4 +68,53 @@ function _content_relay_replica_translations_changed(EntityInterface $translatio
 function content_relay_replica_entity_operation(EntityInterface $entity, ?CacheableMetadata $cacheability = NULL): array {
   $cacheability?->addCacheContexts(['user.permissions']);
   return \Drupal::service('content_relay_replica.entity_ui')->operations($entity);
+}
+
+/**
+ * Implements hook_help().
+ */
+function content_relay_replica_help(string $route_name, RouteMatchInterface $route_match): ?string {
+  return match ($route_name) {
+    'help.page.content_relay_replica' => '<p>' . t('This site is a Content Relay replica. <a href=":pair">Pair it</a> with an origin, choose what it receives on the <a href=":subscription">subscription</a> page, and how it applies it in the <a href=":settings">settings</a>. The <a href=":report">synced items</a> report shows each item\'s state; content created on this site is never touched by sync.', [
+      ':pair' => Url::fromRoute('content_relay_replica.pair')->toString(),
+      ':subscription' => Url::fromRoute('content_relay_replica.subscription')->toString(),
+      ':settings' => Url::fromRoute('content_relay_replica.settings')->toString(),
+      ':report' => Url::fromUserInput('/admin/reports/content-relay')->toString(),
+    ]) . '</p>',
+    'content_relay_replica.subscription' => '<p>' . t('Changes are proposed to the origin, which answers with a new contract version. Until it confirms, the current contract stays in force.') . '</p>',
+    'content_relay_replica.settings' => '<p>' . t('How received content is applied here. What is received is set on the subscription page.') . '</p>',
+    'content_relay_replica.reconcile' => '<p>' . t('Reconciliation compares every received item with the origin and fixes what differs. It never touches content made here, items detached here, or items in conflict.') . '</p>',
+    'view.content_relay_replica_report.page_1' => '<p>' . t('Items received from the origin. Use the operations to pull, resolve a conflict, validate, detach or reattach; select several to detach or reattach them together.') . '</p>',
+    default => NULL,
+  };
+}
+
+/**
+ * Implements hook_page_top().
+ *
+ * On administration pages, tells those who can act on it that synced items
+ * failed to save.
+ */
+function content_relay_replica_page_top(array &$page_top): void {
+  $account = \Drupal::currentUser();
+  if (!\Drupal::service('router.admin_context')->isAdminRoute() || !$account->hasPermission('pull content relay items')) {
+    return;
+  }
+  $page_top['#cache']['contexts'][] = 'user.permissions';
+  $page_top['#cache']['tags'][] = 'content_relay_failures';
+  $open = \Drupal::service('content_relay_replica.failed_events')->countOpen();
+  if ($open === 0 || \Drupal::routeMatch()->getRouteName() === 'content_relay_replica.failures') {
+    return;
+  }
+  $page_top['content_relay_failures'] = [
+    '#theme' => 'status_messages',
+    '#message_list' => [
+      'warning' => [
+        \Drupal::translation()->formatPlural($open, '1 synced item failed to save. <a href=":url">Review it</a>.', '@count synced items failed to save. <a href=":url">Review them</a>.', [
+          ':url' => Url::fromRoute('content_relay_replica.failures')->toString(),
+        ]),
+      ],
+    ],
+    '#status_headings' => ['warning' => t('Warning message')],
+  ];
 }

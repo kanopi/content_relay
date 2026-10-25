@@ -30,12 +30,17 @@ function content_relay_install(bool $is_syncing): void {
  */
 function content_relay_requirements(string $phase): array {
   $requirements = [];
+  // Without the extension, paragonie/sodium_compat provides the same
+  // functions in plain PHP: correct, but much slower.
   if (!extension_loaded('sodium')) {
+    $available = function_exists('sodium_crypto_sign_detached');
     $requirements['content_relay_sodium'] = [
       'title' => t('Content Relay: libsodium'),
-      'value' => t('Missing'),
-      'description' => t('Content Relay signs every message with libsodium. Install or enable the PHP sodium extension.'),
-      'severity' => REQUIREMENT_ERROR,
+      'value' => $available ? t('PHP fallback') : t('Missing'),
+      'description' => $available
+        ? t('The PHP sodium extension is not enabled, so signing and encryption use a pure-PHP implementation. It works, but is much slower, especially for encrypted files. Enable the extension for production.')
+        : t('Content Relay signs every message with libsodium. Enable the PHP sodium extension, or install paragonie/sodium_compat with Composer.'),
+      'severity' => $available ? REQUIREMENT_WARNING : REQUIREMENT_ERROR,
     ];
   }
   if ($phase === 'runtime') {

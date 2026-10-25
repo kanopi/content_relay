@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Drupal\content_relay_origin;
 
+use Drupal\Core\StringTranslation\TranslatableMarkup;
+
 /**
  * Delivery states of an event for one replica.
  */
@@ -48,5 +50,26 @@ final class EventStatus {
    * States a replay can start from.
    */
   public const REPLAYABLE = [self::DEAD_LETTER, self::FAILED_ON_REPLICA];
+
+  /**
+   * Labels, by state.
+   *
+   * @return array<string, \Drupal\Core\StringTranslation\TranslatableMarkup>
+   *   Labels.
+   */
+  public static function labels(): array {
+    return [
+      self::QUEUED => new TranslatableMarkup('Queued'),
+      self::FAILED => new TranslatableMarkup('Failed, will retry'),
+      self::APPLIED => new TranslatableMarkup('Applied'),
+      self::ACCEPTED => new TranslatableMarkup('Accepted (queued on replica)'),
+      self::STALE => new TranslatableMarkup('Stale or conflict'),
+      self::FAILED_ON_REPLICA => new TranslatableMarkup('Failed on replica'),
+      self::DEAD_LETTER => new TranslatableMarkup('Dead-lettered'),
+      self::SUPERSEDED => new TranslatableMarkup('Superseded'),
+      self::REPLAYED => new TranslatableMarkup('Replayed'),
+      self::SKIPPED => new TranslatableMarkup('Skipped'),
+    ];
+  }
 
 }

@@ -39,15 +39,7 @@ class Validator {
    */
   public function validate(string $entity_type_id, string $uuid): array {
     $state = $this->syncState->get($entity_type_id, $uuid) ?? throw new \InvalidArgumentException('The item is not synced to this site.');
-    $entity = $this->localChanges->localCopy($entity_type_id, $uuid, $state);
-    $actual = $entity === NULL ? NULL : $this->localChanges->hashFor($entity, $state)->entity;
-    $expected = $state['expected_hash'] ?? $state['source_hash'];
-    $local = $actual !== NULL && $expected !== NULL && hash_equals((string) $expected, $actual);
-    if (!$local && $state['status'] === SyncStatus::SYNCED) {
-      $this->syncState->setStatus($entity_type_id, $uuid, SyncStatus::ERROR, $entity === NULL
-        ? 'Validation found the local copy missing.'
-        : 'Validation found that the local copy does not hash as it should; it was changed here.');
-    }
+    ['local' => $local, 'expected' => $expected, 'actual' => $actual] = $this->checkLocal($entity_type_id, $uuid, $state);
 
     $result = [
       'local' => $local,
@@ -87,6 +79,66 @@ class Validator {
     $result['origin_revision'] = $event->sourceRevision;
     $result['differing_translations'] = $differing;
     return $result;
+  }
+
+  /**
+   * Hashes the copy here again and compares it with what it should be.
+   *
+   * A mismatch on an item marked as synced marks it as an error.
+   *
+   * @return array{local: bool, expected: string|null, actual: string|null, present: bool}
+   *   Whether it matches, the hashes compared, and whether the copy exists.
+   */
+  public function checkLocal(string $entity_type_id, string $uuid, array $state): array {
+    $entity = $this->localChanges->localCopy($entity_type_id, $uuid, $state);
+    $actual = $entity === NULL ? NULL : $this->localChanges->hashFor($entity, $state)->entity;
+    $expected = $state['expected_hash'] ?? $state['source_hash'];
+    $local = $actual !== NULL && $expected !== NULL && hash_equals((string) $expected, $actual);
+    if (!$local && $state['status'] === SyncStatus::SYNCED) {
+      $this->syncState->setStatus($entity_type_id, $uuid, SyncStatus::ERROR, $entity === NULL
+        ? 'Validation found the local copy missing.'
+        : 'Validation found that the local copy does not hash as it should; it was changed here.');
+    }
+    return ['local' => $local, 'expected' => $expected, 'actual' => $actual, 'present' => $entity !== NULL];
+  }
+
+  /**
+   * What this site has of some items, for the origin's validation.
+   *
+   * @param array $items
+   *   Each with entity_type and uuid.
+   *
+   * @return array<string, array>
+   *   By "entity_type:uuid": synced (FALSE when this site has no record of
+   *   it), and otherwise the revision and translation hashes received, the
+   *   status, whether the copy here hashes as it should and is present, and
+   *   the translations detached or local here.
+   */
+  public function answer(array $items): array {
+    $answer = [];
+    foreach (array_slice($items, 0, 100) as $item) {
+      $entity_type_id = (string) ($item['entity_type'] ?? '');
+      $uuid = (string) ($item['uuid'] ?? '');
+      $state = $this->syncState->get($entity_type_id, $uuid);
+      if ($state === NULL) {
+        $answer[$entity_type_id . ':' . $uuid] = ['synced' => FALSE];
+        continue;
+      }
+      $check = $this->checkLocal($entity_type_id, $uuid, $state);
+      $answer[$entity_type_id . ':' . $uuid] = [
+        'synced' => TRUE,
+        'revision' => (int) $state['source_revision'],
+        'hash_algorithm' => (int) $state['hash_algorithm'],
+        'translation_hashes' => $state['source_translation_hashes'],
+        'status' => $this->syncState->get($entity_type_id, $uuid)['status'] ?? $state['status'],
+        'local_ok' => $check['local'],
+        'present' => $check['present'],
+        'detached' => $state['detached_at'] !== NULL,
+        'detached_translations' => $state['detached_translations'],
+        'local_translations' => $state['local_translations'],
+      ];
+    }
+    return $answer;
   }
 
 }

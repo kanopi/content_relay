@@ -12,3 +12,13 @@ entity.content_relay_mapping.collection:
   route_name: entity.content_relay_mapping.collection
   base_route: content_relay_replica.subscription
   weight: 20
+content_relay_replica.settings:
+  title: 'Settings'
+  route_name: content_relay_replica.settings
+  base_route: content_relay_replica.subscription
+  weight: 5
+content_relay_replica.reconcile:
+  title: 'Reconciliation'
+  route_name: content_relay_replica.reconcile
+  base_route: content_relay_replica.subscription
+  weight: 30

@@ -20,6 +20,14 @@ content_relay_replica.subscription:
   requirements:
     _permission: 'change content relay subscription'
 
+content_relay_replica.settings:
+  path: '/admin/config/services/content-relay/replica/settings'
+  defaults:
+    _form: '\Drupal\content_relay_replica\Form\ReplicaSettingsForm'
+    _title: 'Content Relay replica settings'
+  requirements:
+    _permission: 'administer content relay replica'
+
 content_relay_replica.pair:
   path: '/admin/config/services/content-relay/replica/pair'
   defaults:
@@ -116,3 +124,20 @@ content_relay_replica.reconcile:
     _title: 'Reconciliation'
   requirements:
     _permission: 'reconcile content relay items'
+
+content_relay_replica.failures:
+  path: '/admin/reports/content-relay/failures'
+  defaults:
+    _form: '\Drupal\content_relay_replica\Form\FailuresForm'
+    _title: 'Content Relay save failures'
+  requirements:
+    _permission: 'view content relay replica report'
+
+content_relay_replica.failure:
+  path: '/admin/reports/content-relay/failures/{failure_id}'
+  defaults:
+    _form: '\Drupal\content_relay_replica\Form\FailureForm'
+    _title: 'Save failure'
+  requirements:
+    _permission: 'view content relay replica report'
+    failure_id: '\d+'

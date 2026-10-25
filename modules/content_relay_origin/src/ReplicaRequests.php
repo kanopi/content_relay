@@ -8,6 +8,7 @@ use Drupal\content_relay\Auth\AuthenticationException;
 use Drupal\content_relay\Auth\PullAuthenticatorInterface;
 use Drupal\Component\Datetime\TimeInterface;
 use Drupal\content_relay\Crypto\MessageSigner;
+use Drupal\content_relay\Http\IpAllowlist;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\KeyValueStore\KeyValueExpirableFactoryInterface;
 use Psr\Log\LoggerInterface;
@@ -126,6 +127,13 @@ class ReplicaRequests {
     $replica = $this->registry->get($replica_id);
     if ($replica === NULL || !$replica->receivesEvents()) {
       return self::refuse(403, 'not_receiving', 'This replica does not receive from this origin.');
+    }
+    if (!IpAllowlist::allows($request->getClientIp(), $replica->allowedIps)) {
+      $this->logger->warning('Refused a read request for replica @replica from @ip, which is not on its allowlist.', [
+        '@replica' => $replica_id,
+        '@ip' => $request->getClientIp(),
+      ]);
+      return self::refuse(403, 'address_not_allowed', 'Requests for this replica are not accepted from this address.');
     }
     return $replica_id;
   }

@@ -59,6 +59,20 @@ final class SyncStateViewsData {
     $data[$table]['last_synced'] = $this->column($this->t('Last synced'), 'date', 'date', 'date');
     $data[$table]['detached_at'] = $this->column($this->t('Detached here'), 'date', 'date', 'date');
     $data[$table]['origin_detached_at'] = $this->column($this->t('Detached by origin'), 'date', 'date', 'date');
+    $data[$table]['conflict_at'] = $this->column($this->t('Conflict since'), 'date', 'date', 'date');
+    $data[$table]['source_default_langcode'] = $this->column($this->t('Default language on the origin'), 'standard', 'string');
+    foreach ([
+      'local_translations' => $this->t('Local translations'),
+      'detached_translations' => $this->t('Detached translations'),
+      'withheld_translations' => $this->t('Translations withheld by the origin'),
+      'notes' => $this->t('Notes'),
+    ] as $column => $title) {
+      $data[$table][$column] = [
+        'title' => $title,
+        'field' => ['id' => 'content_relay_json_list'],
+        'filter' => ['id' => 'string'],
+      ];
+    }
     $data[$table]['detached_by'] = $this->column($this->t('Detached by'), 'numeric', 'numeric');
     $data[$table]['detached_by']['relationship'] = [
       'id' => 'standard',

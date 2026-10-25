@@ -6,6 +6,7 @@ namespace Drupal\content_relay_origin\Controller;
 
 use Drupal\content_relay\Crypto\MessageVerifier;
 use Drupal\content_relay\Crypto\VerificationException;
+use Drupal\content_relay\Http\IpAllowlist;
 use Drupal\content_relay\Key\KeyPurpose;
 use Drupal\content_relay\Key\PeerKeys;
 use Drupal\content_relay_origin\ContractManager;
@@ -71,6 +72,16 @@ final class InboxController implements ContainerInjectionInterface {
         '@reason' => $e->reason,
       ]);
       return new JsonResponse(['result' => $e->reason, 'message' => $e->getMessage()], $e->reason === VerificationException::MALFORMED ? 400 : 403);
+    }
+    if (!IpAllowlist::allows($request->getClientIp(), $this->registry->get($message->sender)->allowedIps ?? [])) {
+      $this->logger->warning('Refused a message from replica @replica at @ip, which is not on its allowlist.', [
+        '@replica' => $message->sender,
+        '@ip' => $request->getClientIp(),
+      ]);
+      return new JsonResponse([
+        'result' => 'address_not_allowed',
+        'message' => 'Messages from this replica are not accepted from this address.',
+      ], 403);
     }
 
     switch ($message->type) {

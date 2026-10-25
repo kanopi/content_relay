@@ -6,6 +6,10 @@ namespace Drupal\content_relay_replica;
 
 use Drupal\Component\Datetime\TimeInterface;
 use Drupal\content_relay\Event\SyncEvent;
+use Drupal\content_relay\Key\KeyPair;
+use Drupal\content_relay\Key\KeyPurpose;
+use Drupal\content_relay\Key\KeyStore;
+use Drupal\Core\Cache\CacheTagsInvalidatorInterface;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Database\Connection;
 use Drupal\Core\Queue\QueueFactory;
@@ -45,7 +49,20 @@ class FailedEventStore {
     protected QueueFactory $queueFactory,
     protected ConfigFactoryInterface $configFactory,
     protected TimeInterface $time,
+    protected ContractStore $contracts,
+    protected KeyStore $keyStore,
+    protected CacheTagsInvalidatorInterface $cacheTagsInvalidator,
   ) {}
+
+  /**
+   * Cache tag of anything showing whether failures are open.
+   */
+  public const CACHE_TAG = 'content_relay_failures';
+
+  /**
+   * Prefix of a payload sealed to this site's encryption key.
+   */
+  protected const SEALED = 'sealed:';
 
   /**
    * Records a failure, or another attempt at an already failed event.
@@ -102,12 +119,13 @@ class FailedEventStore {
         'contract_version' => $event->contractVersion,
         'source_revision' => $event->sourceRevision,
         'source_hash' => $event->hashes?->entity,
-        'payload' => json_encode($event->toArray(), \JSON_THROW_ON_ERROR),
+        'payload' => $this->storePayload(json_encode($event->toArray(), \JSON_THROW_ON_ERROR)),
         'first_failed' => $now,
       ])->execute();
     }
 
     $this->database->delete(self::DEPENDENCY_TABLE)->condition('failure_id', $id)->execute();
+    $this->cacheTagsInvalidator->invalidateTags([self::CACHE_TAG]);
     foreach ($dependencies as $dependency) {
       $this->database->merge(self::DEPENDENCY_TABLE)
         ->keys(['failure_id' => $id, 'entity_type' => $dependency['entity_type'], 'uuid' => $dependency['uuid']])
@@ -140,9 +158,49 @@ class FailedEventStore {
 
   /**
    * The stored event of a failure.
+   *
+   * @throws \RuntimeException
+   *   When it was sealed to a key this site no longer has.
    */
   public function getEvent(array $failure): SyncEvent {
-    return SyncEvent::fromArray(json_decode((string) $failure['payload'], TRUE, 512, \JSON_THROW_ON_ERROR));
+    return SyncEvent::fromArray(json_decode($this->readPayload((string) $failure['payload']), TRUE, 512, \JSON_THROW_ON_ERROR));
+  }
+
+  /**
+   * The payload as stored: sealed to this site's own key when encrypted.
+   *
+   * When the contract encrypts messages, what arrived encrypted is not kept
+   * in the clear either. Only this site's encryption key opens it.
+   */
+  protected function storePayload(string $json): string {
+    if (($this->contracts->getCurrent()?->encryption() ?? 'none') === 'none') {
+      return $json;
+    }
+    try {
+      $key = $this->keyStore->getPrimary(KeyPurpose::Encryption);
+    }
+    catch (\RuntimeException) {
+      return $json;
+    }
+    return self::SEALED . $key->id() . ':' . base64_encode(KeyPair::seal($json, $key->publicKey));
+  }
+
+  /**
+   * A stored payload, opened if it was sealed.
+   *
+   * @throws \RuntimeException
+   *   When the key it was sealed to is gone.
+   */
+  protected function readPayload(string $payload): string {
+    if (!str_starts_with($payload, self::SEALED)) {
+      return $payload;
+    }
+    [$key_id, $sealed] = explode(':', substr($payload, strlen(self::SEALED)), 2) + [1 => ''];
+    $json = $this->keyStore->get(KeyPurpose::Encryption, $key_id)?->open((string) base64_decode($sealed, TRUE));
+    if ($json === NULL) {
+      throw new \RuntimeException(sprintf('The stored event is sealed to encryption key %s, which this site no longer has. Pull the item fresh instead.', $key_id));
+    }
+    return $json;
   }
 
   /**
@@ -258,6 +316,50 @@ class FailedEventStore {
   }
 
   /**
+   * Failures matching filters, newest first.
+   *
+   * @param array $filters
+   *   Any of: status (default open), entity_type, bundle, failure_class,
+   *   error_code.
+   * @param int $limit
+   *   Most rows; 0 for all.
+   *
+   * @return array[]
+   *   Rows.
+   */
+  public function find(array $filters = [], int $limit = 0): array {
+    $query = $this->database->select(self::TABLE, 'f')
+      ->fields('f', [
+        'id',
+        'event_id',
+        'entity_type',
+        'bundle',
+        'uuid',
+        'label',
+        'operation',
+        'status',
+        'failure_class',
+        'error_code',
+        'message',
+        'attempts',
+        'last_failed',
+        'dismiss_reason',
+      ])
+      ->condition('status', $filters['status'] ?? self::OPEN)
+      ->orderBy('last_failed', 'DESC')
+      ->orderBy('id', 'DESC');
+    foreach (['entity_type', 'bundle', 'failure_class', 'error_code'] as $key) {
+      if (($filters[$key] ?? '') !== '') {
+        $query->condition($key, $filters[$key]);
+      }
+    }
+    if ($limit > 0) {
+      $query->range(0, $limit);
+    }
+    return array_map(fn ($row) => (array) $row, $query->execute()->fetchAll());
+  }
+
+  /**
    * How many failures are waiting for attention.
    */
   public function countOpen(): int {
@@ -277,6 +379,7 @@ class FailedEventStore {
       ->condition('id', $id)
       ->execute();
     $this->database->delete(self::DEPENDENCY_TABLE)->condition('failure_id', $id)->execute();
+    $this->cacheTagsInvalidator->invalidateTags([self::CACHE_TAG]);
   }
 
   /**

@@ -57,6 +57,13 @@ class EntityUi {
         'weight' => 61,
       ];
     }
+    if (ItemAccessCheck::forEntity($entity, 'validate', $this->currentUser, $this->scope)->isAllowed()) {
+      $operations['content_relay_validate'] = [
+        'title' => $this->t('Validate on replicas'),
+        'url' => Url::fromRoute(ItemRoutes::name($entity->getEntityTypeId(), 'validate'), $parameters),
+        'weight' => 62,
+      ];
+    }
     return $operations;
   }
 

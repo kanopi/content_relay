@@ -1,4 +1,5 @@
 webhook_url: ''
+origin_allowed_ips: []
 failures:
   transient_retry_limit: 5
   retry_base: 60

@@ -5,26 +5,59 @@ others (**replicas**) without database dumps. Every change travels as a signed,
 optionally encrypted event carrying a full snapshot of the entity, identified
 by UUID only, with a canonical hash anyone can recompute to check a copy.
 
-This project is being built in phases. This README describes what exists now
-and grows with each phase; see `docs/decisions.md` for choices that differ from,
-or refine, the original specification.
+See `docs/decisions.md` for choices that differ from, or refine, the original
+specification, and `docs/test-coverage.md` for how each test scenario is
+covered.
 
 ## Modules
 
-| Module | Role | Status |
-| --- | --- | --- |
-| `content_relay` | Shared base: event schema, entity serialization, hashing, signing, keys | Phase 1 |
-| `content_relay_origin` | Publishes changes to replicas | Phases 2–9: event log, delivery, hash store, pairing, contracts, not syncable, push, status report, files, encryption, status polling, read endpoints |
-| `content_relay_replica` | Receives and applies changes | Phases 2–9: endpoint, transactional apply, failures, pairing, contracts, detach, files, encryption, processing modes, mapping |
+| Module | Role |
+| --- | --- |
+| `content_relay` | Shared base: event schema, entity serialization, hashing, signing, keys |
+| `content_relay_origin` | Publishes changes to replicas: event log, delivery, hash store, pairing, contracts, status report, read endpoints |
+| `content_relay_replica` | Receives and applies changes: endpoint, apply, conflicts, mapping, reconciliation, languages, failures |
+
+A site enables one of the two submodules, never both.
 
 ## Requirements
 
-- Drupal 10.3 or 11, PHP 8.3 or later, with the `sodium` extension.
+- Drupal 10.3 or 11, PHP 8.3 or later.
+- The PHP `sodium` extension, strongly recommended. It ships with PHP and is
+  enabled in most builds. Without it, `paragonie/sodium_compat` (installed by
+  Composer) provides the same functions in plain PHP: correct, but much
+  slower, especially for encrypted files; the status report warns about it.
 - The [Key](https://www.drupal.org/project/key) module, and File and Views
   (core).
 - `lcobucci/jwt` 5.5 or later (installed by Composer).
 - A `utf8mb4` database. Hashes cover text byte for byte, and a database that
   cannot store four-byte characters changes the bytes.
+
+## Setup
+
+On both sites, after `composer require drupal/content_relay`:
+
+1. Create keys outside the database, and Key module entries for them:
+   `drush content-relay:generate-key signing site_signing ../private/keys/signing.key`
+   (and `encryption` likewise, to encrypt). The config and state key
+   providers are refused.
+2. Enable `content_relay_origin` on the origin, `content_relay_replica` on
+   each replica.
+
+On the origin:
+
+3. Choose the bundles to publish at Configuration » Web services » Content
+   Relay origin.
+4. Generate a pairing code (there, or `drush content-relay:pairing-code`).
+
+On the replica:
+
+5. Pair at Configuration » Web services » Content Relay replica » Pairing
+   (or `drush content-relay:pair https://origin.example.com CODE
+   --bundles=node:article`) with the origin's HTTPS address and the code.
+6. Adjust what it receives on the subscription page, and how it applies it
+   on the Settings tab.
+7. Make sure cron runs on both sites: delivery, retries, files,
+   reconciliation and notices all run from it.
 
 ## Architecture (base module)
 
@@ -621,23 +654,66 @@ derived data and can always be rebuilt.
 On a replica, **Reports › Content Relay synced items** lists what was received
 with its sync status, and detaches or reattaches selected items in bulk.
 
+## Event log, replay and validation (origin)
+
+The event log (Reports » Content Relay event log) lists every event for
+every replica, with filters by status, bundle, replica, operation and date.
+Each entry shows the replica's last answer. Failed and dead-lettered entries
+can be replayed: the item's current version is sent again as a new entry,
+and the old one is marked replayed (`drush content-relay:replay <entry>`).
+
+"Validate on replicas", an operation on every published item (and
+`drush content-relay:validate <type> <id>`), hashes the item again here,
+replacing a stored hash that no longer matches, and asks each replica that
+gets it, in a signed `hash_request`, what it last received and whether its
+copy is unchanged. Each answer is shown (in sync, behind, changed on the
+replica, missing, detached, unreachable) and updates the status report.
+
+## Addresses
+
+Every message is signed, but each side can also accept requests only from
+known addresses: per replica on the origin (Replicas » Allowed addresses),
+and for the origin on the replica (Settings » Origin addresses). Addresses
+and CIDR ranges, IPv4 or IPv6; empty accepts any.
+
+## Save failures (replica)
+
+Valid events that cannot be saved are kept with their payload (sealed to the
+replica's own encryption key when the contract is encrypted), and listed at
+Reports » Content Relay save failures, with a warning on administration
+pages while any are open. Each shows the error, field violations and what
+differs from the local copy, with Retry (the stored event, without the
+origin), Pull fresh (the origin's current version) and Dismiss (with a
+reason; the item stays out of sync). Retry all matching the filters runs as
+a batch, after fixing the cause. In Drush: `content-relay:failures`,
+`content-relay:retry <ids> | --all [--bundle=]`, `content-relay:dismiss
+<id> --reason=`.
+
 ## Permissions
 
 | Permission | Side | Allows |
 | --- | --- | --- |
+| Administer Content Relay origin | origin | Settings: published bundles, delivery, pairing (restricted) |
+| Administer Content Relay replicas | origin | Replica list, approval, suspension, contracts, allowed addresses (restricted) |
+| Generate Content Relay pairing codes | origin | Pairing codes |
+| View the Content Relay event log | origin | The event log and its entries |
+| Replay Content Relay events | origin | Replay failed events |
 | Push Content Relay items | origin | Push now (manual resync) |
 | Bulk push Content Relay items | origin | Push from the report, refresh it |
-| View the Content Relay status report | origin | The report and its CSV |
+| View the Content Relay status report | origin | The report and its CSV; validate on replicas |
 | Mark Content Relay items not syncable | origin | Not syncable flags |
+| Administer Content Relay replica | replica | Pairing, settings (restricted) |
+| Change the Content Relay subscription | replica | Propose contract changes (restricted) |
 | Detach and reattach Content Relay items | replica | Detach, reattach, in bulk too |
-| Pull Content Relay items and files | replica | Pull latest, pull by UUID, pull files |
+| Pull Content Relay items and files | replica | Pull latest, pull by UUID, pull files, retry and dismiss save failures |
 | Resolve Content Relay conflicts | replica | Accept origin version, keep local and detach |
 | Change the languages received through Content Relay | replica | Language selection, pending languages |
 | Run Content Relay reconciliation | replica | Run reconciliation, see past runs (restricted) |
 | Administer Content Relay mappings | replica | Mappings, re-applying them (restricted: the callback transform calls PHP functions) |
-| View the Content Relay replica report | replica | The synced items report |
+| View the Content Relay replica report | replica | The synced items report, save failures, validate |
 
-Every push, flag, detach and reattach is logged with the user who did it.
+Every push, flag, replay, detach, reattach, retry, dismissal and language or
+address change is logged with the user who did it.
 
 ## Drush
 
@@ -661,6 +737,16 @@ Every push, flag, detach and reattach is logged with the user who did it.
 | `content-relay:validate <type> <uuid>` | replica |
 | `content-relay:backfill-hashes [--all]` | origin |
 | `content-relay:reconcile [--replica=]` | origin |
+| `content-relay:replay <entry>` | origin |
+| `content-relay:replicas` | origin |
+| `content-relay:pairing-code [--bundles=]` | origin |
+| `content-relay:status` | origin |
+| `content-relay:validate <type> <id or uuid>` | origin |
+| `content-relay:pair <origin url> <code> [--bundles=]` | replica |
+| `content-relay:status` | replica |
+| `content-relay:failures [--status=] [--bundle=]` | replica |
+| `content-relay:retry <ids> \| --all [--bundle=]` | replica |
+| `content-relay:dismiss <id> --reason=` | replica |
 | `content-relay:keys` | both |
 | `content-relay:generate-key <purpose> <key id> <path>` | both |
 | `content-relay:rotate-key <purpose> <key id>` | both |
@@ -726,6 +812,35 @@ contract again and retries.
 Both sites show the contract in plain language ("You receive Article and
 Page in all languages, immediately, unencrypted."), with its version, since
 when it applies and a history of every version with what changed.
+
+## Troubleshooting
+
+- **Nothing arrives on the replica.** On the origin, `drush content-relay:status`
+  shows each replica's state and event counts; the event log shows the
+  replica's answers. A replica that is pending approval, suspended, or has not
+  acknowledged a contract gets nothing. Check that cron runs.
+- **"not_receiving", "unknown_sender" or signature refusals.** The sites' keys
+  no longer match what each recorded at pairing: rotate keys with
+  `content-relay:rotate-key`, which announces the new key, rather than
+  replacing key files by hand.
+- **"address_not_allowed".** An allowlist is set and the request came from
+  elsewhere, for example through a proxy or a changed outbound address.
+- **429 "rate_limited" on the replica.** It read more than `read_limit` allows;
+  its queued work resumes on later cron runs.
+- **Items stuck in "waiting for files".** `drush content-relay:pull-missing-files
+  --all`, and check that the origin's file endpoint is reachable.
+- **Items in "error" (hash mismatch).** Something on the replica changes
+  content on save (a hook, a field default). Validate the item; local-only
+  fields can take such fields out of the comparison.
+- **Save failures.** Reports » Content Relay save failures shows why; fix the
+  field, language or mapping, then retry.
+- **Gaps in the stream.** `drush content-relay:status` on the replica lists
+  them; cron fills them, or `drush content-relay:fill-gaps`.
+- **Out of sync after an outage.** Run reconciliation (`drush
+  content-relay:reconcile` on the replica, and on the origin to re-send what
+  failed).
+- **Slow signing or file encryption.** The status report says whether the
+  sodium extension is missing.
 
 ## Development
 

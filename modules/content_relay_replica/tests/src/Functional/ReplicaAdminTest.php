@@ -7,6 +7,9 @@ namespace Drupal\Tests\content_relay_replica\Functional;
 use Drupal\content_relay_test\FakeOrigin;
 use Drupal\Tests\BrowserTestBase;
 use Drupal\Tests\content_relay\Traits\FileKeyTrait;
+use Drupal\content_relay_replica\LanguageSubscription;
+use Drupal\language\Entity\ConfigurableLanguage;
+use Drush\TestTraits\DrushTestTrait;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
 
@@ -22,6 +25,7 @@ use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
 #[RunTestsInSeparateProcesses]
 final class ReplicaAdminTest extends BrowserTestBase {
 
+  use DrushTestTrait;
   use FileKeyTrait;
 
   private const CODE = 'K7QM-3XRP-V9TD';
@@ -142,6 +146,72 @@ final class ReplicaAdminTest extends BrowserTestBase {
     $this->drupalGet('admin/config/services/content-relay/replica');
     $this->assertSession()->fieldExists('terms[paused]');
     $this->assertSession()->fieldNotExists('terms[language_mode]');
+  }
+
+  /**
+   * The settings form saves every setting and checks what it is given.
+   */
+  public function testSettingsForm(): void {
+    ConfigurableLanguage::createFromLangcode('fr')->save();
+    $this->pair();
+    $this->drupalGet('admin/config/services/content-relay/replica/settings');
+    $this->assertSession()->statusCodeEquals(200);
+
+    $this->submitForm(['map' => 'zh-hans|xx', 'origin_allowed_ips' => 'nonsense'], 'Save configuration');
+    $this->assertSession()->pageTextContains('Language xx does not exist on this site.');
+    $this->assertSession()->pageTextContains('"nonsense" is not an IP address or range.');
+
+    $this->submitForm([
+      'on_event' => 'reject',
+      'local_only' => 'node.article: field_notes, field_extra',
+      'map' => 'fr-ca|fr',
+      'move' => TRUE,
+      'unknown' => 'reject',
+      'interval' => 3600,
+      'max_items' => 25,
+      'origin_allowed_ips' => "203.0.113.5\n2001:db8::/32",
+    ], 'Save configuration');
+    $this->assertSession()->pageTextContains('The configuration options have been saved.');
+    $this->assertSession()->pageTextContains('Translations in fr-ca move to fr');
+    $config = $this->config('content_relay_replica.settings');
+    $this->assertSame('reject', $config->get('conflicts.on_event'));
+    $this->assertSame([['entity_type' => 'node', 'bundle' => 'article', 'fields' => ['field_notes', 'field_extra']]], $config->get('local_only'));
+    $this->assertSame([['origin' => 'fr-ca', 'local' => 'fr']], $config->get('languages.map'));
+    $this->assertSame(25, $config->get('reconcile.max_items'));
+    $this->assertSame(['203.0.113.5', '2001:db8::/32'], $config->get('origin_allowed_ips'));
+    $this->assertGreaterThan(0, $this->container->get('queue')->get(LanguageSubscription::QUEUE)->numberOfItems());
+
+    // Shown back as typed.
+    $this->drupalGet('admin/config/services/content-relay/replica/settings');
+    $this->assertSession()->fieldValueEquals('local_only', 'node.article: field_notes, field_extra');
+    $this->assertSession()->fieldValueEquals('map', 'fr-ca|fr');
+  }
+
+  /**
+   * A bundle can receive other languages than the rest of the site.
+   */
+  public function testLanguagesPerBundle(): void {
+    $this->pair();
+    $this->submitForm([
+      'terms[per_bundle][node.article][mode]' => 'selected',
+      'terms[per_bundle][node.article][selected][en]' => TRUE,
+    ], 'Propose changes');
+    $this->assertSession()->pageTextContains('The origin confirmed contract version 2.');
+    $terms = $this->container->get('content_relay_replica.subscription')->getReplicaTerms();
+    $this->assertSame(['node.article' => ['mode' => 'selected', 'selected' => ['en']]], $terms['languages']['per_bundle']);
+  }
+
+  /**
+   * Pairing and status from Drush, with exit codes.
+   */
+  public function testDrush(): void {
+    $this->drush('content-relay:status', [], [], NULL, NULL, 1);
+    $this->drush('content-relay:pair', ['http://' . FakeOrigin::HOST, self::CODE], ['bundles' => 'node:article'], NULL, NULL, 1);
+    $this->drush('content-relay:pair', ['https://' . FakeOrigin::HOST, self::CODE], ['bundles' => 'node:article']);
+    $this->assertStringContainsString('Paired', $this->getErrorOutput());
+    $this->drush('content-relay:status');
+    $this->assertStringContainsString('Contract: 1', $this->getOutput());
+    $this->drush('content-relay:languages');
   }
 
 }

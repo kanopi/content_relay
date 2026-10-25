@@ -78,6 +78,11 @@ function content_relay_origin_schema(): array {
       'created' => ['type' => 'int', 'size' => 'big', 'not null' => TRUE, 'default' => 0],
       'changed' => ['type' => 'int', 'size' => 'big', 'not null' => TRUE, 'default' => 0],
       'last_success' => ['type' => 'int', 'size' => 'big', 'not null' => FALSE],
+      'allowed_ips' => [
+        'type' => 'text',
+        'not null' => FALSE,
+        'description' => 'JSON: addresses and ranges the replica may connect from; empty for any.',
+      ],
     ],
     'primary key' => ['id'],
   ];

@@ -13,3 +13,8 @@ content_relay_replica.reconcile:
   route_name: content_relay_replica.reconcile
   appears_on:
     - view.content_relay_replica_report.page_1
+content_relay_replica.failures:
+  title: 'Save failures'
+  route_name: content_relay_replica.failures
+  appears_on:
+    - view.content_relay_replica_report.page_1

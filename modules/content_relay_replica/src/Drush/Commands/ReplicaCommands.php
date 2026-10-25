@@ -4,21 +4,27 @@ declare(strict_types=1);
 
 namespace Drupal\content_relay_replica\Drush\Commands;
 
-use Drupal\content_relay_replica\File\FileSync;
-use Drupal\content_relay_replica\Puller;
-use Drupal\content_relay_replica\LanguageSubscription;
-use Drupal\content_relay_replica\Reconciler;
-use Drupal\content_relay_replica\SubscriptionManager;
-use Drupal\content_relay_replica\Validator;
+use Consolidation\OutputFormatters\StructuredData\RowsOfFields;
 use Drupal\content_relay_replica\Apply\ApplyResult;
-use Drupal\content_relay_replica\Schema\SchemaWatcher;
-use Drupal\content_relay_replica\SubscriptionException;
-use Drupal\Core\Database\Connection;
-use Drupal\Core\Entity\EntityTypeManagerInterface;
+use Drupal\content_relay_replica\Apply\SyncApplier;
+use Drupal\content_relay_replica\ContractStore;
+use Drupal\content_relay_replica\FailedEventStore;
+use Drupal\content_relay_replica\File\FileSync;
 use Drupal\content_relay_replica\ItemDetacher;
+use Drupal\content_relay_replica\LanguageSubscription;
+use Drupal\content_relay_replica\OriginPeer;
+use Drupal\content_relay_replica\Puller;
+use Drupal\content_relay_replica\Reconciler;
+use Drupal\content_relay_replica\Schema\SchemaWatcher;
+use Drupal\content_relay_replica\StreamTracker;
+use Drupal\content_relay_replica\SubscriptionException;
+use Drupal\content_relay_replica\SubscriptionManager;
+use Drupal\content_relay_replica\SyncStateStore;
+use Drupal\content_relay_replica\Validator;
+use Drupal\Core\Database\Connection;
 use Drupal\Core\Entity\ContentEntityInterface;
 use Drupal\Core\Entity\EntityRepositoryInterface;
-use Drupal\content_relay_replica\SyncStateStore;
+use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drush\Attributes as CLI;
 use Drush\Commands\AutowireTrait;
 use Drush\Commands\DrushCommands;
@@ -58,6 +64,16 @@ final class ReplicaCommands extends DrushCommands {
     private readonly LanguageSubscription $languages,
     #[Autowire(service: 'content_relay_replica.subscription')]
     private readonly SubscriptionManager $subscription,
+    #[Autowire(service: 'content_relay_replica.origin')]
+    private readonly OriginPeer $origin,
+    #[Autowire(service: 'content_relay_replica.contracts')]
+    private readonly ContractStore $contracts,
+    #[Autowire(service: 'content_relay_replica.stream')]
+    private readonly StreamTracker $streams,
+    #[Autowire(service: 'content_relay_replica.failed_events')]
+    private readonly FailedEventStore $failures,
+    #[Autowire(service: 'content_relay_replica.applier')]
+    private readonly SyncApplier $applier,
   ) {
     parent::__construct();
   }
@@ -377,6 +393,148 @@ final class ReplicaCommands extends DrushCommands {
   public function moveLanguage(string $from, string $to): int {
     $this->languages->move($from, $to);
     $this->logger()->success(dt('Queued; cron moves them a chunk at a time.'));
+    return self::EXIT_SUCCESS;
+  }
+
+  /**
+   * Pairs this site with an origin, using a code generated there.
+   */
+  #[CLI\Command(name: 'content-relay:pair', aliases: ['cr-pair'])]
+  #[CLI\Argument(name: 'origin_url', description: 'The origin\'s base URL, HTTPS.')]
+  #[CLI\Argument(name: 'code', description: 'The pairing code.')]
+  #[CLI\Option(name: 'bundles', description: 'What to receive, as entity_type:bundle pairs, comma-separated.')]
+  public function pair(string $origin_url, string $code, array $options = ['bundles' => self::REQ]): int {
+    $bundles = [];
+    foreach (array_filter(array_map('trim', explode(',', (string) $options['bundles']))) as $pair) {
+      [$entity_type_id, $bundle] = explode(':', $pair, 2) + [1 => ''];
+      if ($bundle === '') {
+        $this->logger()->error(dt('Bundles are entity_type:bundle pairs.'));
+        return self::EXIT_FAILURE;
+      }
+      $bundles[$entity_type_id][] = $bundle;
+    }
+    try {
+      $result = $this->subscription->pair($origin_url, $code, ['bundles' => $bundles]);
+    }
+    catch (SubscriptionException $e) {
+      $this->logger()->error($e->getMessage());
+      return self::EXIT_FAILURE;
+    }
+    $this->logger()->success(dt('Paired. Contract version @version@approval.', [
+      '@version' => $result['contract']->version(),
+      '@approval' => $result['approval_required'] ? dt('; the origin holds events until an administrator there approves this site') : '',
+    ]));
+    return self::EXIT_SUCCESS;
+  }
+
+  /**
+   * Shows how this replica stands with its origin.
+   */
+  #[CLI\Command(name: 'content-relay:status', aliases: ['cr-status'])]
+  public function status(): int {
+    $origin = $this->origin->get();
+    if ($origin === NULL) {
+      $this->logger()->warning(dt('This site is not paired with an origin.'));
+      return self::EXIT_FAILURE;
+    }
+    $counts = $this->database->select(SyncStateStore::TABLE, 's')->fields('s', ['status']);
+    $counts->addExpression('COUNT(*)', 'total');
+    $by_status = $counts->groupBy('s.status')->execute()->fetchAllKeyed();
+    ksort($by_status);
+    $gaps = $this->streams->getGaps($origin['site_id']);
+    $open = $this->failures->countOpen();
+    $this->output()->writeln(dt('Origin: @label (@url)', ['@label' => $origin['label'], '@url' => $origin['url']]));
+    $this->output()->writeln(dt('Contract: @version', ['@version' => $this->contracts->getCurrent()?->version() ?? '-']));
+    $this->output()->writeln(dt('Last event: @sequence; gaps: @gaps', [
+      '@sequence' => $this->streams->getLastSequence($origin['site_id']),
+      '@gaps' => $gaps === [] ? dt('none') : implode(', ', array_map(fn (array $gap) => ($gap[0] + 1) . '-' . $gap[1], $gaps)),
+    ]));
+    $this->output()->writeln(dt('Open save failures: @count', ['@count' => $open]));
+    $this->output()->writeln(dt('Pending languages: @languages', ['@languages' => implode(', ', array_keys($this->languages->pending())) ?: dt('none')]));
+    foreach ($by_status as $status => $total) {
+      $this->output()->writeln(sprintf('  %-22s %d', $status, $total));
+    }
+    return $open > 0 || $gaps !== [] ? self::EXIT_FAILURE : self::EXIT_SUCCESS;
+  }
+
+  /**
+   * Lists items that failed to save here.
+   */
+  #[CLI\Command(name: 'content-relay:failures', aliases: ['cr-failures'])]
+  #[CLI\Option(name: 'status', description: 'open (default), dismissed, resolved or superseded.')]
+  #[CLI\Option(name: 'bundle', description: 'Only this bundle.')]
+  #[CLI\FieldLabels(labels: [
+    'id' => 'ID',
+    'item' => 'Item',
+    'operation' => 'Operation',
+    'error' => 'Error',
+    'attempts' => 'Attempts',
+  ])]
+  public function failures(array $options = ['status' => 'open', 'bundle' => self::REQ, 'format' => 'table']): RowsOfFields {
+    $rows = [];
+    foreach ($this->failures->find([
+      'status' => $options['status'] ?: FailedEventStore::OPEN,
+      'bundle' => (string) $options['bundle'],
+    ]) as $row) {
+      $rows[$row['id']] = [
+        'id' => $row['id'],
+        'item' => sprintf('%s %s %s', $row['entity_type'], $row['bundle'], $row['label'] ?: $row['uuid']),
+        'operation' => $row['operation'],
+        'error' => $row['error_code'] . ': ' . mb_strimwidth((string) $row['message'], 0, 80, '…'),
+        'attempts' => $row['attempts'],
+      ];
+    }
+    return new RowsOfFields($rows);
+  }
+
+  /**
+   * Applies stored failed events again, without asking the origin.
+   */
+  #[CLI\Command(name: 'content-relay:retry', aliases: ['cr-retry'])]
+  #[CLI\Argument(name: 'ids', description: 'Failure IDs, comma-separated. Leave out with --all.')]
+  #[CLI\Option(name: 'all', description: 'Every open failure, or those of --bundle.')]
+  #[CLI\Option(name: 'bundle', description: 'With --all: only this bundle.')]
+  public function retry(?string $ids = NULL, array $options = ['all' => FALSE, 'bundle' => self::REQ]): int {
+    $list = $options['all']
+      ? array_map(fn (array $row) => (int) $row['id'], $this->failures->find(['bundle' => (string) $options['bundle']]))
+      : array_map('intval', array_filter(array_map('trim', explode(',', (string) $ids))));
+    if ($list === []) {
+      $this->logger()->warning(dt('Nothing to retry.'));
+      return self::EXIT_SUCCESS;
+    }
+    $failed = 0;
+    foreach ($list as $id) {
+      try {
+        $result = $this->applier->retry($id);
+        $ok = $result->httpStatus < 400 && $result->result !== ApplyResult::ACCEPTED;
+      }
+      catch (\InvalidArgumentException | \RuntimeException $e) {
+        $this->logger()->warning(dt('@id: @message', ['@id' => $id, '@message' => $e->getMessage()]));
+        $ok = FALSE;
+      }
+      $failed += (int) !$ok;
+    }
+    $this->logger()->notice(dt('@done applied, @failed still failing.', [
+      '@done' => count($list) - $failed,
+      '@failed' => $failed,
+    ]));
+    return $failed === 0 ? self::EXIT_SUCCESS : self::EXIT_FAILURE;
+  }
+
+  /**
+   * Dismisses a failure: someone decided to leave it; it stays out of sync.
+   */
+  #[CLI\Command(name: 'content-relay:dismiss', aliases: ['cr-dismiss'])]
+  #[CLI\Argument(name: 'id', description: 'The failure ID.')]
+  #[CLI\Option(name: 'reason', description: 'Why. Required.')]
+  public function dismiss(int $id, array $options = ['reason' => self::REQ]): int {
+    $failure = $this->failures->load($id);
+    if ($failure === NULL || $failure['status'] !== FailedEventStore::OPEN || trim((string) $options['reason']) === '') {
+      $this->logger()->error(dt('Give an open failure ID and --reason.'));
+      return self::EXIT_FAILURE;
+    }
+    $this->failures->dismiss($id, 0, trim((string) $options['reason']));
+    $this->logger()->success(dt('Dismissed.'));
     return self::EXIT_SUCCESS;
   }
 
