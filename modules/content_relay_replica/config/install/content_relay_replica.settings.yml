@@ -17,3 +17,8 @@ files:
   timeout: 300
   fetch_on_miss: redirect
   verify_interval: 86400
+processing:
+  auto_backlog: 50
+  auto_max_load: 0
+  status_batch_limit: 200
+  lock_wait: 30

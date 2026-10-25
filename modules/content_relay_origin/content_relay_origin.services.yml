@@ -271,3 +271,19 @@ services:
   content_relay_origin.file_keys:
     class: Drupal\content_relay_origin\File\FileKeys
     arguments: ['@content_relay.key_store']
+
+  content_relay_origin.status_poller:
+    class: Drupal\content_relay_origin\StatusPoller
+    arguments:
+      - '@content_relay_origin.outbox'
+      - '@content_relay_origin.replica_registry'
+      - '@content_relay_origin.replica_items'
+      - '@content_relay_origin.hash_store'
+      - '@content_relay_origin.contract_manager'
+      - '@content_relay.message_signer'
+      - '@content_relay.message_verifier'
+      - '@content_relay_origin.report'
+      - '@http_client'
+      - '@config.factory'
+      - '@datetime.time'
+      - '@logger.channel.content_relay_origin'

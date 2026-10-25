@@ -14,6 +14,7 @@ use Drupal\content_relay\Contract\SubscriptionContract;
 use Drupal\content_relay_replica\ContractStore;
 use Drupal\content_relay_replica\FailedEventStore;
 use Drupal\content_relay_replica\File\FileSync;
+use Drupal\content_relay_replica\Processing\ReceivedEvents;
 use Drupal\content_relay_replica\ProcessedEvents;
 use Drupal\content_relay_replica\StreamTracker;
 use Drupal\content_relay_replica\SyncStateStore;
@@ -87,6 +88,7 @@ abstract class ReplicaTestBase extends KernelTestBase {
       ContractStore::TABLE,
       FileSync::TABLE,
       FileSync::WAIT_TABLE,
+      ReceivedEvents::TABLE,
     ]);
     $this->installConfig(['content_relay', 'content_relay_replica', 'node', 'filter']);
     content_relay_install(FALSE);

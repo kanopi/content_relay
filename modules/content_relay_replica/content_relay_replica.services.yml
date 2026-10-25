@@ -161,3 +161,23 @@ services:
       - '@content_relay_replica.subscription'
       - '@content_relay_replica.origin'
       - '@current_user'
+
+  content_relay_replica.received_events:
+    class: Drupal\content_relay_replica\Processing\ReceivedEvents
+    arguments: ['@database', '@queue', '@datetime.time']
+
+  content_relay_replica.processing_policy:
+    class: Drupal\content_relay_replica\Processing\ProcessingPolicy
+    arguments:
+      - '@content_relay_replica.contracts'
+      - '@content_relay_replica.received_events'
+      - '@lock'
+      - '@config.factory'
+
+  content_relay_replica.status_report:
+    class: Drupal\content_relay_replica\Processing\StatusReport
+    arguments:
+      - '@content_relay_replica.processed_events'
+      - '@content_relay_replica.received_events'
+      - '@content_relay_replica.contracts'
+      - '@content_relay_replica.stream'

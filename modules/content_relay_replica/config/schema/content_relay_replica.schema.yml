@@ -76,3 +76,19 @@ content_relay_replica.settings:
         verify_interval:
           type: integer
           label: 'Seconds between checks that every synced file is present and intact; 0 to disable'
+    processing:
+      type: mapping
+      label: 'Processing'
+      mapping:
+        auto_backlog:
+          type: integer
+          label: 'In auto mode, queue events while this many are already waiting; 0 to ignore'
+        auto_max_load:
+          type: float
+          label: 'In auto mode, queue events while the one-minute load average is at least this; 0 to ignore'
+        status_batch_limit:
+          type: integer
+          label: 'Most event IDs the origin may ask about at once'
+        lock_wait:
+          type: integer
+          label: 'Seconds to wait for an item another process is writing, before answering busy'

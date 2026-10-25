@@ -33,6 +33,9 @@ content_relay_origin.settings:
         connect_timeout:
           type: integer
           label: 'Connection timeout, in seconds'
+        status_batch:
+          type: integer
+          label: 'Accepted events asked about per status request'
     retention_days:
       type: integer
       label: 'Days to keep acknowledged events'

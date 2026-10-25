@@ -122,7 +122,7 @@ class SyncApplier {
 
     $lock = 'content_relay_replica:apply:' . $event->entityType . ':' . $event->entityUuid;
     if (!$this->lock->acquire($lock, 120)) {
-      $this->lock->wait($lock, 30);
+      $this->lock->wait($lock, max(1, (int) ($this->configFactory->get('content_relay_replica.settings')->get('processing.lock_wait') ?? 30)));
       if (!$this->lock->acquire($lock, 120)) {
         return new ApplyResult(503, ApplyResult::BUSY, 'locked', 'This item is being applied by another process. Try again.');
       }

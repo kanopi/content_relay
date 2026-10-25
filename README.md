@@ -14,8 +14,8 @@ or refine, the original specification.
 | Module | Role | Status |
 | --- | --- | --- |
 | `content_relay` | Shared base: event schema, entity serialization, hashing, signing, keys | Phase 1 |
-| `content_relay_origin` | Publishes changes to replicas | Phases 2–7: event log, delivery, hash store, pairing, contracts, not syncable, push, status report, files, encryption |
-| `content_relay_replica` | Receives and applies changes | Phases 2–7: endpoint, transactional apply, failures, pairing, contracts, detach, files, encryption |
+| `content_relay_origin` | Publishes changes to replicas | Phases 2–8: event log, delivery, hash store, pairing, contracts, not syncable, push, status report, files, encryption, status polling |
+| `content_relay_replica` | Receives and applies changes | Phases 2–8: endpoint, transactional apply, failures, pairing, contracts, detach, files, encryption, processing modes |
 
 ## Requirements
 
@@ -231,6 +231,38 @@ A newer event that applies supersedes older failures. Subscribers to
 warning while failures are open.
 
 The paired origin is stored in state (`content_relay_replica.origin`).
+
+### Processing modes
+
+Each event is applied in the request or from a queue:
+
+- **immediate**: applied before answering (200, or the apply answer);
+- **queued**: kept in `content_relay_received_event`, answered 202, and
+  applied by the `content_relay_replica_inbox` queue worker;
+- **auto**: immediate, unless the event brings a file to fetch, its item is
+  being written by another process, at least `processing.auto_backlog` events
+  are already waiting (default 50), or the load average is at least
+  `processing.auto_max_load` (off by default).
+
+The mode comes from the event itself when it carries one (a manual push can
+ask for immediate), else from the contract it was built under, per bundle,
+else immediate. The replica chooses it on its Contract page.
+
+Applying holds a lock on the item's UUID. A webhook that finds the item
+locked waits up to `processing.lock_wait` seconds (default 30), then answers
+503 so the origin retries; the queue worker puts the event back.
+
+### Status endpoint
+
+The origin finds out how accepted (202) events ended by sending a signed
+`status_request` with up to `processing.status_batch_limit` event IDs (default
+200) to the replica's endpoint. The replica answers with a signed `status`
+message: for each event `final` (with the answer it would have given at once),
+`pending` or `unknown`, plus its contract version and last sequence received.
+The origin polls on cron (`content_relay_origin.status_poller`), records final
+outcomes as if they had been immediate, sends unknown events again, and sends
+the contract again when the versions differ. No callbacks from the replica
+are needed.
 
 ## Dependencies and external references
 

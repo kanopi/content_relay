@@ -411,3 +411,25 @@ secret, and per site. It is set on the origin's settings form and on the
 replica's Contract page, and each contract records both sides' settings.
 Changing it on the origin issues new contract versions to every replica.
 
+## 49. Status requests go to the event endpoint
+
+The replica status endpoint is a message type (`status_request`, answered by
+a signed `status` message) on the endpoint the replica already exposes, not a
+separate route. It gets signature checks, replay protection, encryption and
+the sender check for free, and the origin needs no second URL per replica.
+
+## 50. What "under load" means for auto mode
+
+Auto mode queues an event when it has a file to fetch, as the specification
+says, and when the site is busy, which it leaves open. Busy is: the item is
+locked by another process, the queue already holds `processing.auto_backlog`
+events, or, if configured, the one-minute load average is at least
+`processing.auto_max_load` (off by default: it means little in containers).
+
+## 51. An accepted event the replica does not know is sent again
+
+A 202 means the replica kept the event, so "unknown" in a status answer
+means it was lost (for example, the replica was restored from a backup). The
+origin sends it again in its place in the stream, with the same event ID, so
+it is applied once whatever happened before.
+

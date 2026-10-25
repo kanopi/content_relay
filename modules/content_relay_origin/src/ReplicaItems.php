@@ -7,6 +7,7 @@ namespace Drupal\content_relay_origin;
 use Drupal\Component\Datetime\TimeInterface;
 use Drupal\content_relay\Event\Operation;
 use Drupal\content_relay\Event\SyncEvent;
+use Drupal\content_relay\Hash\RevisionHashes;
 use Drupal\Core\Database\Connection;
 
 /**
@@ -63,6 +64,38 @@ class ReplicaItems {
     }
     $this->database->merge(self::TABLE)
       ->keys(['replica_id' => $replica_id, 'entity_type' => $event->entityType, 'uuid' => $event->entityUuid])
+      ->fields($fields)
+      ->execute();
+  }
+
+  /**
+   * Records that an event the replica had accepted was applied.
+   *
+   * @param array $row
+   *   The event log row.
+   * @param string $status
+   *   One of the class constants.
+   * @param \Drupal\content_relay\Hash\RevisionHashes|null $hashes
+   *   The hashes of the revision it carried, if known.
+   */
+  public function recordSettled(array $row, string $status, ?RevisionHashes $hashes): void {
+    $deleted = $row['operation'] === Operation::Delete->value && $status === self::APPLIED;
+    $fields = [
+      'bundle' => $row['bundle'],
+      'status' => $deleted ? self::DELETED : $status,
+      'last_event_id' => $row['event_id'],
+      'updated' => $this->time->getCurrentTime(),
+    ];
+    if ($hashes !== NULL && $status === self::APPLIED && !$deleted) {
+      $fields += [
+        'revision' => $row['source_revision'],
+        'algorithm' => $hashes->algorithmVersion,
+        'entity_hash' => $hashes->entity,
+        'translation_hashes' => json_encode($hashes->translations, \JSON_THROW_ON_ERROR),
+      ];
+    }
+    $this->database->merge(self::TABLE)
+      ->keys(['replica_id' => $row['replica_id'], 'entity_type' => $row['entity_type'], 'uuid' => $row['entity_uuid']])
       ->fields($fields)
       ->execute();
   }

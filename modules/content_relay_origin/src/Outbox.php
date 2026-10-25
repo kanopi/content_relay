@@ -142,6 +142,38 @@ class Outbox {
   }
 
   /**
+   * Rows a replica accepted and has not yet said how they ended, oldest first.
+   *
+   * @return array[]
+   *   Rows.
+   */
+  public function acceptedRows(string $replica_id, int $limit): array {
+    return array_map(fn (object $row) => (array) $row, $this->database->select(self::TABLE, 'o')
+      ->fields('o')
+      ->condition('replica_id', $replica_id)
+      ->condition('status', EventStatus::ACCEPTED)
+      ->orderBy('sequence')
+      ->range(0, $limit)
+      ->execute()
+      ->fetchAll());
+  }
+
+  /**
+   * Replicas with accepted rows.
+   *
+   * @return string[]
+   *   Replica IDs.
+   */
+  public function replicasWithAcceptedRows(): array {
+    return $this->database->select(self::TABLE, 'o')
+      ->fields('o', ['replica_id'])
+      ->condition('status', EventStatus::ACCEPTED)
+      ->distinct()
+      ->execute()
+      ->fetchCol();
+  }
+
+  /**
    * The oldest unsent row for an item and a replica.
    */
   public function pendingRowFor(string $replica_id, string $entity_type_id, string $uuid): ?array {

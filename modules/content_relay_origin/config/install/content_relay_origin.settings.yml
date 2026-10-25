@@ -6,6 +6,7 @@ delivery:
   backoff_max: 21600
   timeout: 30
   connect_timeout: 10
+  status_batch: 200
 retention_days: 60
 pairing:
   code_length: 12

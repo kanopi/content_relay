@@ -136,6 +136,21 @@ class HashStore {
   }
 
   /**
+   * The hashes of one revision or version, with the current algorithm.
+   */
+  public function forRevision(string $entity_type_id, string $uuid, int $revision, int $algorithm = RevisionHasher::CURRENT_VERSION): ?RevisionHashes {
+    $row = $this->database->select(self::TABLE, 'h')
+      ->fields('h', ['algorithm', 'entity_hash', 'translation_hashes'])
+      ->condition('entity_type', $entity_type_id)
+      ->condition('uuid', $uuid)
+      ->condition('revision', $revision)
+      ->condition('algorithm', $algorithm)
+      ->execute()
+      ->fetchAssoc();
+    return $row ? new RevisionHashes((int) $row['algorithm'], $row['entity_hash'], json_decode($row['translation_hashes'], TRUE)) : NULL;
+  }
+
+  /**
    * Removes the hashes of a deleted entity.
    */
   public function forget(string $entity_type_id, string $uuid): void {

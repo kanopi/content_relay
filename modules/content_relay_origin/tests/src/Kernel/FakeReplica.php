@@ -91,6 +91,25 @@ final class FakeReplica {
   public array $eventResponses = [];
 
   /**
+   * Answers to status requests, by event ID. Unlisted events are unknown.
+   *
+   * @var array<string, array>
+   */
+  public array $statuses = [];
+
+  /**
+   * The contract version status answers report; the last received if NULL.
+   */
+  public ?int $reportedContractVersion = NULL;
+
+  /**
+   * Event IDs asked about, per status request.
+   *
+   * @var array<string[]>
+   */
+  public array $statusRequests = [];
+
+  /**
    * Fail every request with a connection error.
    */
   public bool $down = FALSE;
@@ -204,6 +223,23 @@ final class FakeReplica {
         $body['ack'] = $this->message('contract_ack', ['version' => $message['body']['version']]);
       }
       return Create::promiseFor(new Response(200, [], json_encode($body)));
+    }
+    if ($message['type'] === 'status_request') {
+      $ids = $message['body']['event_ids'];
+      $this->statusRequests[] = $ids;
+      $events = [];
+      foreach ($ids as $id) {
+        $events[$id] = $this->statuses[$id] ?? ['state' => 'unknown'];
+      }
+      $report = [
+        'events' => $events,
+        'contract_version' => $this->reportedContractVersion ?? (end($this->contracts) ?: NULL),
+        'last_sequence' => 0,
+      ];
+      return Create::promiseFor(new Response(200, [], json_encode([
+        'result' => 'status',
+        'status' => $this->message('status', $report),
+      ])));
     }
     $this->events[] = $message['body'];
     [$status, $body] = array_shift($this->eventResponses) ?? [200, ['result' => 'applied']];

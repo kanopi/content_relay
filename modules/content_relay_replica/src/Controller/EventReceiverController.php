@@ -6,10 +6,17 @@ namespace Drupal\content_relay_replica\Controller;
 
 use Drupal\content_relay\Crypto\MessageVerifier;
 use Drupal\content_relay\Crypto\VerificationException;
+use Drupal\content_relay\Event\ProcessingMode;
 use Drupal\content_relay\Event\SyncEvent;
 use Drupal\content_relay\Exception\InvalidEventException;
 use Drupal\content_relay_replica\Apply\SyncApplier;
+use Drupal\content_relay\Crypto\MessageSigner;
 use Drupal\content_relay_replica\OriginPeer;
+use Drupal\content_relay_replica\ProcessedEvents;
+use Drupal\content_relay_replica\Processing\ProcessingPolicy;
+use Drupal\content_relay_replica\Processing\ReceivedEvents;
+use Drupal\content_relay_replica\Processing\StatusReport;
+use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\content_relay_replica\StreamTracker;
 use Drupal\content_relay_replica\SubscriptionException;
 use Drupal\content_relay_replica\SubscriptionManager;
@@ -20,7 +27,12 @@ use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 
 /**
- * Receives events and contracts from the origin.
+ * Receives events, contracts and status requests from the origin.
+ *
+ * Events are applied in the request (immediate, answered with the apply
+ * service's answer) or kept and applied by a queue worker (queued, answered
+ * 202), as ProcessingPolicy decides. The origin learns how a queued event
+ * ended by sending a status_request; the answer is a signed "status" message.
  *
  * Refusals before an event is identified (malformed, unsigned, wrong sender)
  * are 400 or 403 and permanent: the origin dead-letters them. Everything
@@ -35,6 +47,12 @@ final class EventReceiverController implements ContainerInjectionInterface {
     private readonly SyncApplier $applier,
     private readonly SubscriptionManager $subscription,
     private readonly LoggerInterface $logger,
+    private readonly ProcessingPolicy $policy,
+    private readonly ReceivedEvents $received,
+    private readonly StatusReport $statusReport,
+    private readonly MessageSigner $signer,
+    private readonly ConfigFactoryInterface $configFactory,
+    private readonly ProcessedEvents $processed,
   ) {}
 
   /**
@@ -48,6 +66,12 @@ final class EventReceiverController implements ContainerInjectionInterface {
       $container->get('content_relay_replica.applier'),
       $container->get('content_relay_replica.subscription'),
       $container->get('logger.channel.content_relay_replica'),
+      $container->get('content_relay_replica.processing_policy'),
+      $container->get('content_relay_replica.received_events'),
+      $container->get('content_relay_replica.status_report'),
+      $container->get('content_relay.message_signer'),
+      $container->get('config.factory'),
+      $container->get('content_relay_replica.processed_events'),
     );
   }
 
@@ -84,6 +108,9 @@ final class EventReceiverController implements ContainerInjectionInterface {
         return $this->refuse(400, 'invalid_contract', $e->getMessage());
       }
     }
+    if ($message->type === 'status_request') {
+      return $this->status($message->sender, $message->body['event_ids'] ?? NULL);
+    }
     if ($message->type !== 'event') {
       return $this->refuse(400, 'unsupported_type', sprintf('This endpoint does not accept "%s" messages.', $message->type));
     }
@@ -104,8 +131,49 @@ final class EventReceiverController implements ContainerInjectionInterface {
         '@previous' => $event->previousSequence,
       ]);
     }
+    if ($this->received->has($event->eventId)) {
+      return $this->queuedAnswer($event);
+    }
+    // An event already handled gets its answer again from the apply service.
+    $mode = $this->policy->decide($event);
+    if ($mode === ProcessingMode::Queued && $this->processedAnswerMissing($event)) {
+      $this->received->add($event, $message->sender);
+      return $this->queuedAnswer($event);
+    }
     $result = $this->applier->apply($event, $message->sender);
     return new JsonResponse($result->toArray($event->eventId), $result->httpStatus);
+  }
+
+  /**
+   * Whether no answer has been recorded for an event yet.
+   */
+  private function processedAnswerMissing(SyncEvent $event): bool {
+    return $this->processed->get($event->eventId) === NULL;
+  }
+
+  /**
+   * The answer for an event kept for the queue.
+   */
+  private function queuedAnswer(SyncEvent $event): JsonResponse {
+    return new JsonResponse(['result' => 'accepted', 'event_id' => $event->eventId, 'code' => 'queued'], 202);
+  }
+
+  /**
+   * Answers a status request with a signed status message.
+   */
+  private function status(string $origin, mixed $event_ids): JsonResponse {
+    $limit = max(1, (int) ($this->configFactory->get('content_relay_replica.settings')->get('processing.status_batch_limit') ?: 200));
+    if (!is_array($event_ids) || array_filter($event_ids, fn ($id) => !is_string($id)) !== []) {
+      return $this->refuse(400, 'malformed', 'A status request needs a list of event IDs.');
+    }
+    if (count($event_ids) > $limit) {
+      return $this->refuse(400, 'too_many', sprintf('Ask about at most %d events at once.', $limit));
+    }
+    $report = $this->statusReport->report(array_values(array_unique($event_ids)), $origin);
+    return new JsonResponse([
+      'result' => 'status',
+      'status' => $this->signer->sign($origin, 'status', $report)->toArray(),
+    ]);
   }
 
   /**

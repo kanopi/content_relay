@@ -18,6 +18,8 @@ function content_relay_replica_cron(): void {
   \Drupal::service('content_relay_replica.failed_events')->scheduleDueRetries();
   \Drupal::service('content_relay_replica.processed_events')->prune();
   \Drupal::service('content_relay_replica.origin_client')->sendPending();
+  // Queued events whose queue item went missing, after an hour.
+  \Drupal::service('content_relay_replica.received_events')->requeueStale(3600);
   $files = \Drupal::service('content_relay_replica.file_sync');
   $files->scheduleDue();
   // A periodic check that every synced file is here and intact.
