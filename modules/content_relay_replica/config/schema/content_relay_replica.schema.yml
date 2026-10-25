@@ -31,6 +31,43 @@ content_relay_replica.settings:
     processed_retention_days:
       type: integer
       label: 'Days to remember processed event IDs'
+    local_only:
+      type: sequence
+      label: 'Fields this site keeps for itself: never synced, not hashed'
+      sequence:
+        type: mapping
+        label: 'Local-only fields of a bundle'
+        mapping:
+          entity_type:
+            type: string
+            label: 'Entity type'
+          bundle:
+            type: string
+            label: 'Bundle'
+          fields:
+            type: sequence
+            label: 'Field names'
+            sequence:
+              type: string
+              label: 'Field name'
+    conflicts:
+      type: mapping
+      label: 'Items edited here when the origin sends an update'
+      mapping:
+        on_event:
+          type: string
+          label: 'Save the origin version as a new revision and flag for review (overwrite), or keep the local copy and mark a conflict (reject)'
+          constraints:
+            Choice:
+              - overwrite
+              - reject
+    reconcile:
+      type: mapping
+      label: 'Reconciliation'
+      mapping:
+        interval:
+          type: integer
+          label: 'Seconds between scheduled reconciliation runs; 0 to run only on demand'
     detach:
       type: mapping
       label: 'Items detached on this replica'

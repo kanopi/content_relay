@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Drupal\content_relay_replica\Form;
 
+use Drupal\content_relay_replica\Conflicts;
 use Drupal\content_relay_replica\ItemDetacher;
+use Drupal\content_relay_replica\SubscriptionException;
 use Drupal\content_relay_replica\SyncStateStore;
 use Drupal\Core\Entity\EntityRepositoryInterface;
 use Drupal\Core\Form\FormBase;
@@ -22,6 +24,7 @@ final class ReattachForm extends FormBase {
     protected ItemDetacher $detacher,
     protected SyncStateStore $syncState,
     protected EntityRepositoryInterface $entityRepository,
+    protected Conflicts $conflicts,
   ) {}
 
   /**
@@ -32,6 +35,7 @@ final class ReattachForm extends FormBase {
       $container->get('content_relay_replica.detacher'),
       $container->get('content_relay_replica.sync_state'),
       $container->get('entity.repository'),
+      $container->get('content_relay_replica.conflicts'),
     );
   }
 
@@ -67,6 +71,12 @@ final class ReattachForm extends FormBase {
         '#title' => $this->t('Translations that differ from the last version received'),
         '#items' => $edited === [] ? [$this->t('Translations were added or removed.')] : $edited,
       ];
+      try {
+        $form['diff'] = ItemPullForm::diffTable($this->conflicts->diff($entity_type_id, $uuid));
+      }
+      catch (SubscriptionException | \InvalidArgumentException $e) {
+        $this->messenger()->addWarning($this->t('The origin version could not be fetched to compare: @message', ['@message' => $e->getMessage()]));
+      }
     }
     $form['actions'] = ['#type' => 'actions'];
     $form['actions']['accept'] = [

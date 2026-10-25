@@ -91,6 +91,82 @@ class OriginClient {
   }
 
   /**
+   * A page of the origin's latest hashes for the items of a bundle.
+   *
+   * @param string $entity_type_id
+   *   The origin entity type.
+   * @param string $bundle
+   *   The bundle.
+   * @param string $after
+   *   The last UUID of the previous page, or '' for the first.
+   * @param int $limit
+   *   Items per page.
+   *
+   * @return array{contract_version: int|null, items: list<array{uuid: string, revision: int, changed: int|null, hash: array, not_syncable: bool}>, next: string|null}
+   *   The page, in UUID order, and the cursor for the next one.
+   *
+   * @throws \Drupal\content_relay_replica\SubscriptionException
+   */
+  public function hashes(string $entity_type_id, string $bundle, string $after = '', int $limit = 200): array {
+    $body = $this->read('/content-relay/v1/hashes?' . http_build_query([
+      'entity_type' => $entity_type_id,
+      'bundle' => $bundle,
+      'after' => $after,
+      'limit' => $limit,
+    ]), 'hashes');
+    if (!is_array($body['items'] ?? NULL) || ($body['entity_type'] ?? NULL) !== $entity_type_id || ($body['bundle'] ?? NULL) !== $bundle) {
+      throw new SubscriptionException('The origin\'s answer is not a list of hashes for that bundle.');
+    }
+    $items = [];
+    foreach ($body['items'] as $item) {
+      if (!is_string($item['uuid'] ?? NULL) || !is_int($item['revision'] ?? NULL) || !is_array($item['hash'] ?? NULL)) {
+        throw new SubscriptionException('The origin sent a malformed hash entry.');
+      }
+      $items[] = [
+        'uuid' => $item['uuid'],
+        'revision' => $item['revision'],
+        'changed' => is_int($item['changed'] ?? NULL) ? $item['changed'] : NULL,
+        'hash' => $item['hash'],
+        'not_syncable' => ($item['not_syncable'] ?? FALSE) === TRUE,
+      ];
+    }
+    return [
+      'contract_version' => is_int($body['contract_version'] ?? NULL) ? $body['contract_version'] : NULL,
+      'items' => $items,
+      'next' => is_string($body['next'] ?? NULL) && $body['next'] !== '' ? $body['next'] : NULL,
+    ];
+  }
+
+  /**
+   * What some events in this site's stream were about, and the items now.
+   *
+   * @param int[] $sequences
+   *   Sequence numbers.
+   *
+   * @return list<array{sequence: int, operation: string, entity_type: string, bundle: string, uuid: string, current: string}>
+   *   The events the origin knows of; see the origin's ReadController.
+   *
+   * @throws \Drupal\content_relay_replica\SubscriptionException
+   */
+  public function stream(array $sequences): array {
+    $body = $this->read('/content-relay/v1/stream?' . http_build_query(['sequences' => implode(',', $sequences)]), 'stream');
+    $events = [];
+    foreach (is_array($body['events'] ?? NULL) ? $body['events'] : [] as $event) {
+      if (is_int($event['sequence'] ?? NULL) && is_string($event['entity_type'] ?? NULL) && is_string($event['uuid'] ?? NULL) && is_string($event['current'] ?? NULL)) {
+        $events[] = [
+          'sequence' => $event['sequence'],
+          'operation' => (string) ($event['operation'] ?? ''),
+          'entity_type' => $event['entity_type'],
+          'bundle' => (string) ($event['bundle'] ?? ''),
+          'uuid' => $event['uuid'],
+          'current' => $event['current'],
+        ];
+      }
+    }
+    return $events;
+  }
+
+  /**
    * Reads from the origin with a JWT and verifies the signed answer.
    *
    * @return array

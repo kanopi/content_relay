@@ -6,6 +6,9 @@ namespace Drupal\content_relay_replica\Drush\Commands;
 
 use Drupal\content_relay_replica\File\FileSync;
 use Drupal\content_relay_replica\Puller;
+use Drupal\content_relay_replica\Reconciler;
+use Drupal\content_relay_replica\Validator;
+use Drupal\content_relay_replica\Apply\ApplyResult;
 use Drupal\content_relay_replica\Schema\SchemaWatcher;
 use Drupal\content_relay_replica\SubscriptionException;
 use Drupal\Core\Database\Connection;
@@ -45,6 +48,10 @@ final class ReplicaCommands extends DrushCommands {
     private readonly EntityTypeManagerInterface $entityTypeManager,
     #[Autowire(service: 'database')]
     private readonly Connection $database,
+    #[Autowire(service: 'content_relay_replica.reconciler')]
+    private readonly Reconciler $reconciler,
+    #[Autowire(service: 'content_relay_replica.validator')]
+    private readonly Validator $validator,
   ) {
     parent::__construct();
   }
@@ -201,6 +208,110 @@ final class ReplicaCommands extends DrushCommands {
       '@failed' => $failed,
     ]));
     return $failed === 0 ? self::EXIT_SUCCESS : self::EXIT_FAILURE;
+  }
+
+  /**
+   * Pulls an item's latest version from the origin.
+   *
+   * An item edited here is left as it is unless --accept-origin is given.
+   */
+  #[CLI\Command(name: 'content-relay:pull', aliases: ['cr-pull'])]
+  #[CLI\Argument(name: 'entity_type', description: 'Entity type ID on the origin.')]
+  #[CLI\Argument(name: 'uuid', description: 'UUID of the item.')]
+  #[CLI\Option(name: 'accept-origin', description: 'Replace edits made here with the origin\'s version.')]
+  public function pull(string $entity_type, string $uuid, array $options = ['accept-origin' => FALSE]): int {
+    try {
+      $result = $this->puller->pull($entity_type, $uuid, FALSE, (bool) $options['accept-origin']);
+    }
+    catch (SubscriptionException $e) {
+      $this->logger()->error($e->getMessage());
+      return self::EXIT_FAILURE;
+    }
+    $message = dt('@result@code: @message', [
+      '@result' => $result->result,
+      '@code' => $result->code === NULL ? '' : ' (' . $result->code . ')',
+      '@message' => (string) ($result->message ?? 'done'),
+    ]);
+    if ($result->result === ApplyResult::CONFLICT) {
+      $this->logger()->error($message . ' ' . dt('Use --accept-origin to replace the edits.'));
+      return self::EXIT_FAILURE;
+    }
+    if ($result->httpStatus >= 400) {
+      $this->logger()->error($message);
+      return self::EXIT_FAILURE;
+    }
+    $this->logger()->success($message);
+    return self::EXIT_SUCCESS;
+  }
+
+  /**
+   * Compares this site with the origin, pulling and deleting to match.
+   */
+  #[CLI\Command(name: 'content-relay:reconcile', aliases: ['cr-reconcile'])]
+  public function reconcile(): int {
+    try {
+      $run = $this->reconciler->run('drush');
+    }
+    catch (SubscriptionException $e) {
+      $this->logger()->error($e->getMessage());
+      return self::EXIT_FAILURE;
+    }
+    foreach ($run['messages'] as $message) {
+      $this->logger()->warning($message);
+    }
+    $counts = [];
+    foreach ($run['counts'] as $outcome => $number) {
+      $counts[] = $outcome . ': ' . $number;
+    }
+    $this->logger()->notice(dt('Run @id: @counts.', [
+      '@id' => $run['id'],
+      '@counts' => $counts === [] ? dt('nothing to check') : implode(', ', $counts),
+    ]));
+    $failed = ($run['counts']['failed'] ?? 0) + ($run['counts']['failed_bundles'] ?? 0) + ($run['counts']['contract_mismatch'] ?? 0);
+    return $failed === 0 ? self::EXIT_SUCCESS : self::EXIT_FAILURE;
+  }
+
+  /**
+   * Fills gaps in the event stream from the origin.
+   */
+  #[CLI\Command(name: 'content-relay:fill-gaps', aliases: ['cr-fill-gaps'])]
+  public function fillGaps(): int {
+    $counts = $this->reconciler->fillGaps();
+    $this->logger()->notice(dt('Gaps filled: @counts.', ['@counts' => $counts === [] ? dt('none') : json_encode($counts)]));
+    return ($counts['failed'] ?? 0) === 0 ? self::EXIT_SUCCESS : self::EXIT_FAILURE;
+  }
+
+  /**
+   * Recomputes an item's hashes here and on the origin, and compares them.
+   */
+  #[CLI\Command(name: 'content-relay:validate', aliases: ['cr-validate'])]
+  #[CLI\Argument(name: 'entity_type', description: 'Entity type ID on the origin.')]
+  #[CLI\Argument(name: 'uuid', description: 'UUID of the synced item.')]
+  public function validate(string $entity_type, string $uuid): int {
+    try {
+      $result = $this->validator->validate($entity_type, $uuid);
+    }
+    catch (\InvalidArgumentException $e) {
+      $this->logger()->error($e->getMessage());
+      return self::EXIT_FAILURE;
+    }
+    $result['local']
+      ? $this->logger()->success(dt('Here: the copy hashes as it should.'))
+      : $this->logger()->error(dt('Here: the copy does not hash as it should; it was changed here.'));
+    if ($result['origin'] === NULL) {
+      $this->logger()->error(dt('Origin: @error', ['@error' => $result['origin_error']]));
+    }
+    elseif ($result['origin']) {
+      $this->logger()->success(dt('Origin: in sync at revision @revision.', ['@revision' => $result['origin_revision']]));
+    }
+    else {
+      $this->logger()->error(dt('Origin: out of sync. The origin has revision @revision, this site received @received; differing translations: @langcodes.', [
+        '@revision' => $result['origin_revision'],
+        '@received' => $result['received_revision'],
+        '@langcodes' => implode(', ', $result['differing_translations']) ?: '-',
+      ]));
+    }
+    return $result['local'] && $result['origin'] === TRUE ? self::EXIT_SUCCESS : self::EXIT_FAILURE;
   }
 
 }

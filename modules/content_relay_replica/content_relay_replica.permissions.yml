@@ -11,7 +11,14 @@ detach content relay items:
   description: 'Stop or resume applying origin updates to individual items.'
 pull content relay items:
   title: 'Pull Content Relay items and files'
-  description: 'Fetch files, and later items, from the origin again.'
+  description: 'Fetch the latest version of items and files from the origin.'
+resolve content relay conflicts:
+  title: 'Resolve Content Relay conflicts'
+  description: 'Replace local edits with the origin version, or keep them and detach the item.'
+reconcile content relay items:
+  title: 'Run Content Relay reconciliation'
+  description: 'Compare this site with the origin, pulling and deleting items to match, and see past runs.'
+  restrict access: true
 view content relay replica report:
   title: 'View the Content Relay replica report'
   description: 'See the sync status of every item received from the origin.'

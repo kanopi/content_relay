@@ -7,6 +7,7 @@ namespace Drupal\content_relay_origin\Drush\Commands;
 use Drupal\content_relay\Event\ProcessingMode;
 use Drupal\content_relay_origin\BulkPush;
 use Drupal\content_relay_origin\EventStatus;
+use Drupal\content_relay_origin\HashBackfill;
 use Drupal\content_relay_origin\ItemSyncControl;
 use Drupal\content_relay_origin\ManualPush;
 use Drupal\content_relay_origin\NotSyncableFlags;
@@ -42,6 +43,8 @@ final class OriginCommands extends DrushCommands {
     private readonly EntityTypeManagerInterface $entityTypeManager,
     #[Autowire(service: 'entity.repository')]
     private readonly EntityRepositoryInterface $entityRepository,
+    #[Autowire(service: 'content_relay_origin.hash_backfill')]
+    private readonly HashBackfill $backfill,
   ) {
     parent::__construct();
   }
@@ -207,6 +210,23 @@ final class OriginCommands extends DrushCommands {
   private function list(mixed $value): ?array {
     $list = array_values(array_filter(array_map('trim', explode(',', (string) $value))));
     return $list === [] ? NULL : $list;
+  }
+
+  /**
+   * Computes hashes for content saved before this origin kept them.
+   */
+  #[CLI\Command(name: 'content-relay:backfill-hashes', aliases: ['cr-backfill'])]
+  #[CLI\Option(name: 'all', description: 'Recompute every item, not only those without a hash for their current version.')]
+  public function backfillHashes(array $options = ['all' => FALSE]): int {
+    $count = $this->backfill->run((bool) $options['all'], function (string $entity_type_id, string $bundle, int $done): void {
+      $this->logger()->info(dt('@type @bundle: @done hashed so far.', [
+        '@type' => $entity_type_id,
+        '@bundle' => $bundle,
+        '@done' => $done,
+      ]));
+    });
+    $this->logger()->success(dt('@count item(s) hashed.', ['@count' => $count]));
+    return self::EXIT_SUCCESS;
   }
 
 }

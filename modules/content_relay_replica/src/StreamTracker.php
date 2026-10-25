@@ -89,4 +89,32 @@ class StreamTracker {
     return $gaps ? json_decode($gaps, TRUE) : [];
   }
 
+  /**
+   * Replaces a recorded gap once it has been filled, or partly filled.
+   *
+   * @param string $source_site
+   *   The origin.
+   * @param array{0: int, 1: int} $gap
+   *   The gap as getGaps() returned it.
+   * @param array{0: int, 1: int}|null $remaining
+   *   What is left of it, or NULL when it is filled.
+   */
+  public function replaceGap(string $source_site, array $gap, ?array $remaining = NULL): void {
+    $transaction = $this->database->startTransaction();
+    $query = $this->database->select(self::TABLE, 't')->fields('t', ['gaps']);
+    $query->condition('source_site', $source_site);
+    $query->forUpdate();
+    $stored = $query->execute()->fetchField();
+    $gaps = $stored ? json_decode($stored, TRUE) : [];
+    $gaps = array_values(array_filter($gaps, fn (array $g) => $g !== $gap));
+    if ($remaining !== NULL) {
+      $gaps[] = $remaining;
+    }
+    $this->database->update(self::TABLE)
+      ->fields(['gaps' => json_encode($gaps), 'changed' => $this->time->getCurrentTime()])
+      ->condition('source_site', $source_site)
+      ->execute();
+    unset($transaction);
+  }
+
 }

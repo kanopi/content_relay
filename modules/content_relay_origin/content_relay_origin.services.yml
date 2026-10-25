@@ -295,3 +295,7 @@ services:
       - '@content_relay_origin.replica_registry'
       - '@content_relay.message_signer'
       - '@logger.channel.content_relay_origin'
+
+  content_relay_origin.hash_backfill:
+    class: Drupal\content_relay_origin\HashBackfill
+    arguments: ['@entity_type.manager', '@content_relay_origin.sync_scope', '@content_relay_origin.hash_store']

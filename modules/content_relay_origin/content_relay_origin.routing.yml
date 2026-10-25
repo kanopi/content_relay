@@ -74,6 +74,28 @@ content_relay_origin.item:
   options:
     no_cache: TRUE
 
+content_relay_origin.hashes:
+  path: '/content-relay/v1/hashes'
+  defaults:
+    _controller: '\Drupal\content_relay_origin\Controller\ReadController::hashes'
+  methods: [GET]
+  requirements:
+    # Open on purpose: authenticated by the replica's JWT in the controller.
+    _access: 'TRUE'
+  options:
+    no_cache: TRUE
+
+content_relay_origin.stream:
+  path: '/content-relay/v1/stream'
+  defaults:
+    _controller: '\Drupal\content_relay_origin\Controller\ReadController::stream'
+  methods: [GET]
+  requirements:
+    # Open on purpose: authenticated by the replica's JWT in the controller.
+    _access: 'TRUE'
+  options:
+    no_cache: TRUE
+
 # Administration.
 content_relay_origin.settings:
   path: '/admin/config/services/content-relay/origin'

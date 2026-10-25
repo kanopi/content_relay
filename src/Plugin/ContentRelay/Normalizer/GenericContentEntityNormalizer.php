@@ -251,7 +251,8 @@ class GenericContentEntityNormalizer extends PluginBase implements EntityNormali
       }
 
       foreach ($fields as $name => $definition) {
-        if (in_array($name, $context->preserveFields, TRUE)) {
+        // Preserved fields are the applied entity's, not embedded ones'.
+        if ($context->prefix === [] && in_array($name, $context->preserveFields, TRUE)) {
           continue;
         }
         $shared = !$this->isTranslatableField($entity, $definition);

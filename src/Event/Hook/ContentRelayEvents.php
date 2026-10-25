@@ -54,4 +54,16 @@ final class ContentRelayEvents {
    */
   public const APPLY_FAILED = 'content_relay.apply_failed';
 
+  /**
+   * A replica found local edits on an item the origin changed.
+   *
+   * Dispatched before the replica acts on the conflict. Subscribers may
+   * change what happens to the origin's version.
+   *
+   * @Event
+   *
+   * @see \Drupal\content_relay\Event\Hook\ConflictEvent
+   */
+  public const CONFLICT = 'content_relay.conflict';
+
 }

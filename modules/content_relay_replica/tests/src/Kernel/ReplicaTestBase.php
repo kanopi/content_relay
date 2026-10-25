@@ -16,9 +16,12 @@ use Drupal\content_relay_replica\FailedEventStore;
 use Drupal\content_relay_replica\File\FileSync;
 use Drupal\content_relay_replica\Processing\ReceivedEvents;
 use Drupal\content_relay_replica\ProcessedEvents;
+use Drupal\content_relay_replica\Reconciler;
 use Drupal\content_relay_replica\StreamTracker;
 use Drupal\content_relay_replica\SyncStateStore;
+use Drupal\content_relay_test\FakeOrigin;
 use Drupal\Core\Field\FieldStorageDefinitionInterface;
+use Drupal\key\Entity\Key;
 use Drupal\KernelTests\KernelTestBase;
 use Drupal\node\Entity\Node;
 use Drupal\node\Entity\NodeType;
@@ -89,6 +92,7 @@ abstract class ReplicaTestBase extends KernelTestBase {
       FileSync::TABLE,
       FileSync::WAIT_TABLE,
       ReceivedEvents::TABLE,
+      Reconciler::TABLE,
     ]);
     $this->installConfig(['content_relay', 'content_relay_replica', 'node', 'filter']);
     content_relay_install(FALSE);
@@ -210,6 +214,72 @@ abstract class ReplicaTestBase extends KernelTestBase {
   protected function retitle(array $snapshot, string $title): array {
     $snapshot['shared']['title'][0]['value'] = $title;
     return $snapshot;
+  }
+
+  /**
+   * Points this replica at the fake origin, for pulls and other requests.
+   *
+   * The replica gets a signing key of its own, for its requests, and trusts
+   * the fake origin's signing key. Events built by event() are still signed
+   * off as from self::ORIGIN, which apply() passes as the source.
+   */
+  protected function useFakeOrigin(): void {
+    [, $material] = KeyPair::generate(KeyPurpose::Signing);
+    putenv('CONTENT_RELAY_REPLICA_TEST_KEY=' . $material);
+    Key::create([
+      'id' => 'replica_signing',
+      'label' => 'Replica signing',
+      'key_type' => 'content_relay_signing',
+      'key_type_settings' => ['status' => 'primary'],
+      'key_provider' => 'env',
+      'key_provider_settings' => [
+        'env_variable' => 'CONTENT_RELAY_REPLICA_TEST_KEY',
+        'base64_encoded' => FALSE,
+        'strip_line_breaks' => TRUE,
+      ],
+      'key_input' => 'none',
+    ])->save();
+    $origin_key = FakeOrigin::install($this->container->get('state'), 'UNUSED', []);
+    $this->updateFakeOrigin(fn (array &$config) => $config['replica'] = $this->container->get('content_relay.site_identity')->getSiteId());
+    $this->container->get('content_relay_replica.origin')->set([
+      'site_id' => FakeOrigin::SITE_ID,
+      'label' => 'Fake origin',
+      'url' => 'https://' . FakeOrigin::HOST,
+      'signing_keys' => [
+        $origin_key->id() => ['public_key' => base64_encode($origin_key->publicKey), 'status' => 'primary'],
+      ],
+    ]);
+  }
+
+  /**
+   * Changes what the fake origin does.
+   *
+   * @param callable $change
+   *   Changes its configuration, given by reference.
+   */
+  protected function updateFakeOrigin(callable $change): void {
+    $state = $this->container->get('state');
+    $config = $state->get(FakeOrigin::STATE);
+    $change($config);
+    $state->set(FakeOrigin::STATE, $config);
+  }
+
+  /**
+   * Has the fake origin serve an item, as its item endpoint would.
+   */
+  protected function serveItem(array $snapshot, int $revision): void {
+    $event = $this->event($snapshot, Operation::Update, $revision)->toArray();
+    $this->updateFakeOrigin(function (array &$config) use ($snapshot, $event): void {
+      $config['items'][$snapshot['entity_type'] . ':' . $snapshot['uuid']] = $event;
+    });
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  protected function tearDown(): void {
+    putenv('CONTENT_RELAY_REPLICA_TEST_KEY');
+    parent::tearDown();
   }
 
 }

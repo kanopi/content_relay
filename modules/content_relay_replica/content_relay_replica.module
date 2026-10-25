@@ -19,6 +19,9 @@ function content_relay_replica_cron(): void {
   \Drupal::service('content_relay_replica.processed_events')->prune();
   \Drupal::service('content_relay_replica.origin_client')->sendPending();
   \Drupal::service('content_relay_replica.schema_watcher')->checkIfDue();
+  $reconciler = \Drupal::service('content_relay_replica.reconciler');
+  $reconciler->fillGaps();
+  $reconciler->cron();
   // Queued events whose queue item went missing, after an hour.
   \Drupal::service('content_relay_replica.received_events')->requeueStale(3600);
   $files = \Drupal::service('content_relay_replica.file_sync');

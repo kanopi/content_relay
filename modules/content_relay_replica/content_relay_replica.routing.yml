@@ -57,6 +57,36 @@ content_relay_replica.bulk_detach:
     _permission: 'detach content relay items'
     operation: 'detach|reattach'
 
+content_relay_replica.pull:
+  path: '/admin/content/content-relay/{entity_type_id}/{uuid}/pull'
+  defaults:
+    _form: '\Drupal\content_relay_replica\Form\ItemPullForm'
+    _title: 'Pull latest from origin'
+  requirements:
+    _permission: 'pull content relay items+resolve content relay conflicts'
+  options:
+    _admin_route: TRUE
+
+content_relay_replica.validate:
+  path: '/admin/content/content-relay/{entity_type_id}/{uuid}/validate'
+  defaults:
+    _form: '\Drupal\content_relay_replica\Form\ValidateForm'
+    _title: 'Validate'
+  requirements:
+    _permission: 'view content relay replica report'
+  options:
+    _admin_route: TRUE
+
+content_relay_replica.pull_uuid:
+  path: '/admin/content/content-relay/pull'
+  defaults:
+    _form: '\Drupal\content_relay_replica\Form\PullByUuidForm'
+    _title: 'Pull an item by UUID'
+  requirements:
+    _permission: 'pull content relay items'
+  options:
+    _admin_route: TRUE
+
 content_relay_replica.pull_files:
   path: '/admin/content/content-relay/{entity_type_id}/{uuid}/pull-files'
   defaults:
@@ -78,3 +108,11 @@ content_relay_replica.mapping_reapply:
     parameters:
       content_relay_mapping:
         type: entity:content_relay_mapping
+
+content_relay_replica.reconcile:
+  path: '/admin/reports/content-relay/reconciliation'
+  defaults:
+    _form: '\Drupal\content_relay_replica\Form\ReconcileForm'
+    _title: 'Reconciliation'
+  requirements:
+    _permission: 'reconcile content relay items'

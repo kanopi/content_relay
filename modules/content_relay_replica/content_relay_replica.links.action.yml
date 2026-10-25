@@ -3,3 +3,13 @@ entity.content_relay_mapping.add_form:
   route_name: entity.content_relay_mapping.add_form
   appears_on:
     - entity.content_relay_mapping.collection
+content_relay_replica.pull_uuid:
+  title: 'Pull an item by UUID'
+  route_name: content_relay_replica.pull_uuid
+  appears_on:
+    - view.content_relay_replica_report.page_1
+content_relay_replica.reconcile:
+  title: 'Reconciliation'
+  route_name: content_relay_replica.reconcile
+  appears_on:
+    - view.content_relay_replica_report.page_1

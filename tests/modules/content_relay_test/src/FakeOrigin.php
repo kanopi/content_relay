@@ -41,6 +41,10 @@ use Psr\Http\Message\RequestInterface;
  *   fits as it is.
  * - items: what the item endpoint answers, event arrays by
  *   "entity_type:uuid".
+ * - hashes: what the hash listing serves, by "entity_type:bundle": lists of
+ *   entries (uuid, revision, changed, hash, not_syncable), paged by UUID.
+ *   hashes_contract_version is the contract version it reports (1).
+ * - stream: what the stream endpoint knows, entries by sequence.
  * - files: files it serves, by UUID: content, uri and, to serve it
  *   encrypted, key (base64 file key). Downloads are
  *   answered 410 while expire_downloads is positive and with wrong bytes
@@ -123,7 +127,16 @@ final class FakeOrigin {
         $this->state->set(self::STATE, $config);
         return Create::promiseFor(new Response($status, ['Content-Type' => 'application/json'], json_encode($answer)));
       }
+      parse_str($request->getUri()->getQuery(), $query);
       [$status, $answer] = match ($path) {
+        '/content-relay/v1/hashes' => $this->hashes($config, $query),
+        '/content-relay/v1/stream' => [
+          200,
+          $this->sign($config, 'stream', [
+            'contract_version' => 1,
+            'events' => array_values(array_filter(array_map(fn ($sequence) => $config['stream'][(int) $sequence] ?? NULL, explode(',', (string) ($query['sequences'] ?? ''))))),
+          ]),
+        ],
         '/content-relay/v1/schema' => [
           200,
           $this->sign($config, 'schema', ['bundles' => $config['schema'] ?? $this->describer->describeMany($config['allowed'])]),
@@ -135,6 +148,30 @@ final class FakeOrigin {
       $this->state->set(self::STATE, $config);
       return Create::promiseFor(new Response($status, ['Content-Type' => 'application/json'], json_encode($answer)));
     };
+  }
+
+  /**
+   * Answers a page of the hash listing.
+   */
+  private function hashes(array $config, array $query): array {
+    $key = ($query['entity_type'] ?? '') . ':' . ($query['bundle'] ?? '');
+    if (!isset($config['hashes'][$key])) {
+      return [404, ['result' => 'not_found']];
+    }
+    $entries = $config['hashes'][$key];
+    usort($entries, fn ($a, $b) => strcmp($a['uuid'], $b['uuid']));
+    $after = (string) ($query['after'] ?? '');
+    $entries = array_values(array_filter($entries, fn ($entry) => strcmp($entry['uuid'], $after) > 0));
+    $limit = max(1, (int) ($query['limit'] ?? 200));
+    $page = array_slice($entries, 0, $limit);
+    return [200, $this->sign($config, 'hashes', [
+      'entity_type' => $query['entity_type'],
+      'bundle' => $query['bundle'],
+      'contract_version' => $config['hashes_contract_version'] ?? 1,
+      'items' => $page,
+      'next' => count($page) === $limit ? end($page)['uuid'] : NULL,
+    ]),
+    ];
   }
 
   /**

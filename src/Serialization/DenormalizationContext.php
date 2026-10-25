@@ -91,7 +91,8 @@ final class DenormalizationContext {
    * Constructs a DenormalizationContext.
    *
    * @param string[] $preserveFields
-   *   Fields never written: the receiver's local-only fields.
+   *   Fields of the applied entity never written: the receiver's local-only
+   *   fields. Entities embedded in it are not affected.
    * @param string[]|null $managedLangcodes
    *   Translations this sync owns. A managed translation that is missing from
    *   the snapshot is removed from the entity; any other translation is left

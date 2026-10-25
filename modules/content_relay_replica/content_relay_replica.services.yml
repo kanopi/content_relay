@@ -55,6 +55,7 @@ services:
       - '@content_relay_replica.file_sync'
       - '@content_relay_replica.mappings'
       - '@content_relay_replica.mapped_importer'
+      - '@content_relay_replica.local_only_fields'
 
   content_relay_replica.contracts:
     class: Drupal\content_relay_replica\ContractStore
@@ -79,7 +80,19 @@ services:
 
   content_relay_replica.local_changes:
     class: Drupal\content_relay_replica\LocalChanges
-    arguments: ['@content_relay.entity_serializer', '@content_relay.revision_hasher']
+    arguments:
+      - '@content_relay.entity_serializer'
+      - '@content_relay.revision_hasher'
+      - '@content_relay_replica.local_only_fields'
+      - '@database'
+      - '@content_relay_replica.origin'
+      - '@config.factory'
+      - '@entity.repository'
+      - '@entity_type.manager'
+
+  content_relay_replica.local_only_fields:
+    class: Drupal\content_relay_replica\LocalOnlyFields
+    arguments: ['@config.factory', '@entity_type.manager']
 
   content_relay_replica.origin_client:
     class: Drupal\content_relay_replica\OriginClient
@@ -130,7 +143,7 @@ services:
       - '@entity.repository'
       - '@content_relay_replica.sync_state'
       - '@content_relay.entity_serializer'
-      - '@content_relay.revision_hasher'
+      - '@content_relay_replica.local_changes'
       - '@config.factory'
       - '@datetime.time'
       - '@logger.channel.content_relay_replica'
@@ -198,6 +211,7 @@ services:
       - '@plugin.manager.content_relay_normalizer'
       - '@plugin.manager.content_relay_transform'
       - '@content_relay.entity_serializer'
+      - '@content_relay_replica.local_only_fields'
 
   content_relay_replica.mappings:
     class: Drupal\content_relay_replica\Mapping\MappingRepository
@@ -224,3 +238,45 @@ services:
       - '@content_relay_replica.origin_client'
       - '@content_relay_replica.origin'
       - '@content_relay_replica.applier'
+
+  content_relay_replica.conflicts:
+    class: Drupal\content_relay_replica\Conflicts
+    arguments:
+      - '@content_relay_replica.sync_state'
+      - '@content_relay_replica.local_changes'
+      - '@content_relay_replica.local_only_fields'
+      - '@content_relay_replica.origin_client'
+      - '@content_relay_replica.puller'
+      - '@content_relay_replica.detacher'
+      - '@content_relay.entity_serializer'
+      - '@content_relay_replica.mapped_importer'
+      - '@entity_type.manager'
+      - '@current_user'
+      - '@datetime.time'
+      - '@logger.channel.content_relay_replica'
+
+  content_relay_replica.reconciler:
+    class: Drupal\content_relay_replica\Reconciler
+    arguments:
+      - '@database'
+      - '@content_relay_replica.origin_client'
+      - '@content_relay_replica.origin'
+      - '@content_relay_replica.contracts'
+      - '@content_relay_replica.sync_state'
+      - '@content_relay_replica.applier'
+      - '@content_relay_replica.puller'
+      - '@content_relay_replica.stream'
+      - '@entity.repository'
+      - '@config.factory'
+      - '@state'
+      - '@current_user'
+      - '@datetime.time'
+      - '@uuid'
+      - '@logger.channel.content_relay_replica'
+
+  content_relay_replica.validator:
+    class: Drupal\content_relay_replica\Validator
+    arguments:
+      - '@content_relay_replica.sync_state'
+      - '@content_relay_replica.local_changes'
+      - '@content_relay_replica.origin_client'

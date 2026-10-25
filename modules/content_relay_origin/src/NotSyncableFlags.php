@@ -124,4 +124,31 @@ class NotSyncableFlags {
     return $this->getBlocking($entity_type_id, $uuid, $replica_id) !== NULL;
   }
 
+  /**
+   * Which of many items are kept from a replica.
+   *
+   * @param string $entity_type_id
+   *   Entity type.
+   * @param string[] $uuids
+   *   UUIDs.
+   * @param string $replica_id
+   *   The replica.
+   *
+   * @return array<string, true>
+   *   The blocked UUIDs, as keys.
+   */
+  public function blockedAmong(string $entity_type_id, array $uuids, string $replica_id): array {
+    if ($uuids === []) {
+      return [];
+    }
+    $blocked = $this->database->select(self::TABLE, 'f')
+      ->fields('f', ['uuid'])
+      ->condition('entity_type', $entity_type_id)
+      ->condition('uuid', $uuids, 'IN')
+      ->condition('replica_id', [self::ALL, $replica_id], 'IN')
+      ->execute()
+      ->fetchCol();
+    return array_fill_keys(array_map('strval', $blocked), TRUE);
+  }
+
 }

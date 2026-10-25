@@ -8,9 +8,9 @@ use Drupal\Component\Datetime\TimeInterface;
 use Drupal\content_relay\Crypto\FileCipher;
 use Drupal\content_relay\File\FileChecksums;
 use Drupal\content_relay\File\FileUrlMapper;
-use Drupal\content_relay\Hash\RevisionHasher;
 use Drupal\content_relay\Serialization\EntitySerializer;
 use Drupal\content_relay\Serialization\NormalizationContext;
+use Drupal\content_relay_replica\LocalChanges;
 use Drupal\content_relay_replica\OriginClient;
 use Drupal\content_relay_replica\OriginPeer;
 use Drupal\content_relay_replica\SubscriptionException;
@@ -66,7 +66,7 @@ class FileSync {
     protected EntityRepositoryInterface $entityRepository,
     protected SyncStateStore $syncState,
     protected EntitySerializer $serializer,
-    protected RevisionHasher $hasher,
+    protected LocalChanges $localChanges,
     protected ConfigFactoryInterface $configFactory,
     protected TimeInterface $time,
     protected LoggerInterface $logger,
@@ -376,29 +376,7 @@ class FileSync {
    *   For NormalizationContext::$fileUrlResolver; NULL when links are local.
    */
   public function originUrlResolver(): ?\Closure {
-    $origin = $this->origin->get();
-    if ($this->settings('links') !== 'origin' || $origin === NULL) {
-      return NULL;
-    }
-    $base = rtrim($origin['url'], '/');
-    return function (string $url) use ($base): ?array {
-      if (!str_starts_with($url, $base . '/')) {
-        return NULL;
-      }
-      $path = (string) parse_url(substr($url, strlen($base)), PHP_URL_PATH);
-      $style = NULL;
-      if (preg_match('#^(.*/)styles/([a-z0-9_]+)/(public|private)/(.+)$#', $path, $m)) {
-        $style = $m[2];
-        $path = ($m[3] === 'private' ? '/system/files/' : $m[1]) . $m[4];
-      }
-      $uuid = $this->database->select(self::TABLE, 'f')
-        ->fields('f', ['uuid'])
-        ->condition('url', $path)
-        ->range(0, 1)
-        ->execute()
-        ->fetchField();
-      return $uuid === FALSE ? NULL : ['uuid' => (string) $uuid, 'style' => $style];
-    };
+    return $this->localChanges->originUrlResolver();
   }
 
   /**
@@ -619,13 +597,12 @@ class FileSync {
       }
       $entity->save();
     }
-    $context = new NormalizationContext($state['import_mode'] === 'mapped' ? NULL : array_map('strval', array_keys($state['source_translation_hashes'])));
-    $context->fileUrlResolver = $this->originUrlResolver();
-    $local = $this->hasher->hash($this->serializer->normalize($entity, $context), [], (int) $state['hash_algorithm']);
+    $local = $this->localChanges->hashFor($entity, $state);
     $expected = $state['expected_hash'] ?? $state['source_hash'];
     $synced = hash_equals((string) $expected, $local->entity);
     $this->syncState->save($entity_type_id, $uuid, [
       'local_hash' => $local->entity,
+      'local_translation_hashes' => $local->translations,
       'status' => $synced ? SyncStatus::SYNCED : SyncStatus::ERROR,
       'last_error' => $synced ? NULL : 'With its files in place, the local copy does not hash the same as the origin\'s.',
       'last_synced' => (int) $state['last_synced'],

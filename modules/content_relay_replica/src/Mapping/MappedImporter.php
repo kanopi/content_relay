@@ -10,6 +10,7 @@ use Drupal\content_relay\Serialization\FieldNormalizerManager;
 use Drupal\content_relay\Serialization\NormalizerManager;
 use Drupal\content_relay\Serialization\Snapshot;
 use Drupal\content_relay_replica\Entity\ContentRelayMapping;
+use Drupal\content_relay_replica\LocalOnlyFields;
 use Drupal\Core\Entity\ContentEntityInterface;
 use Drupal\Core\Entity\ContentEntityTypeInterface;
 use Drupal\Core\Entity\EntityFieldManagerInterface;
@@ -45,6 +46,7 @@ class MappedImporter {
     protected NormalizerManager $normalizers,
     protected TransformManager $transforms,
     protected EntitySerializer $serializer,
+    protected LocalOnlyFields $localOnly,
   ) {}
 
   /**
@@ -80,7 +82,10 @@ class MappedImporter {
     if (!isset($snapshot['translations'][$untranslatable_from])) {
       $untranslatable_from = $default;
     }
-    $local_only = array_flip($mapping->getLocalOnlyFields());
+    $local_only = array_flip([
+      ...$mapping->getLocalOnlyFields(),
+      ...$this->localOnly->configured($mapping->getTargetEntityType(), $mapping->getTargetBundle()),
+    ]);
 
     foreach (Snapshot::langcodes($snapshot) as $langcode) {
       $translation = $this->translation($entity, $langcode, $context);

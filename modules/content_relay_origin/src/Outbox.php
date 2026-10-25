@@ -174,6 +174,34 @@ class Outbox {
   }
 
   /**
+   * A replica's rows with given sequence numbers.
+   *
+   * @param string $replica_id
+   *   The replica.
+   * @param int[] $sequences
+   *   Sequence numbers.
+   *
+   * @return array<int, array>
+   *   Rows by sequence.
+   */
+  public function bySequence(string $replica_id, array $sequences): array {
+    if ($sequences === []) {
+      return [];
+    }
+    $rows = [];
+    $result = $this->database->select(self::TABLE, 'o')
+      ->fields('o')
+      ->condition('replica_id', $replica_id)
+      ->condition('sequence', $sequences, 'IN')
+      ->execute()
+      ->fetchAll();
+    foreach ($result as $row) {
+      $rows[(int) $row->sequence] = (array) $row;
+    }
+    return $rows;
+  }
+
+  /**
    * The oldest unsent row for an item and a replica.
    */
   public function pendingRowFor(string $replica_id, string $entity_type_id, string $uuid): ?array {

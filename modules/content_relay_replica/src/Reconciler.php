@@ -1,0 +1,528 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Drupal\content_relay_replica;
+
+use Drupal\Component\Datetime\TimeInterface;
+use Drupal\Component\Uuid\UuidInterface;
+use Drupal\content_relay\Contract\SubscriptionContract;
+use Drupal\content_relay\Event\Operation;
+use Drupal\content_relay\Event\SyncEvent;
+use Drupal\content_relay_replica\Apply\ApplyResult;
+use Drupal\content_relay_replica\Apply\SyncApplier;
+use Drupal\Core\Config\ConfigFactoryInterface;
+use Drupal\Core\Database\Connection;
+use Drupal\Core\Entity\EntityRepositoryInterface;
+use Drupal\Core\Session\AccountInterface;
+use Drupal\Core\State\StateInterface;
+use Psr\Log\LoggerInterface;
+
+/**
+ * Brings this site in line with the origin, for whatever events were missed.
+ *
+ * Reconciliation goes through every bundle this site receives, a page of the
+ * origin's hashes at a time, and compares them with the sync state here:
+ *
+ * - An item here whose hashes differ from the origin's latest is pulled.
+ * - An item the origin has and this site does not is pulled.
+ * - An item this site has and the origin no longer does is deleted.
+ * - An item the origin now keeps from this site is marked detached by the
+ *   origin; one it sends again is marked attached and pulled.
+ *
+ * Only items with a sync state row are ever updated or deleted; content made
+ * here is never touched. Items detached here are never pulled or updated,
+ * and deleted only when this site follows deletes of detached items. Items in
+ * conflict are left for a person. Every write goes through the apply service,
+ * with its locks and checks, so a run is safe to repeat and changes nothing
+ * when the sites are in sync.
+ *
+ * A run is done in steps that each read one page, so cron can spread a large
+ * site over several runs and the admin page can drive it with a batch.
+ *
+ * Gap filling is the quick version, for a few events: the origin says what
+ * the missed events were about and where those items stand now.
+ */
+class Reconciler {
+
+  public const TABLE = 'content_relay_reconcile_run';
+
+  /**
+   * Items per page of hashes.
+   */
+  protected const PAGE = 200;
+
+  /**
+   * Statuses of items a run does not pull.
+   *
+   * They wait for a person, or for something else to arrive.
+   */
+  protected const LEFT_ALONE = [
+    SyncStatus::CONFLICT,
+    SyncStatus::WAITING_FILES,
+    SyncStatus::WAITING_DEPENDENCY,
+  ];
+
+  /**
+   * Problems kept per run.
+   */
+  protected const MAX_MESSAGES = 50;
+
+  public function __construct(
+    protected Connection $database,
+    protected OriginClient $originClient,
+    protected OriginPeer $origin,
+    protected ContractStore $contracts,
+    protected SyncStateStore $syncState,
+    protected SyncApplier $applier,
+    protected Puller $puller,
+    protected StreamTracker $streams,
+    protected EntityRepositoryInterface $entityRepository,
+    protected ConfigFactoryInterface $configFactory,
+    protected StateInterface $state,
+    protected AccountInterface $currentUser,
+    protected TimeInterface $time,
+    protected UuidInterface $uuid,
+    protected LoggerInterface $logger,
+  ) {}
+
+  /**
+   * Starts a run.
+   *
+   * @param string $trigger
+   *   What started it: cron, manual or drush.
+   *
+   * @return int
+   *   The run ID.
+   *
+   * @throws \Drupal\content_relay_replica\SubscriptionException
+   *   When this site has no contract to reconcile against.
+   */
+  public function start(string $trigger): int {
+    $contract = $this->contracts->getCurrent();
+    if ($contract === NULL || $this->origin->get() === NULL) {
+      throw new SubscriptionException('This site is not paired with an origin.');
+    }
+    $bundles = [];
+    foreach ($contract->effectiveBundles() as $entity_type_id => $list) {
+      foreach ($list as $bundle) {
+        $bundles[] = [(string) $entity_type_id, (string) $bundle];
+      }
+    }
+    return (int) $this->database->insert(self::TABLE)->fields([
+      'started' => $this->time->getCurrentTime(),
+      'trigger' => $trigger,
+      'uid' => $trigger === 'cron' ? NULL : (int) $this->currentUser->id(),
+      'status' => 'running',
+      'counts' => '{}',
+      'messages' => '[]',
+      'cursor' => json_encode([
+        'bundles' => $bundles,
+        'index' => 0,
+        'phase' => 'list',
+        'after' => '',
+        'contract_version' => $contract->version(),
+      ]),
+    ])->execute();
+  }
+
+  /**
+   * Does the next step of a run: one page of one bundle.
+   *
+   * @return bool
+   *   TRUE when the run is finished.
+   */
+  public function step(int $run_id): bool {
+    $run = $this->load($run_id);
+    if ($run === NULL || $run['status'] !== 'running') {
+      return TRUE;
+    }
+    $cursor = $run['cursor'];
+    $counts = $run['counts'];
+    $messages = $run['messages'];
+    if (!isset($cursor['bundles'][$cursor['index']])) {
+      $this->finish($run_id, $counts, $messages, 'completed');
+      return TRUE;
+    }
+    [$entity_type_id, $bundle] = $cursor['bundles'][$cursor['index']];
+    try {
+      if ($cursor['phase'] === 'list') {
+        $page = $this->originClient->hashes($entity_type_id, $bundle, $cursor['after'], self::PAGE);
+        if ($page['contract_version'] !== NULL && $page['contract_version'] !== $cursor['contract_version'] && empty($cursor['mismatch_noted'])) {
+          $messages[] = sprintf('The origin uses contract version %d; this site has version %d. Accept or renegotiate the contract.', $page['contract_version'], $cursor['contract_version']);
+          $counts['contract_mismatch'] = 1;
+          $cursor['mismatch_noted'] = TRUE;
+        }
+        $this->compare($run_id, $entity_type_id, $bundle, $page['items'], $counts, $messages);
+        if ($page['next'] === NULL) {
+          $cursor['phase'] = 'delete';
+        }
+        else {
+          $cursor['after'] = $page['next'];
+        }
+      }
+      elseif (!$this->deleteMissing($run_id, $entity_type_id, $bundle, $counts, $messages)) {
+        $cursor = ['index' => $cursor['index'] + 1, 'phase' => 'list', 'after' => ''] + $cursor;
+      }
+    }
+    catch (SubscriptionException $e) {
+      // Nothing is deleted from a bundle the origin could not list in full.
+      $messages[] = sprintf('%s %s: %s', $entity_type_id, $bundle, $e->getMessage());
+      $counts['failed_bundles'] = ($counts['failed_bundles'] ?? 0) + 1;
+      $cursor = ['index' => $cursor['index'] + 1, 'phase' => 'list', 'after' => ''] + $cursor;
+    }
+    $this->database->update(self::TABLE)
+      ->fields([
+        'counts' => json_encode($counts),
+        'messages' => json_encode(array_slice($messages, 0, self::MAX_MESSAGES)),
+        'cursor' => json_encode($cursor),
+      ])
+      ->condition('id', $run_id)
+      ->execute();
+    return FALSE;
+  }
+
+  /**
+   * Runs a whole reconciliation now.
+   *
+   * @return array
+   *   The finished run; see load().
+   *
+   * @throws \Drupal\content_relay_replica\SubscriptionException
+   *   When it cannot start.
+   */
+  public function run(string $trigger): array {
+    $run_id = $this->start($trigger);
+    while (!$this->step($run_id)) {
+      // Each step does one page.
+    }
+    return $this->load($run_id) ?? [];
+  }
+
+  /**
+   * Continues or starts the scheduled run, within a time budget. For cron.
+   */
+  public function cron(int $budget = 30): void {
+    $interval = (int) ($this->configFactory->get('content_relay_replica.settings')->get('reconcile.interval') ?? 86400);
+    $run_id = $this->database->select(self::TABLE, 'r')
+      ->fields('r', ['id'])
+      ->condition('status', 'running')
+      ->orderBy('id', 'DESC')
+      ->range(0, 1)
+      ->execute()
+      ->fetchField();
+    if ($run_id === FALSE) {
+      $last = (int) $this->state->get('content_relay_replica.reconciled', 0);
+      if ($interval <= 0 || $this->time->getCurrentTime() - $last < $interval) {
+        return;
+      }
+      try {
+        $run_id = $this->start('cron');
+      }
+      catch (SubscriptionException) {
+        return;
+      }
+      $this->state->set('content_relay_replica.reconciled', $this->time->getCurrentTime());
+    }
+    $until = microtime(TRUE) + $budget;
+    while (microtime(TRUE) < $until && !$this->step((int) $run_id)) {
+      // Each step does one page.
+    }
+  }
+
+  /**
+   * A run.
+   *
+   * @return array|null
+   *   The row, with counts, messages and cursor decoded.
+   */
+  public function load(int $run_id): ?array {
+    $row = $this->database->select(self::TABLE, 'r')->fields('r')->condition('id', $run_id)->execute()->fetchAssoc();
+    if (!$row) {
+      return NULL;
+    }
+    $row['counts'] = json_decode($row['counts'], TRUE) ?: [];
+    $row['messages'] = json_decode($row['messages'], TRUE) ?: [];
+    $row['cursor'] = $row['cursor'] === NULL ? NULL : json_decode($row['cursor'], TRUE);
+    return $row;
+  }
+
+  /**
+   * Past runs, newest first.
+   *
+   * @return array[]
+   *   Rows, decoded as load() does.
+   */
+  public function history(int $limit = 50): array {
+    $ids = $this->database->select(self::TABLE, 'r')->fields('r', ['id'])->orderBy('id', 'DESC')->range(0, $limit)->execute()->fetchCol();
+    return array_values(array_filter(array_map(fn ($id) => $this->load((int) $id), $ids)));
+  }
+
+  /**
+   * Fills recorded gaps in the stream from the origin.
+   *
+   * @param int $budget
+   *   Most sequence numbers to ask about in this call.
+   *
+   * @return array<string, int>
+   *   Counts of what was done, as in a run.
+   */
+  public function fillGaps(int $budget = 1000): array {
+    $origin = $this->origin->get();
+    if ($origin === NULL) {
+      return [];
+    }
+    $counts = [];
+    $messages = [];
+    foreach ($this->streams->getGaps($origin['site_id']) as $gap) {
+      [$after, $missing] = $gap;
+      $last = min($missing, $after + $budget);
+      $sequences = range($after + 1, $last);
+      $budget -= count($sequences);
+      try {
+        $latest = [];
+        foreach (array_chunk($sequences, 200) as $chunk) {
+          foreach ($this->originClient->stream($chunk) as $event) {
+            // The item's current state answers for all its missed events.
+            $latest[$event['entity_type'] . ':' . $event['uuid']] = $event;
+          }
+        }
+      }
+      catch (SubscriptionException $e) {
+        $this->logger->warning('Could not fill the gap after sequence @after: @message', [
+          '@after' => $after,
+          '@message' => $e->getMessage(),
+        ]);
+        break;
+      }
+      foreach ($latest as $event) {
+        $this->settle($event['entity_type'], $event['bundle'], $event['uuid'], $event['current'], $counts, $messages);
+      }
+      $this->streams->replaceGap($origin['site_id'], $gap, $last < $missing ? [$last, $missing] : NULL);
+      $this->logger->notice('Filled the gap in the stream from sequence @from to @to: @counts.', [
+        '@from' => $after + 1,
+        '@to' => $last,
+        '@counts' => json_encode($counts),
+      ]);
+      if ($budget <= 0) {
+        break;
+      }
+    }
+    return $counts;
+  }
+
+  /**
+   * Compares a page of the origin's hashes with this site, and acts.
+   *
+   * @param int $run_id
+   *   The run.
+   * @param string $entity_type_id
+   *   The origin entity type.
+   * @param string $bundle
+   *   The bundle.
+   * @param array $items
+   *   The page; see OriginClient::hashes().
+   * @param array $counts
+   *   Counts, updated.
+   * @param string[] $messages
+   *   Problems, added to.
+   */
+  protected function compare(int $run_id, string $entity_type_id, string $bundle, array $items, array &$counts, array &$messages): void {
+    $contract = $this->contracts->getCurrent();
+    $found = [];
+    foreach ($items as $item) {
+      $found[] = $item['uuid'];
+      $counts['checked'] = ($counts['checked'] ?? 0) + 1;
+      $state = $this->syncState->get($entity_type_id, $item['uuid']);
+      if ($state !== NULL && $state['detached_at'] === NULL && !$item['not_syncable'] && $state['origin_detached_at'] === NULL && !$this->drifted($state, $item, $contract, $bundle)) {
+        $counts['in_sync'] = ($counts['in_sync'] ?? 0) + 1;
+        continue;
+      }
+      $this->settle($entity_type_id, $bundle, $item['uuid'], $item['not_syncable'] ? 'not_syncable' : 'exists', $counts, $messages);
+    }
+    $this->syncState->markReconciled($entity_type_id, $found, $run_id);
+  }
+
+  /**
+   * Deletes a batch of items the origin no longer has.
+   *
+   * @return bool
+   *   TRUE if there may be more.
+   */
+  protected function deleteMissing(int $run_id, string $entity_type_id, string $bundle, array &$counts, array &$messages): bool {
+    $uuids = $this->syncState->notReconciled($entity_type_id, $bundle, $run_id, self::PAGE);
+    foreach ($uuids as $uuid) {
+      $this->settle($entity_type_id, $bundle, $uuid, 'gone', $counts, $messages);
+    }
+    // Whatever was kept (detached here, or failed) is not looked at again.
+    $this->syncState->markReconciled($entity_type_id, $uuids, $run_id);
+    return count($uuids) === self::PAGE;
+  }
+
+  /**
+   * Whether an item here differs from the origin's latest hashes.
+   *
+   * In sync means every translation this site receives hashes the same as
+   * the origin's, and this site has every one it should.
+   */
+  protected function drifted(array $state, array $item, ?SubscriptionContract $contract, string $bundle): bool {
+    if (!in_array($state['status'], [SyncStatus::SYNCED, SyncStatus::SCHEMA_DRIFT], TRUE)) {
+      // Errors and failures are worth another try; conflicts and items
+      // waiting for something are left alone by settle().
+      return TRUE;
+    }
+    if ((int) ($item['hash']['algorithm'] ?? 0) !== (int) $state['hash_algorithm']) {
+      return TRUE;
+    }
+    $origin = is_array($item['hash']['translations'] ?? NULL) ? $item['hash']['translations'] : [];
+    $local = $state['source_translation_hashes'];
+    $languages = $contract?->languagesFor($state['entity_type'], $bundle);
+    foreach ($origin as $langcode => $hash) {
+      $received = $languages === NULL || in_array((string) $langcode, $languages, TRUE);
+      if ($received && (!isset($local[$langcode]) || !hash_equals((string) $local[$langcode], (string) $hash))) {
+        return TRUE;
+      }
+    }
+    // A translation the origin no longer has.
+    return array_diff_key($local, $origin) !== [];
+  }
+
+  /**
+   * Brings one item in line with where it stands on the origin now.
+   *
+   * @param string $entity_type_id
+   *   The origin entity type.
+   * @param string $bundle
+   *   The bundle.
+   * @param string $uuid
+   *   The UUID.
+   * @param string $current
+   *   Where it stands: exists, gone, not_syncable or not_in_contract.
+   * @param array $counts
+   *   Counts, updated.
+   * @param string[] $messages
+   *   Problems, added to.
+   */
+  protected function settle(string $entity_type_id, string $bundle, string $uuid, string $current, array &$counts, array &$messages): void {
+    $count = function (string $what) use (&$counts): void {
+      $counts[$what] = ($counts[$what] ?? 0) + 1;
+    };
+    $state = $this->syncState->get($entity_type_id, $uuid);
+    if ($current === 'not_in_contract') {
+      return;
+    }
+    if ($state === NULL) {
+      if ($current !== 'exists') {
+        return;
+      }
+      // Content made here keeps its UUID to itself.
+      /** @var \Drupal\Core\Entity\EntityInterface|null $local */
+      $local = $this->entityRepository->loadEntityByUuid($entity_type_id, $uuid);
+      if ($local !== NULL) {
+        $count('skipped_local');
+        return;
+      }
+    }
+    elseif ($state['detached_at'] !== NULL && $current !== 'gone') {
+      $count('skipped_detached');
+      return;
+    }
+    elseif ($current === 'exists' && in_array($state['status'], self::LEFT_ALONE, TRUE)) {
+      $count('skipped_' . $state['status']);
+      return;
+    }
+
+    try {
+      if ($current === 'gone') {
+        $result = $this->applier->apply($this->localEvent(Operation::Delete, $entity_type_id, $bundle, $uuid, $state), (string) $this->origin->getSiteId());
+        $count(match ($result->result) {
+          ApplyResult::DELETED => 'deleted',
+          ApplyResult::SKIPPED_DETACHED => 'skipped_detached',
+          default => 'failed',
+        });
+        return;
+      }
+      if ($current === 'not_syncable') {
+        if ($state['origin_detached_at'] === NULL) {
+          $this->applier->apply($this->localEvent(Operation::Detach, $entity_type_id, $bundle, $uuid, $state), (string) $this->origin->getSiteId());
+          $count('detached_by_origin');
+        }
+        return;
+      }
+      if ($state !== NULL && $state['origin_detached_at'] !== NULL) {
+        $this->applier->apply($this->localEvent(Operation::Attach, $entity_type_id, $bundle, $uuid, $state), (string) $this->origin->getSiteId());
+        $count('attached_by_origin');
+      }
+      $result = $this->puller->pull($entity_type_id, $uuid);
+      $count(match ($result->result) {
+        ApplyResult::APPLIED => 'pulled',
+        ApplyResult::UNCHANGED => 'in_sync',
+        ApplyResult::ACCEPTED => 'pulled_waiting',
+        ApplyResult::CONFLICT => 'skipped_conflict',
+        ApplyResult::SKIPPED_DETACHED => 'skipped_detached',
+        default => 'failed',
+      });
+      if ($result->httpStatus >= 400 && $result->result !== ApplyResult::CONFLICT) {
+        $messages[] = sprintf('%s %s: %s', $entity_type_id, $uuid, $result->message ?? $result->result);
+      }
+    }
+    catch (SubscriptionException $e) {
+      $count('failed');
+      $messages[] = sprintf('%s %s: %s', $entity_type_id, $uuid, $e->getMessage());
+    }
+  }
+
+  /**
+   * An event standing for what the origin's signed answer said about an item.
+   *
+   * Deletes, detaches and attaches found by reconciliation go through the
+   * apply service like events, so its rules hold for them too.
+   */
+  protected function localEvent(Operation $operation, string $entity_type_id, string $bundle, string $uuid, ?array $state): SyncEvent {
+    return SyncEvent::fromArray([
+      'v' => SyncEvent::SCHEMA_VERSION,
+      'event_id' => $this->uuid->generate(),
+      'sequence' => 1,
+      'previous_sequence' => NULL,
+      'operation' => $operation->value,
+      'entity_type' => $entity_type_id,
+      'bundle' => $bundle,
+      'entity_uuid' => $uuid,
+      // Never older than what is here, so never refused as stale.
+      'source_revision' => (int) ($state['source_revision'] ?? 0),
+      'revisionable' => TRUE,
+      'source_changed' => NULL,
+      'default_langcode' => 'und',
+      'langcodes' => [],
+      'hash' => NULL,
+      'contract_version' => $this->contracts->getCurrent()?->version() ?? 0,
+      'created' => $this->time->getCurrentTime(),
+      'dependencies' => [],
+      'external_references' => [],
+      'files' => [],
+      'process' => NULL,
+      'snapshot' => NULL,
+    ]);
+  }
+
+  /**
+   * Closes a run.
+   */
+  protected function finish(int $run_id, array $counts, array $messages, string $status): void {
+    $this->database->update(self::TABLE)
+      ->fields([
+        'finished' => $this->time->getCurrentTime(),
+        'status' => $status,
+        'counts' => json_encode($counts),
+        'messages' => json_encode(array_slice($messages, 0, self::MAX_MESSAGES)),
+        'cursor' => NULL,
+      ])
+      ->condition('id', $run_id)
+      ->execute();
+    $this->logger->notice('Reconciliation run @id finished: @counts.', [
+      '@id' => $run_id,
+      '@counts' => json_encode($counts),
+    ]);
+  }
+
+}

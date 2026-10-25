@@ -37,6 +37,7 @@ class SyncStateStore {
       return NULL;
     }
     $row['source_translation_hashes'] = json_decode($row['source_translation_hashes'], TRUE) ?: [];
+    $row['local_translation_hashes'] = json_decode((string) $row['local_translation_hashes'], TRUE) ?: [];
     return $row;
   }
 
@@ -48,11 +49,13 @@ class SyncStateStore {
    * @param string $uuid
    *   UUID.
    * @param array $fields
-   *   Column values. source_translation_hashes may be an array.
+   *   Column values. The translation hash columns may be arrays.
    */
   public function save(string $entity_type_id, string $uuid, array $fields): void {
-    if (isset($fields['source_translation_hashes']) && is_array($fields['source_translation_hashes'])) {
-      $fields['source_translation_hashes'] = json_encode($fields['source_translation_hashes'], \JSON_THROW_ON_ERROR);
+    foreach (['source_translation_hashes', 'local_translation_hashes'] as $column) {
+      if (isset($fields[$column]) && is_array($fields[$column])) {
+        $fields[$column] = json_encode($fields[$column], \JSON_THROW_ON_ERROR);
+      }
     }
     $this->database->merge(self::TABLE)
       ->keys(['entity_type' => $entity_type_id, 'uuid' => $uuid])
@@ -79,6 +82,45 @@ class SyncStateStore {
       ->condition('entity_type', $entity_type_id)
       ->condition('uuid', $uuid)
       ->execute();
+  }
+
+  /**
+   * Marks items as found on the origin by a reconciliation run.
+   *
+   * @param string $entity_type_id
+   *   Entity type.
+   * @param string[] $uuids
+   *   UUIDs.
+   * @param int $run
+   *   The run.
+   */
+  public function markReconciled(string $entity_type_id, array $uuids, int $run): void {
+    foreach (array_chunk($uuids, 500) as $chunk) {
+      $this->database->update(self::TABLE)
+        ->fields(['last_reconciled' => $run])
+        ->condition('entity_type', $entity_type_id)
+        ->condition('uuid', $chunk, 'IN')
+        ->execute();
+    }
+  }
+
+  /**
+   * Items of a bundle a reconciliation run did not find on the origin.
+   *
+   * @return string[]
+   *   UUIDs, at most $limit.
+   */
+  public function notReconciled(string $entity_type_id, string $bundle, int $run, int $limit): array {
+    $query = $this->database->select(self::TABLE, 's')
+      ->fields('s', ['uuid'])
+      ->condition('entity_type', $entity_type_id)
+      ->condition('bundle', $bundle)
+      ->orderBy('uuid')
+      ->range(0, $limit);
+    $query->condition($query->orConditionGroup()
+      ->isNull('last_reconciled')
+      ->condition('last_reconciled', $run, '<>'));
+    return array_map('strval', $query->execute()->fetchCol());
   }
 
 }

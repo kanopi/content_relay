@@ -136,6 +136,42 @@ class HashStore {
   }
 
   /**
+   * The latest stored revision and hashes of many items of one type.
+   *
+   * @param string $entity_type_id
+   *   Entity type.
+   * @param string[] $uuids
+   *   UUIDs.
+   * @param int $algorithm
+   *   Algorithm version.
+   *
+   * @return array<string, array{revision: int, hashes: \Drupal\content_relay\Hash\RevisionHashes}>
+   *   By UUID; items with nothing stored are left out.
+   */
+  public function latestMany(string $entity_type_id, array $uuids, int $algorithm = RevisionHasher::CURRENT_VERSION): array {
+    if ($uuids === []) {
+      return [];
+    }
+    $rows = $this->database->select(self::TABLE, 'h')
+      ->fields('h', ['uuid', 'revision', 'algorithm', 'entity_hash', 'translation_hashes'])
+      ->condition('entity_type', $entity_type_id)
+      ->condition('uuid', $uuids, 'IN')
+      ->condition('algorithm', $algorithm)
+      ->orderBy('revision')
+      ->execute()
+      ->fetchAll();
+    $latest = [];
+    // Ordered by revision, so the last row of each item wins.
+    foreach ($rows as $row) {
+      $latest[(string) $row->uuid] = [
+        'revision' => (int) $row->revision,
+        'hashes' => new RevisionHashes((int) $row->algorithm, (string) $row->entity_hash, json_decode((string) $row->translation_hashes, TRUE)),
+      ];
+    }
+    return $latest;
+  }
+
+  /**
    * The hashes of one revision or version, with the current algorithm.
    */
   public function forRevision(string $entity_type_id, string $uuid, int $revision, int $algorithm = RevisionHasher::CURRENT_VERSION): ?RevisionHashes {

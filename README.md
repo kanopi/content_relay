@@ -274,13 +274,89 @@ messages, sealed when the contract is encrypted:
   replica may subscribe to;
 - `GET /content-relay/v1/items/{entity_type}/{uuid}`: one item, as an event
   built under the replica's contract, when the replica may have it;
-- `GET /content-relay/v1/files/{uuid}`: a file's metadata and a fresh link.
+- `GET /content-relay/v1/files/{uuid}`: a file's metadata and a fresh link;
+- `GET /content-relay/v1/hashes?entity_type=&bundle=&after=&limit=`: the
+  UUID, latest revision, changed time and hashes of every item of a bundle,
+  up to 500 a page in UUID order, read from the stored hashes without loading
+  the entities, with the contract version in force;
+- `GET /content-relay/v1/stream?sequences=`: what the events with those
+  sequence numbers were about, and where each item stands now (exists, gone,
+  not_syncable or not_in_contract), for filling gaps.
 
 These are custom endpoints rather than JSON:API: they answer in the same
 snapshot form as events, with hashes, so a pulled item is applied like any
 event; access is decided per replica by its contract and not-syncable flags
 rather than by a Drupal user and role; answers are signed and can be
 encrypted; and they only read.
+
+## Conflicts and local-only fields
+
+After every apply the replica keeps a hash of its copy. When an update
+arrives, the copy is hashed again: if it changed, it was edited here, and
+that is a conflict.
+
+- **Pulls** (pull now, reconciliation, re-applying a mapping) never replace
+  local edits. The item is marked as in conflict until someone resolves it.
+- **Pushed events** follow `conflicts.on_event`:
+  - `overwrite` (default): the origin's version is saved as a new revision,
+    so the edit stays in the revision before it, and the item is flagged for
+    review.
+  - `reject`: the local copy stays and the origin is answered `409 conflict`,
+    which it shows as a conflict and does not retry.
+
+  Entity types without revisions cannot keep the edit, so they always
+  reject. Saving as a draft under Content Moderation comes with moderation
+  support.
+- Subscribers to `content_relay.conflict` (`ConflictEvent`) are told first,
+  and can switch between overwrite and reject.
+
+The "Resolve conflict" page (the item's pull page) shows what differs, field
+by field and per language, and offers **Accept origin version** or **Keep
+local and detach**. Keeping local after an overwrite restores the edit as a
+new revision first. Reattaching an edited item shows the same comparison.
+
+**Local-only fields** are listed per bundle in `local_only` in the replica
+settings, and per mapping. Sync never writes them and leaves them out of the
+local hash, so editing one is neither a conflict nor out of sync.
+
+## Pull, reconciliation and gaps
+
+**Pull latest from origin** is an operation on every synced item, a form for
+pulling any item by UUID (`/admin/content/content-relay/pull`), and
+`drush content-relay:pull`.
+
+**Reconciliation** runs from cron (`reconcile.interval`, nightly by default,
+0 for never), from the Reconciliation page, or with
+`drush content-relay:reconcile`. For every bundle this site receives it reads
+the origin's hashes a page at a time and:
+
+- pulls items whose hashes differ, and items missing here;
+- deletes items the origin no longer has, after the whole bundle was listed
+  (a bundle the origin could not list deletes nothing);
+- marks items the origin now keeps from this site as detached by the origin,
+  and reattaches ones it sends again;
+- reports a contract version different from this site's.
+
+It never touches content without a sync state row, items detached here
+(except deletes with "follow deletes"), items in conflict, or items waiting
+for files or dependencies. Every change goes through the apply service with
+its locks and checks, so a run is safe to repeat and changes nothing when the
+sites agree. Each run is recorded with counts and problems on the
+Reconciliation page. Cron works through a run 30 seconds at a time.
+
+**Gap filling**: when an event names a predecessor this site never received,
+the gap is recorded. On cron (or `drush content-relay:fill-gaps`) the replica
+asks the stream endpoint what the missing events were about and settles each
+item as reconciliation would.
+
+**Validate** (an operation per item, and `drush content-relay:validate`)
+hashes the copy here again and compares it with what it should be, and asks
+the origin for its latest hashes to compare with what was received. A copy
+changed behind sync's back is marked as an error.
+
+On the origin, `drush content-relay:backfill-hashes` stores hashes for
+content saved before the module kept them; the hash listing also computes
+missing ones on demand.
 
 ## As it is, or mapped
 
@@ -490,7 +566,9 @@ with its sync status, and detaches or reattaches selected items in bulk.
 | View the Content Relay status report | origin | The report and its CSV |
 | Mark Content Relay items not syncable | origin | Not syncable flags |
 | Detach and reattach Content Relay items | replica | Detach, reattach, in bulk too |
-| Pull Content Relay items and files | replica | Pull file, pull missing files |
+| Pull Content Relay items and files | replica | Pull latest, pull by UUID, pull files |
+| Resolve Content Relay conflicts | replica | Accept origin version, keep local and detach |
+| Run Content Relay reconciliation | replica | Run reconciliation, see past runs (restricted) |
 | Administer Content Relay mappings | replica | Mappings, re-applying them (restricted: the callback transform calls PHP functions) |
 | View the Content Relay replica report | replica | The synced items report |
 
@@ -510,6 +588,11 @@ Every push, flag, detach and reattach is logged with the user who did it.
 | `content-relay:pull-missing-files [<type> <uuid>] [--all]` | replica |
 | `content-relay:check-schema` | replica |
 | `content-relay:reapply-mapping <mapping>` | replica |
+| `content-relay:pull <type> <uuid> [--accept-origin]` | replica |
+| `content-relay:reconcile` | replica |
+| `content-relay:fill-gaps` | replica |
+| `content-relay:validate <type> <uuid>` | replica |
+| `content-relay:backfill-hashes [--all]` | origin |
 | `content-relay:keys` | both |
 | `content-relay:generate-key <purpose> <key id> <path>` | both |
 | `content-relay:rotate-key <purpose> <key id>` | both |

@@ -34,6 +34,27 @@ class EntityUi {
       return [];
     }
     $operations = [];
+    $conflict = $state['status'] === SyncStatus::CONFLICT;
+    if ($state['detached_at'] === NULL && ($this->currentUser->hasPermission('pull content relay items') || ($conflict && $this->currentUser->hasPermission('resolve content relay conflicts')))) {
+      $operations['content_relay_pull'] = [
+        'title' => $conflict ? $this->t('Resolve conflict') : $this->t('Pull latest from origin'),
+        'url' => Url::fromRoute('content_relay_replica.pull', [
+          'entity_type_id' => $entity->getEntityTypeId(),
+          'uuid' => $entity->uuid(),
+        ]),
+        'weight' => 59,
+      ];
+    }
+    if ($this->currentUser->hasPermission('view content relay replica report')) {
+      $operations['content_relay_validate'] = [
+        'title' => $this->t('Validate'),
+        'url' => Url::fromRoute('content_relay_replica.validate', [
+          'entity_type_id' => $entity->getEntityTypeId(),
+          'uuid' => $entity->uuid(),
+        ]),
+        'weight' => 62,
+      ];
+    }
     if ($this->currentUser->hasPermission('pull content relay items')) {
       $operations['content_relay_pull_files'] = [
         'title' => $entity->getEntityTypeId() === 'file' ? $this->t('Pull file') : $this->t('Pull missing files'),

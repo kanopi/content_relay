@@ -18,6 +18,8 @@ final class ApplyResult {
   public const DELETED = 'deleted';
   public const ACCEPTED = 'accepted';
   public const STALE = 'stale';
+  // Edited on the replica; the origin's version was not applied.
+  public const CONFLICT = 'conflict';
   // The item is detached on this replica; the event was not applied.
   public const SKIPPED_DETACHED = 'skipped_detached';
   // A detach or attach event was recorded.

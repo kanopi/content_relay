@@ -468,3 +468,56 @@ The specification says "bundles shared with that replica". To check a bundle
 before asking for it, the schema includes every bundle the replica is
 allowed, not only those it already receives.
 
+## 57. Pulls never replace local edits; pushed events overwrite by default
+
+The specification: pulls mark a conflict and do not overwrite; pushed events
+are configurable, defaulting to saving the origin's version as a new revision
+and flagging for review. Reconciliation and mapping re-applies are pulls.
+A user accepting the origin's version is the only way a pull replaces edits.
+
+## 58. Conflicts on entity types without revisions are always rejected
+
+Overwriting is only safe because the edit stays in the previous revision.
+Without revisions it would be lost, so such items keep the local copy and
+are marked as in conflict whatever the setting says.
+
+## 59. The flag for review stays until someone looks
+
+After an overwrite, the item is shown as in conflict, with the revision
+holding the edit, through later updates too, until a user accepts the
+origin's version or keeps the local one. Re-sending the same revision is
+still "unchanged".
+
+## 60. Local hashes per translation are kept
+
+To say which translations were edited, the copy's translation hashes are
+stored after each apply and compared with the copy's current ones. Comparing
+with the origin's would wrongly list translations with local-only fields or
+substituted references.
+
+## 61. Reconciliation deletes by marking, not by holding a list
+
+Each item the origin lists is marked with the run's ID; once a bundle is
+fully listed, synced items of that bundle without the mark are the ones the
+origin no longer has. This works for any number of items without keeping the
+origin's UUIDs in memory, and lets a run be spread over cron runs.
+
+## 62. Deletes, detaches and attaches found by reconciliation go through apply
+
+They are made into local events, standing for what the origin's signed answer
+said, and applied like any other event, so the rules for detached items,
+follow deletes, locks and items without sync state hold for them unchanged.
+
+## 63. Gaps are filled from the items' current state
+
+The origin builds events when it sends them, from the item as it is then, so
+a lost event cannot be sent again as it was. The stream endpoint says which
+item each missed event concerned and where it stands now; the replica pulls,
+deletes or marks it accordingly, which brings it to the same place.
+
+## 64. Validation is driven from the replica
+
+"Validate" hashes the copy again and asks the origin for its latest hashes,
+which compares both sides from one button. The origin's report already
+learns each replica's state from delivery results and status polling.
+

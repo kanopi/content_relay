@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Drupal\content_relay_replica;
 
 use Drupal\Component\Datetime\TimeInterface;
-use Drupal\Core\Entity\ContentEntityInterface;
 use Drupal\Core\Entity\EntityRepositoryInterface;
 use Drupal\Core\Session\AccountInterface;
 use Drupal\Core\StringTranslation\TranslatableMarkup;
@@ -77,12 +76,8 @@ class ItemDetacher {
    */
   public function localEdits(string $entity_type_id, string $uuid): ?array {
     $state = $this->syncState->get($entity_type_id, $uuid);
-    /** @var \Drupal\Core\Entity\EntityInterface|null $entity */
-    $entity = $this->entityRepository->loadEntityByUuid($entity_type_id, $uuid);
-    if ($state === NULL || !$entity instanceof ContentEntityInterface) {
-      return NULL;
-    }
-    return $this->localChanges->editedTranslations($entity, $state);
+    $entity = $state === NULL ? NULL : $this->localChanges->localCopy($entity_type_id, $uuid, $state);
+    return $entity === NULL ? NULL : $this->localChanges->editedTranslations($entity, $state);
   }
 
   /**
@@ -115,6 +110,7 @@ class ItemDetacher {
     }
     $status = SyncStatus::SYNCED;
     $error = NULL;
+    $fields = [];
     if ($state['origin_detached_at'] !== NULL) {
       $status = SyncStatus::DETACHED_BY_ORIGIN;
     }
@@ -124,9 +120,17 @@ class ItemDetacher {
       $status = SyncStatus::ERROR;
       $error = 'Reattached with local edits; the origin\'s version replaces them.';
     }
-    $this->syncState->save($entity_type_id, $uuid, [
+    $entity = $this->localChanges->localCopy($entity_type_id, $uuid, $state);
+    if ($edited !== NULL && $entity !== NULL) {
+      // The edits are accepted as replaceable: the copy as it is now becomes
+      // the baseline, so the origin's version is not taken for a conflict.
+      $fields = $this->localChanges->baseline($entity, $state);
+    }
+    $this->syncState->save($entity_type_id, $uuid, $fields + [
       'detached_by' => NULL,
       'detached_at' => NULL,
+      'conflict_revision' => NULL,
+      'conflict_at' => NULL,
       'status' => $status,
       'last_error' => $error,
       'last_synced' => (int) $state['last_synced'],

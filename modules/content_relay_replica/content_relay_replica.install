@@ -12,6 +12,7 @@ use Drupal\content_relay_replica\FailedEventStore;
 use Drupal\content_relay_replica\File\FileSync;
 use Drupal\content_relay_replica\Processing\ReceivedEvents;
 use Drupal\content_relay_replica\ProcessedEvents;
+use Drupal\content_relay_replica\Reconciler;
 use Drupal\content_relay_replica\StreamTracker;
 use Drupal\content_relay_replica\SyncStateStore;
 
@@ -71,6 +72,11 @@ function content_relay_replica_schema(): array {
         'not null' => FALSE,
         'description' => 'Hash of the local copy, computed after applying.',
       ],
+      'local_translation_hashes' => [
+        'type' => 'text',
+        'not null' => FALSE,
+        'description' => 'JSON: langcode => hash of each translation of the local copy, computed after applying.',
+      ],
       'expected_hash' => [
         'type' => 'char',
         'length' => 64,
@@ -101,12 +107,64 @@ function content_relay_replica_schema(): array {
         'not null' => FALSE,
         'description' => 'When the origin detached the item; NULL while the origin sends it.',
       ],
+      'conflict_revision' => [
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => FALSE,
+        'description' => 'The local revision holding edits the origin version was saved over, until reviewed.',
+      ],
+      'conflict_at' => [
+        'type' => 'int',
+        'size' => 'big',
+        'not null' => FALSE,
+        'description' => 'When local edits were found to conflict with the origin; NULL when there is no conflict.',
+      ],
+      'last_reconciled' => [
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => FALSE,
+        'description' => 'The last reconciliation run that found the item on the origin.',
+      ],
     ],
     'primary key' => ['entity_type', 'uuid'],
     'indexes' => [
       'status' => ['status'],
       'bundle' => ['entity_type', 'bundle'],
       'last_synced' => ['last_synced'],
+    ],
+  ];
+
+  $schema[Reconciler::TABLE] = [
+    'description' => 'Reconciliation runs: comparing this site with the origin.',
+    'fields' => [
+      'id' => ['type' => 'serial', 'unsigned' => TRUE, 'not null' => TRUE],
+      'started' => ['type' => 'int', 'size' => 'big', 'not null' => TRUE],
+      'finished' => ['type' => 'int', 'size' => 'big', 'not null' => FALSE],
+      'trigger' => [
+        'type' => 'varchar_ascii',
+        'length' => 16,
+        'not null' => TRUE,
+        'description' => 'cron, manual or drush.',
+      ],
+      'uid' => [
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => FALSE,
+        'description' => 'Who started it, when not cron.',
+      ],
+      'status' => [
+        'type' => 'varchar_ascii',
+        'length' => 16,
+        'not null' => TRUE,
+        'description' => 'running, completed or failed.',
+      ],
+      'counts' => ['type' => 'text', 'not null' => TRUE, 'description' => 'JSON: outcome => number of items.'],
+      'messages' => ['type' => 'text', 'not null' => TRUE, 'description' => 'JSON: problems found, the first few.'],
+      'cursor' => ['type' => 'text', 'not null' => FALSE, 'description' => 'JSON: where a running run is up to.'],
+    ],
+    'primary key' => ['id'],
+    'indexes' => [
+      'status' => ['status'],
     ],
   ];
 
