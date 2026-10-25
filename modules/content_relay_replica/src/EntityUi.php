@@ -11,7 +11,7 @@ use Drupal\Core\StringTranslation\StringTranslationTrait;
 use Drupal\Core\Url;
 
 /**
- * Detach and reattach links on synced items.
+ * Detach, reattach and pull links on synced items.
  */
 class EntityUi {
 
@@ -26,15 +26,29 @@ class EntityUi {
    * Operation links, as hook_entity_operation() returns them.
    */
   public function operations(EntityInterface $entity): array {
-    if (!$entity instanceof ContentEntityInterface || $entity->isNew() || !$this->currentUser->hasPermission('detach content relay items')) {
+    if (!$entity instanceof ContentEntityInterface || $entity->isNew()) {
       return [];
     }
     $state = $this->syncState->get($entity->getEntityTypeId(), (string) $entity->uuid());
     if ($state === NULL) {
       return [];
     }
+    $operations = [];
+    if ($this->currentUser->hasPermission('pull content relay items')) {
+      $operations['content_relay_pull_files'] = [
+        'title' => $entity->getEntityTypeId() === 'file' ? $this->t('Pull file') : $this->t('Pull missing files'),
+        'url' => Url::fromRoute('content_relay_replica.pull_files', [
+          'entity_type_id' => $entity->getEntityTypeId(),
+          'uuid' => $entity->uuid(),
+        ]),
+        'weight' => 61,
+      ];
+    }
+    if (!$this->currentUser->hasPermission('detach content relay items')) {
+      return $operations;
+    }
     $detached = $state['detached_at'] !== NULL;
-    return [
+    return $operations + [
       'content_relay_detach' => [
         'title' => $detached ? $this->t('Reattach') : $this->t('Detach'),
         'url' => Url::fromRoute($detached ? 'content_relay_replica.reattach' : 'content_relay_replica.detach', [

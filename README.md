@@ -14,13 +14,14 @@ or refine, the original specification.
 | Module | Role | Status |
 | --- | --- | --- |
 | `content_relay` | Shared base: event schema, entity serialization, hashing, signing, keys | Phase 1 |
-| `content_relay_origin` | Publishes changes to replicas | Phases 2–5: event log, delivery, hash store, pairing, contracts, not syncable, push, status report |
-| `content_relay_replica` | Receives and applies changes | Phases 2–5: endpoint, transactional apply, failures, pairing, contracts, detach |
+| `content_relay_origin` | Publishes changes to replicas | Phases 2–6: event log, delivery, hash store, pairing, contracts, not syncable, push, status report, files |
+| `content_relay_replica` | Receives and applies changes | Phases 2–6: endpoint, transactional apply, failures, pairing, contracts, detach, files |
 
 ## Requirements
 
 - Drupal 10.3 or 11, PHP 8.3 or later, with the `sodium` extension.
-- The [Key](https://www.drupal.org/project/key) module, and Views (core).
+- The [Key](https://www.drupal.org/project/key) module, and File and Views
+  (core).
 - `lcobucci/jwt` 5.5 or later (installed by Composer).
 - A `utf8mb4` database. Hashes cover text byte for byte, and a database that
   cannot store four-byte characters changes the bytes.
@@ -201,6 +202,76 @@ by default, authors become the anonymous user and other references are left
 out. The copy is still verified against the origin's hash, with the same
 substitutions applied.
 
+## Files
+
+Files are never published on their own. A file goes to a replica when an
+item it receives uses it, in a file or image field or linked in formatted
+text, and is sent before that item. Later changes to the file go to the
+replicas that have it.
+
+**What is hashed.** A file entity's snapshot carries its location (URI) as
+metadata and the SHA-256 and size of its content as hashed data, so moving
+a file does not mark it out of sync and replacing its content does. File and
+image field items carry their file's checksum, and formatted text lists the
+checksums of the files it links, so replacing a linked PDF marks the page out
+of sync too. Checksums are cached in `content_relay_file_checksum` while a
+file's size and modification time are unchanged.
+
+**Links in text.** On the origin, formatted text fields are scanned in every
+translation:
+
+- elements with `data-entity-type` and `data-entity-uuid` (CKEditor uploads,
+  `<drupal-media>` and other embeds) make their target a dependency;
+- `src` and `href` values pointing at the site's public files, private files
+  (`/system/files/…`) or image style derivatives (which resolve to the
+  original), relative or absolute on the site's own host or any domain in
+  `content_relay.settings:files.own_domains`, become `{cr-file:<uuid>}` or
+  `{cr-file:<uuid>:<style>}` tokens, and the file a dependency;
+- links to other sites are left alone;
+- links that look like the site's files but match no file, or a file missing
+  from storage, are left as they are, listed in the event as `unresolved` and
+  counted in the report's "Unresolved file links" column.
+
+On a replica, tokens become the replica's own URLs for its copies, or with
+`files.links: origin` the origin's URLs (for sites sharing a CDN or object
+storage). Hashing turns either back into tokens, so rewritten links never
+look like a difference.
+
+**Downloading.** A file entity is created on the replica as soon as its event
+arrives. The event carries the file's checksum, size and a signed download
+link, valid for `files.link_lifetime` seconds (default an hour) and bound to
+that replica. The binary is fetched by the `content_relay_replica_files`
+queue, streamed to a temporary file, checked against the checksum and only
+then moved into place; a binary already present with the right checksum is
+not fetched again. Failures are retried with backoff up to
+`files.max_attempts`, then marked failed. An expired link is renewed through
+the origin's file endpoint (`GET /content-relay/v1/files/{uuid}`, with the
+replica's JWT), which, like the download, serves only files used by content
+the replica's contract allows and that is not marked not syncable for it.
+
+Fetching goes through the `content_relay_replica.file_transport` service.
+Replace it to get binaries some other way (replicated object storage, a
+shared volume); the checksum is still verified.
+
+**Content waiting for files** has the status "waiting for files". With
+`files.pending: hold` it is also unpublished until its files arrive, then
+republished as received; with `publish` (the default) it is published as
+received meanwhile.
+
+**Pulling.** "Pull file" (on a synced file) and "Pull missing files" (on any
+synced item) fetch again with a fresh link. Cron checks every synced file
+against its checksum every `files.verify_interval` seconds (default daily)
+and fetches missing or altered ones. With `files.fetch_on_miss` set to
+`redirect` (the default) or `placeholder`, a request for a synced file that
+is missing here queues a fetch and redirects to the origin's copy or answers
+with a placeholder, instead of a plain 404; for public files this relies on
+the web server passing requests for missing files to Drupal, as Drupal's
+default `.htaccess` and common nginx configurations do.
+
+**Encryption.** Files are fetched unencrypted over HTTPS for now. Streaming
+per-file encryption (libsodium secretstream, `Drupal\content_relay\Crypto\FileCipher`)
+is in place and is switched on with message encryption in phase 7.
+
 ## Not syncable items and detaching
 
 Either side can stop updates for one item, independently; each side can only
@@ -275,6 +346,7 @@ with its sync status, and detaches or reattaches selected items in bulk.
 | View the Content Relay status report | origin | The report and its CSV |
 | Mark Content Relay items not syncable | origin | Not syncable flags |
 | Detach and reattach Content Relay items | replica | Detach, reattach, in bulk too |
+| Pull Content Relay items and files | replica | Pull file, pull missing files |
 | View the Content Relay replica report | replica | The synced items report |
 
 Every push, flag, detach and reattach is logged with the user who did it.
@@ -289,6 +361,8 @@ Every push, flag, detach and reattach is logged with the user who did it.
 | `content-relay:syncable <type> <id or uuid> [--replica=]` | origin |
 | `content-relay:detach <type> <uuid>` | replica |
 | `content-relay:reattach <type> <uuid> [--accept-origin]` | replica |
+| `content-relay:pull-file <uuid>` | replica |
+| `content-relay:pull-missing-files [<type> <uuid>] [--all]` | replica |
 
 Each exits non-zero when it could not do what was asked.
 

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Drupal\content_relay_origin;
 
+use Drupal\content_relay\Contract\SubscriptionContract;
 use Drupal\content_relay\Serialization\NormalizerManager;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Entity\ContentEntityInterface;
@@ -13,7 +14,8 @@ use Drupal\Core\Entity\EntityInterface;
  * Which entities the origin publishes.
  *
  * Configured per entity type and bundle. Embedded entity types (paragraphs)
- * are never published on their own; they travel inside their parent.
+ * are never published on their own; they travel inside their parent. Files
+ * are not configured either: they are sent with the content that uses them.
  */
 class SyncScope {
 
@@ -35,6 +37,20 @@ class SyncScope {
     catch (\InvalidArgumentException) {
       return FALSE;
     }
+  }
+
+  /**
+   * Whether an entity is sent with the content that uses it.
+   */
+  public function followsReferrers(EntityInterface $entity): bool {
+    return $entity instanceof ContentEntityInterface && in_array($entity->getEntityTypeId(), SubscriptionContract::FOLLOWING_TYPES, TRUE);
+  }
+
+  /**
+   * Whether an entity can be sent at all: published, or following content.
+   */
+  public function canSend(EntityInterface $entity): bool {
+    return $this->applies($entity) || $this->followsReferrers($entity);
   }
 
   /**

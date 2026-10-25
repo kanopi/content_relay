@@ -9,6 +9,7 @@ declare(strict_types=1);
 
 use Drupal\content_relay_replica\ContractStore;
 use Drupal\content_relay_replica\FailedEventStore;
+use Drupal\content_relay_replica\File\FileSync;
 use Drupal\content_relay_replica\ProcessedEvents;
 use Drupal\content_relay_replica\StreamTracker;
 use Drupal\content_relay_replica\SyncStateStore;
@@ -61,6 +62,12 @@ function content_relay_replica_schema(): array {
         'length' => 64,
         'not null' => FALSE,
         'description' => 'Hash of the local copy, computed after applying.',
+      ],
+      'expected_hash' => [
+        'type' => 'char',
+        'length' => 64,
+        'not null' => FALSE,
+        'description' => 'What the local copy should hash to: the origin hash, with local substitutions applied.',
       ],
       'import_mode' => ['type' => 'varchar_ascii', 'length' => 16, 'not null' => TRUE, 'default' => 'as_is'],
       'mapping_id' => ['type' => 'varchar_ascii', 'length' => 128, 'not null' => FALSE],
@@ -200,6 +207,50 @@ function content_relay_replica_schema(): array {
       ],
     ],
     'primary key' => ['version'],
+  ];
+  $schema[FileSync::TABLE] = [
+    'description' => 'Files received from the origin and the state of their binaries.',
+    'fields' => [
+      'uuid' => ['type' => 'varchar_ascii', 'length' => 128, 'not null' => TRUE, 'description' => 'File entity UUID.'],
+      'uri' => ['type' => 'text', 'not null' => TRUE, 'description' => 'Where the binary goes here.'],
+      'origin_uri' => ['type' => 'text', 'not null' => TRUE],
+      'sha256' => ['type' => 'char', 'length' => 64, 'not null' => TRUE],
+      'size' => ['type' => 'int', 'size' => 'big', 'unsigned' => TRUE, 'not null' => TRUE],
+      'download' => [
+        'type' => 'text',
+        'not null' => FALSE,
+        'description' => 'Signed download link, relative to the origin URL.',
+      ],
+      'expires' => ['type' => 'int', 'size' => 'big', 'not null' => FALSE],
+      'url' => [
+        'type' => 'text',
+        'not null' => FALSE,
+        'description' => 'The file on the origin, relative to the origin URL.',
+      ],
+      'status' => ['type' => 'varchar_ascii', 'length' => 16, 'not null' => TRUE],
+      'attempts' => ['type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE, 'default' => 0],
+      'next_attempt' => ['type' => 'int', 'size' => 'big', 'not null' => TRUE, 'default' => 0],
+      'last_error' => ['type' => 'text', 'not null' => FALSE],
+      'updated' => ['type' => 'int', 'size' => 'big', 'not null' => TRUE],
+    ],
+    'primary key' => ['uuid'],
+    'indexes' => ['status' => ['status', 'next_attempt']],
+  ];
+
+  $schema[FileSync::WAIT_TABLE] = [
+    'description' => 'Items whose files have not all arrived.',
+    'fields' => [
+      'entity_type' => ['type' => 'varchar_ascii', 'length' => 32, 'not null' => TRUE],
+      'uuid' => ['type' => 'varchar_ascii', 'length' => 128, 'not null' => TRUE],
+      'file_uuid' => ['type' => 'varchar_ascii', 'length' => 128, 'not null' => TRUE],
+      'held' => [
+        'type' => 'text',
+        'not null' => FALSE,
+        'description' => 'JSON list of translations unpublished until the files arrive.',
+      ],
+    ],
+    'primary key' => ['entity_type', 'uuid', 'file_uuid'],
+    'indexes' => ['file' => ['file_uuid']],
   ];
   return $schema;
 }

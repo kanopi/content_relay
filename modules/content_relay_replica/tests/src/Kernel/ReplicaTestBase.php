@@ -13,6 +13,7 @@ use Drupal\content_relay_replica\Apply\ApplyResult;
 use Drupal\content_relay\Contract\SubscriptionContract;
 use Drupal\content_relay_replica\ContractStore;
 use Drupal\content_relay_replica\FailedEventStore;
+use Drupal\content_relay_replica\File\FileSync;
 use Drupal\content_relay_replica\ProcessedEvents;
 use Drupal\content_relay_replica\StreamTracker;
 use Drupal\content_relay_replica\SyncStateStore;
@@ -76,7 +77,7 @@ abstract class ReplicaTestBase extends KernelTestBase {
     $this->installEntitySchema('entity_test_mul');
     $this->installSchema('node', ['node_access']);
     $this->installSchema('user', ['users_data']);
-    $this->installSchema('content_relay', ['content_relay_seen_message']);
+    $this->installSchema('content_relay', ['content_relay_seen_message', 'content_relay_file_checksum']);
     $this->installSchema('content_relay_replica', [
       SyncStateStore::TABLE,
       StreamTracker::TABLE,
@@ -84,6 +85,8 @@ abstract class ReplicaTestBase extends KernelTestBase {
       FailedEventStore::TABLE,
       FailedEventStore::DEPENDENCY_TABLE,
       ContractStore::TABLE,
+      FileSync::TABLE,
+      FileSync::WAIT_TABLE,
     ]);
     $this->installConfig(['content_relay', 'content_relay_replica', 'node', 'filter']);
     content_relay_install(FALSE);

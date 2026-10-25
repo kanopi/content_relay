@@ -150,9 +150,24 @@ function content_relay_origin_schema(): array {
       'algorithm' => ['type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE],
       'entity_hash' => ['type' => 'char', 'length' => 64, 'not null' => TRUE],
       'translation_hashes' => ['type' => 'text', 'not null' => TRUE, 'description' => 'JSON: langcode => hash.'],
+      'unresolved' => [
+        'type' => 'text',
+        'not null' => FALSE,
+        'description' => 'JSON list of references that could not be resolved, such as links to missing files.',
+      ],
       'created' => ['type' => 'int', 'size' => 'big', 'not null' => TRUE],
     ],
     'primary key' => ['entity_type', 'uuid', 'revision', 'algorithm'],
+  ];
+  $schema[HashStore::FILE_REF_TABLE] = [
+    'description' => 'Which files each item uses, in fields or in text. Decides which files a replica may download.',
+    'fields' => [
+      'entity_type' => ['type' => 'varchar_ascii', 'length' => 32, 'not null' => TRUE],
+      'uuid' => ['type' => 'varchar_ascii', 'length' => 128, 'not null' => TRUE],
+      'file_uuid' => ['type' => 'varchar_ascii', 'length' => 128, 'not null' => TRUE],
+    ],
+    'primary key' => ['entity_type', 'uuid', 'file_uuid'],
+    'indexes' => ['file' => ['file_uuid']],
   ];
   $schema[ReplicaItems::TABLE] = [
     'description' => 'What each replica has of each item, from its answers.',
@@ -316,6 +331,13 @@ function content_relay_origin_schema(): array {
       'last_attempt' => ['type' => 'int', 'size' => 'big', 'not null' => FALSE],
       'last_success' => ['type' => 'int', 'size' => 'big', 'not null' => FALSE],
       'last_error' => ['type' => 'varchar', 'length' => 255, 'not null' => FALSE],
+      'unresolved_files' => [
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => 'Links to files that could not be resolved on the origin.',
+      ],
       'changed' => [
         'type' => 'int',
         'size' => 'big',

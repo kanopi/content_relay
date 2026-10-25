@@ -70,6 +70,13 @@ content_relay_origin.settings:
             Choice:
               - detach
               - remove
+    files:
+      type: mapping
+      label: 'Files'
+      mapping:
+        link_lifetime:
+          type: integer
+          label: 'How long download links stay valid, in seconds'
 
 action.configuration.content_relay_not_syncable:*:
   type: action_configuration_default

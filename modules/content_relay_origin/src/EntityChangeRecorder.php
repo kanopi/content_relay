@@ -15,9 +15,12 @@ use Drupal\Core\Entity\EntityInterface;
  * Runs inside the entity's save transaction and does only local work: one
  * hash, one row per replica, one queue item per replica, and the item's rows
  * in the status report. Replicas the item is marked not syncable for get
- * nothing. No snapshot is sent
- * and no HTTP request is made, so an unreachable replica cannot slow down or
- * fail an editor's save, and a save that rolls back takes its rows with it.
+ * nothing. No snapshot is sent and no HTTP request is made, so an unreachable
+ * replica cannot slow down or fail an editor's save, and a save that rolls
+ * back takes its rows with it.
+ *
+ * Files are not published on their own: a change to one is recorded only for
+ * the replicas that already have it, because content they receive uses it.
  */
 class EntityChangeRecorder {
 
@@ -30,7 +33,24 @@ class EntityChangeRecorder {
     protected ContractManager $contracts,
     protected NotSyncableFlags $flags,
     protected ReportIndex $report,
+    protected ReplicaItems $items,
   ) {}
+
+  /**
+   * Replicas that have an item following its referrers, such as a file.
+   *
+   * @return string[]
+   *   Replica IDs.
+   */
+  protected function holders(EntityInterface $entity): array {
+    $ids = [];
+    foreach ($this->registry->getAll() as $replica) {
+      if ($replica->receivesEvents() && $this->items->isKnown($replica->id, $entity->getEntityTypeId(), (string) $entity->uuid())) {
+        $ids[] = $replica->id;
+      }
+    }
+    return $ids;
+  }
 
   /**
    * Replicas whose contract, in force or pending, covers an item.
@@ -52,6 +72,14 @@ class EntityChangeRecorder {
    * Records an insert or update.
    */
   public function onSave(EntityInterface $entity, bool $is_new): void {
+    if ($this->scope->followsReferrers($entity) && !$is_new) {
+      assert($entity instanceof ContentEntityInterface);
+      // A new version counter when the content changed.
+      $this->hashStore->record($entity);
+      $rows = $this->outbox->enqueue(Operation::Update, $entity->getEntityTypeId(), $entity->bundle(), (string) $entity->uuid(), NULL, $this->holders($entity));
+      $this->scheduler->schedule(array_keys($rows));
+      return;
+    }
     if (!$this->scope->applies($entity)) {
       return;
     }
@@ -66,6 +94,11 @@ class EntityChangeRecorder {
    * Records a delete.
    */
   public function onDelete(EntityInterface $entity): void {
+    if ($this->scope->followsReferrers($entity)) {
+      $rows = $this->outbox->enqueue(Operation::Delete, $entity->getEntityTypeId(), $entity->bundle(), (string) $entity->uuid(), 0, $this->holders($entity));
+      $this->scheduler->schedule(array_keys($rows));
+      return;
+    }
     if (!$this->scope->applies($entity)) {
       return;
     }

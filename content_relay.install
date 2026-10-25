@@ -8,6 +8,7 @@
 declare(strict_types=1);
 
 use Drupal\content_relay\Crypto\DatabaseReplayGuard;
+use Drupal\content_relay\File\FileChecksums;
 
 /**
  * Implements hook_install().
@@ -85,6 +86,17 @@ function content_relay_schema(): array {
     'indexes' => [
       'expires' => ['expires'],
     ],
+  ];
+  $schema[FileChecksums::TABLE] = [
+    'description' => 'Checksums of stored files, valid while their size and modification time are unchanged.',
+    'fields' => [
+      'uri_hash' => ['type' => 'char', 'length' => 64, 'not null' => TRUE, 'description' => 'SHA-256 of the URI.'],
+      'uri' => ['type' => 'text', 'not null' => TRUE],
+      'sha256' => ['type' => 'char', 'length' => 64, 'not null' => TRUE],
+      'size' => ['type' => 'int', 'size' => 'big', 'unsigned' => TRUE, 'not null' => TRUE],
+      'mtime' => ['type' => 'int', 'size' => 'big', 'not null' => TRUE],
+    ],
+    'primary key' => ['uri_hash'],
   ];
   return $schema;
 }

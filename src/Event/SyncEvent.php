@@ -82,6 +82,10 @@ final class SyncEvent {
    *   Entities the snapshot references that the replica does not subscribe
    *   to, each an array with entity_type and uuid. They will never be sent,
    *   so the replica resolves them by its own policy instead of waiting.
+   * @param array $unresolved
+   *   References the origin could not resolve, such as links in text to
+   *   files that do not exist there: each with field, entity_type and id.
+   *   For information; they are left in the content as they are.
    */
   public function __construct(
     public readonly string $eventId,
@@ -104,6 +108,7 @@ final class SyncEvent {
     public readonly ?ProcessingMode $process = NULL,
     public readonly ?int $previousSequence = NULL,
     public readonly array $externalReferences = [],
+    public readonly array $unresolved = [],
   ) {
     $this->validate();
   }
@@ -131,6 +136,7 @@ final class SyncEvent {
       'created' => $this->created,
       'dependencies' => $this->dependencies,
       'external_references' => $this->externalReferences,
+      'unresolved' => $this->unresolved,
       'files' => $this->files,
       'process' => $this->process?->value,
       'snapshot' => $this->snapshot,
@@ -195,6 +201,7 @@ final class SyncEvent {
       created: $require('created', 'int'),
       dependencies: $require('dependencies', 'array'),
       externalReferences: $require('external_references', 'array'),
+      unresolved: is_array($data['unresolved'] ?? NULL) ? $data['unresolved'] : [],
       files: $require('files', 'array'),
       process: $process === NULL ? NULL : (ProcessingMode::tryFrom($process) ?? throw new InvalidEventException('Unknown processing mode.')),
     );

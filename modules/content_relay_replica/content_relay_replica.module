@@ -18,6 +18,15 @@ function content_relay_replica_cron(): void {
   \Drupal::service('content_relay_replica.failed_events')->scheduleDueRetries();
   \Drupal::service('content_relay_replica.processed_events')->prune();
   \Drupal::service('content_relay_replica.origin_client')->sendPending();
+  $files = \Drupal::service('content_relay_replica.file_sync');
+  $files->scheduleDue();
+  // A periodic check that every synced file is here and intact.
+  $interval = (int) \Drupal::config('content_relay_replica.settings')->get('files.verify_interval');
+  $state = \Drupal::state();
+  if ($interval > 0 && \Drupal::time()->getRequestTime() - (int) $state->get('content_relay_replica.files_verified', 0) >= $interval) {
+    $files->verifyAll();
+    $state->set('content_relay_replica.files_verified', \Drupal::time()->getRequestTime());
+  }
 }
 
 /**

@@ -24,6 +24,16 @@ content_relay.settings:
         sync_roles:
           type: boolean
           label: 'Sync user roles'
+    files:
+      type: mapping
+      label: 'Files'
+      mapping:
+        own_domains:
+          type: sequence
+          label: 'Other domains this site is reached at; absolute links to them in text count as links to its own files'
+          sequence:
+            type: string
+            label: 'Domain'
 
 key.type.content_relay_signing:
   type: content_relay.key_type_settings

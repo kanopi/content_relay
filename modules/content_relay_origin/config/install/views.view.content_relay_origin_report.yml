@@ -215,6 +215,16 @@ display:
           plugin_id: standard
           label: 'Last error'
           exclude: false
+        unresolved_files:
+          id: unresolved_files
+          table: content_relay_report
+          field: unresolved_files
+          relationship: none
+          group_type: group
+          admin_label: ''
+          plugin_id: numeric
+          label: 'Unresolved file links'
+          exclude: false
       pager:
         type: full
         options:
@@ -588,6 +598,7 @@ display:
             last_attempt: last_attempt
             last_success: last_success
             last_error: last_error
+            unresolved_files: unresolved_files
           default: '-1'
           info:
             content_relay_bulk_push:
@@ -710,6 +721,13 @@ display:
               empty_column: false
               responsive: ''
             last_error:
+              sortable: true
+              default_sort_order: asc
+              align: ''
+              separator: ''
+              empty_column: false
+              responsive: ''
+            unresolved_files:
               sortable: true
               default_sort_order: asc
               align: ''

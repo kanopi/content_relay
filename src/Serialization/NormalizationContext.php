@@ -30,6 +30,17 @@ final class NormalizationContext {
   public array $unresolved = [];
 
   /**
+   * Maps a URL in text that is not one of this site's file URLs to a file.
+   *
+   * Given the URL, returns the file's UUID and image style, or NULL. A
+   * replica that leaves links pointing at its origin sets this, so the
+   * origin's URLs normalize to the same tokens as on the origin.
+   *
+   * @var (\Closure(string): (array{uuid: string, style: string|null}|null))|null
+   */
+  public ?\Closure $fileUrlResolver = NULL;
+
+  /**
    * Entities currently being normalized, to stop embedding cycles.
    *
    * @var array<string, true>

@@ -16,6 +16,7 @@ use Drupal\content_relay\Serialization\EntitySerializer;
 use Drupal\content_relay\Serialization\NormalizationContext;
 use Drupal\content_relay_replica\ContractStore;
 use Drupal\content_relay_replica\FailedEventStore;
+use Drupal\content_relay_replica\File\FileSync;
 use Drupal\content_relay_replica\LocalChanges;
 use Drupal\content_relay_replica\OriginPeer;
 use Drupal\content_relay_replica\ProcessedEvents;
@@ -27,8 +28,10 @@ use Drupal\Core\Entity\ContentEntityInterface;
 use Drupal\Core\Entity\EntityRepositoryInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Entity\Plugin\Validation\Constraint\EntityChangedConstraint;
+use Drupal\Core\Entity\Plugin\Validation\Constraint\ReferenceAccessConstraint;
 use Drupal\Core\Entity\RevisionLogInterface;
 use Drupal\Core\Lock\LockBackendInterface;
+use Drupal\file\FileInterface;
 use Psr\Log\LoggerInterface;
 use Symfony\Contracts\EventDispatcher\EventDispatcherInterface;
 
@@ -51,7 +54,8 @@ use Symfony\Contracts\EventDispatcher\EventDispatcherInterface;
  *    is written in one transaction. On any failure it rolls back and the
  *    previous version stays exactly as it was.
  * 7. After saving, the copy is hashed again and compared with the origin's
- *    hash.
+ *    hash, unless files it uses have not arrived yet: then it waits for
+ *    them (see FileSync) and is checked when they have.
  *
  * An item detached on this replica is never written by an event: creates and
  * updates are answered "skipped_detached", and deletes too unless this site
@@ -81,6 +85,7 @@ class SyncApplier {
     protected TimeInterface $time,
     protected LoggerInterface $logger,
     protected LocalChanges $localChanges,
+    protected FileSync $files,
   ) {}
 
   /**
@@ -289,10 +294,23 @@ class SyncApplier {
       $this->serializer->getUuidResolver()->reset($event->entityType);
       $this->eventDispatcher->dispatch(new ApplyEvent($event, $target), ContentRelayEvents::POST_APPLY);
 
+      // The binary of a file is fetched separately; the files the item uses
+      // are its dependencies, sent before it.
+      if ($target instanceof FileInterface && isset($event->files[0]['sha256'])) {
+        $this->files->register($target, $event->files[0]);
+      }
+      $file_uuids = array_column(array_filter($event->dependencies, fn (array $d) => $d['entity_type'] === 'file'), 'uuid');
+      if ($target instanceof FileInterface) {
+        $file_uuids[] = (string) $target->uuid();
+      }
+      $pending = $this->files->pendingAmong($file_uuids);
+
       // Hash what is actually stored, not what is in memory.
       $saved = $this->entityTypeManager->getStorage($event->entityType)->loadUnchanged($target->id());
       assert($saved instanceof ContentEntityInterface);
-      $local = $this->hasher->hash($this->serializer->normalize($saved, new NormalizationContext($event->langcodes)), [], $event->hashes->algorithmVersion);
+      $hash_context = new NormalizationContext($event->langcodes);
+      $hash_context->fileUrlResolver = $this->files->originUrlResolver();
+      $local = $this->hasher->hash($this->serializer->normalize($saved, $hash_context), [], $event->hashes->algorithmVersion);
       // What the copy should hash to: the origin's snapshot, with the
       // references this site resolved by its own policy swapped the same way.
       $expected = $context->substitutions === []
@@ -304,6 +322,10 @@ class SyncApplier {
       if ($context->unknownFields !== []) {
         $status = SyncStatus::SCHEMA_DRIFT;
         $error = sprintf('Fields from the origin that do not exist here were ignored: %s.', implode(', ', array_keys($context->unknownFields)));
+      }
+      elseif ($pending !== []) {
+        $status = SyncStatus::WAITING_FILES;
+        $error = sprintf('Waiting for %d file(s) to arrive.', count($pending));
       }
       elseif (!hash_equals($expected->entity, $local->entity)) {
         $status = SyncStatus::ERROR;
@@ -318,12 +340,16 @@ class SyncApplier {
         'source_hash' => $event->hashes->entity,
         'source_translation_hashes' => $event->hashes->translations,
         'local_hash' => $local->entity,
+        'expected_hash' => $expected->entity,
         'import_mode' => 'as_is',
         'origin_detached_at' => NULL,
         'status' => $status,
         'last_error' => $error,
         'last_event_id' => $event->eventId,
       ]);
+      if ($pending !== []) {
+        $this->files->waitFor($saved, $pending);
+      }
       $this->failures->resolve($event->eventId);
       $this->failures->supersede($event->entityType, $event->entityUuid, $event->eventId);
       $result = $this->answer($event, new ApplyResult(200, ApplyResult::APPLIED, $status === SyncStatus::SYNCED ? NULL : $status));
@@ -336,7 +362,7 @@ class SyncApplier {
 
     // Committed: anything that was waiting for this item can go now.
     $this->failures->retryDependents($event->entityType, $event->entityUuid);
-    if ($error !== NULL) {
+    if ($error !== NULL && $status !== SyncStatus::WAITING_FILES) {
       $this->logger->warning('@type @uuid was saved from event @event but is flagged @status: @error', [
         '@type' => $event->entityType,
         '@uuid' => $event->entityUuid,
@@ -363,6 +389,9 @@ class SyncApplier {
       $this->eventDispatcher->dispatch(new ApplyEvent($event, $entity), ContentRelayEvents::PRE_APPLY);
       $entity->delete();
       $this->syncState->delete($event->entityType, $event->entityUuid);
+      if ($entity instanceof FileInterface) {
+        $this->files->forget($event->entityUuid);
+      }
       $this->serializer->getUuidResolver()->reset($event->entityType);
       $this->eventDispatcher->dispatch(new ApplyEvent($event, $entity), ContentRelayEvents::POST_APPLY);
       $this->failures->resolve($event->eventId);
@@ -396,7 +425,9 @@ class SyncApplier {
       }
       return $this->entityTypeManager->getStorage($entity_type_id)->load($id) ? $id : NULL;
     };
-    return new DenormalizationContext(external: $external, externalFallback: $fallback);
+    $context = new DenormalizationContext(external: $external, externalFallback: $fallback);
+    $context->fileUrl = $this->files->urlCallback();
+    return $context;
   }
 
   /**
@@ -412,6 +443,13 @@ class SyncApplier {
         // "Modified by another user" compares changed times. Sync keeps the
         // origin's changed time, and decides staleness by revision itself.
         if ($violation->getConstraint() instanceof EntityChangedConstraint) {
+          continue;
+        }
+        // "You do not have access to the referenced entity" is about the
+        // user applying the event, typically anonymous for a webhook. Who may
+        // see the target was decided on the origin; here it only matters that
+        // the target exists, which ValidReference still checks.
+        if ($violation->getConstraint() instanceof ReferenceAccessConstraint) {
           continue;
         }
         $field = explode('.', (string) $violation->getPropertyPath())[0];

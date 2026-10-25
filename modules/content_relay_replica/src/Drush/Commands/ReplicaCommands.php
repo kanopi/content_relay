@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 namespace Drupal\content_relay_replica\Drush\Commands;
 
+use Drupal\content_relay_replica\File\FileSync;
 use Drupal\content_relay_replica\ItemDetacher;
+use Drupal\Core\Entity\ContentEntityInterface;
+use Drupal\Core\Entity\EntityRepositoryInterface;
 use Drupal\content_relay_replica\SyncStateStore;
 use Drush\Attributes as CLI;
 use Drush\Commands\AutowireTrait;
@@ -25,6 +28,10 @@ final class ReplicaCommands extends DrushCommands {
     private readonly ItemDetacher $detacher,
     #[Autowire(service: 'content_relay_replica.sync_state')]
     private readonly SyncStateStore $syncState,
+    #[Autowire(service: 'content_relay_replica.file_sync')]
+    private readonly FileSync $files,
+    #[Autowire(service: 'entity.repository')]
+    private readonly EntityRepositoryInterface $entityRepository,
   ) {
     parent::__construct();
   }
@@ -71,6 +78,54 @@ final class ReplicaCommands extends DrushCommands {
     }
     $this->logger()->success(dt('Reattached. The origin will send its current version.'));
     return self::EXIT_SUCCESS;
+  }
+
+  /**
+   * Fetches a synced file from the origin again.
+   */
+  #[CLI\Command(name: 'content-relay:pull-file', aliases: ['cr-pull-file'])]
+  #[CLI\Argument(name: 'uuid', description: 'UUID of the file.')]
+  public function pullFile(string $uuid): int {
+    $status = $this->files->pull($uuid);
+    if ($status !== FileSync::DONE) {
+      $record = $this->files->get($uuid);
+      $this->logger()->error(dt('The file could not be fetched: @error', ['@error' => $record['last_error'] ?? 'it was not received from the origin']));
+      return self::EXIT_FAILURE;
+    }
+    $this->logger()->success(dt('Fetched.'));
+    return self::EXIT_SUCCESS;
+  }
+
+  /**
+   * Fetches missing or altered files: of one item, or of every synced file.
+   */
+  #[CLI\Command(name: 'content-relay:pull-missing-files', aliases: ['cr-pull-missing'])]
+  #[CLI\Argument(name: 'entity_type', description: 'Entity type ID of a synced item.')]
+  #[CLI\Argument(name: 'uuid', description: 'UUID of the item.')]
+  #[CLI\Option(name: 'all', description: 'Check every synced file instead.')]
+  #[CLI\Usage(name: 'drush content-relay:pull-missing-files --all', description: 'Fetch every synced file that is missing or altered.')]
+  public function pullMissingFiles(?string $entity_type = NULL, ?string $uuid = NULL, array $options = ['all' => FALSE]): int {
+    if ($options['all']) {
+      $uuids = $this->files->verifyAll();
+    }
+    else {
+      /** @var \Drupal\Core\Entity\EntityInterface|null $entity */
+      $entity = $entity_type === NULL || $uuid === NULL ? NULL : $this->entityRepository->loadEntityByUuid($entity_type, $uuid);
+      if (!$entity instanceof ContentEntityInterface || $this->syncState->get($entity_type, $uuid) === NULL) {
+        $this->logger()->error(dt('Give a synced item (entity type and UUID), or --all.'));
+        return self::EXIT_FAILURE;
+      }
+      $uuids = $this->files->queueMissingFor($entity);
+    }
+    $failed = 0;
+    foreach ($uuids as $file_uuid) {
+      $failed += (int) ($this->files->pull($file_uuid) !== FileSync::DONE);
+    }
+    $this->logger()->notice(dt('@count file(s) missing or altered; @fetched fetched.', [
+      '@count' => count($uuids),
+      '@fetched' => count($uuids) - $failed,
+    ]));
+    return $failed === 0 ? self::EXIT_SUCCESS : self::EXIT_FAILURE;
   }
 
 }

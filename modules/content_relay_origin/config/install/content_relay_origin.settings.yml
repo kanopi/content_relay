@@ -15,3 +15,5 @@ pairing:
   require_approval: false
 not_syncable:
   behavior: detach
+files:
+  link_lifetime: 3600

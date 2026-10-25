@@ -40,6 +40,15 @@ services:
       - '@entity_type.bundle.info'
       - '@plugin.manager.content_relay_normalizer'
 
+  # Files.
+  content_relay.file_checksums:
+    class: Drupal\content_relay\File\FileChecksums
+    arguments: ['@database']
+
+  content_relay.file_url_mapper:
+    class: Drupal\content_relay\File\FileUrlMapper
+    arguments: ['@file_url_generator', '@entity_type.manager', '@config.factory', '@request_stack']
+
   content_relay.revision_hasher:
     class: Drupal\content_relay\Hash\RevisionHasher
 

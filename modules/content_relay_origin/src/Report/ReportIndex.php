@@ -258,7 +258,7 @@ class ReportIndex {
    *   The item.
    * @param \Drupal\content_relay_origin\Replica $replica
    *   The replica.
-   * @param array{revision: int, hashes: \Drupal\content_relay\Hash\RevisionHashes} $latest
+   * @param array{revision: int, hashes: \Drupal\content_relay\Hash\RevisionHashes, unresolved: array} $latest
    *   The item's current revision and hashes.
    *
    * @return array[]
@@ -296,6 +296,7 @@ class ReportIndex {
       'last_attempt' => $row !== NULL && (int) $row['attempts'] > 0 ? (int) $row['changed'] : NULL,
       'last_success' => $this->outbox->lastSuccessFor($replica->id, $entity_type_id, $uuid) ?? ($item === NULL ? NULL : (int) $item['updated']),
       'last_error' => NULL,
+      'unresolved_files' => count(array_filter($latest['unresolved'], fn ($u) => ($u['entity_type'] ?? NULL) === 'file')),
     ];
 
     // What applies to the item as a whole, whatever the translation.

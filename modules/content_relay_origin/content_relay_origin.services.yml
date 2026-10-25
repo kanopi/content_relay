@@ -49,6 +49,7 @@ services:
       - '@content_relay_origin.contract_manager'
       - '@content_relay_origin.not_syncable'
       - '@content_relay_origin.report'
+      - '@content_relay_origin.replica_items'
 
   content_relay_origin.event_builder:
     class: Drupal\content_relay_origin\EventBuilder
@@ -61,6 +62,9 @@ services:
       - '@content_relay_origin.sync_scope'
       - '@content_relay_origin.not_syncable'
       - '@datetime.time'
+      - '@content_relay_origin.file_links'
+      - '@content_relay.file_checksums'
+      - '@file_url_generator'
 
   content_relay_origin.delivery:
     class: Drupal\content_relay_origin\DeliveryService
@@ -229,3 +233,17 @@ services:
   content_relay_origin.report_views_data:
     class: Drupal\content_relay_origin\Report\ReportViewsData
     arguments: ['@content_relay.syncable_entity_types']
+
+  content_relay_origin.file_links:
+    class: Drupal\content_relay_origin\File\FileLinks
+    arguments: ['@content_relay.key_store', '@config.factory', '@datetime.time']
+
+  content_relay_origin.file_access:
+    class: Drupal\content_relay_origin\File\FileAccess
+    arguments:
+      - '@content_relay_origin.hash_store'
+      - '@content_relay_origin.sync_scope'
+      - '@content_relay_origin.contract_manager'
+      - '@content_relay_origin.not_syncable'
+      - '@content_relay_origin.replica_registry'
+      - '@entity.repository'

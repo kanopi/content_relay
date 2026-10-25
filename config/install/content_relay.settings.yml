@@ -4,3 +4,5 @@ signature:
   clock_window: 300
 users:
   sync_roles: false
+files:
+  own_domains: []

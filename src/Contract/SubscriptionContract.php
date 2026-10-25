@@ -141,9 +141,20 @@ final class SubscriptionContract {
   }
 
   /**
+   * Entity types a replica receives along with the content that uses them.
+   *
+   * They are never subscribed to on their own: a replica gets exactly the
+   * files its content uses.
+   */
+  public const FOLLOWING_TYPES = ['file'];
+
+  /**
    * Whether a bundle is in force.
    */
   public function allowsBundle(string $entity_type_id, string $bundle): bool {
+    if (in_array($entity_type_id, self::FOLLOWING_TYPES, TRUE)) {
+      return TRUE;
+    }
     return in_array($bundle, $this->effectiveBundles()[$entity_type_id] ?? [], TRUE);
   }
 

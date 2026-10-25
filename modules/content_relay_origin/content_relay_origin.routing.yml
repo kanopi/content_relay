@@ -26,6 +26,30 @@ content_relay_origin.inbox:
   options:
     no_cache: TRUE
 
+content_relay_origin.file_info:
+  path: '/content-relay/v1/files/{uuid}'
+  defaults:
+    _controller: '\Drupal\content_relay_origin\Controller\FileController::info'
+  methods: [GET]
+  requirements:
+    # Open on purpose: authenticated by the replica's JWT in the controller.
+    _access: 'TRUE'
+    uuid: '[0-9a-fA-F\-]{36}'
+  options:
+    no_cache: TRUE
+
+content_relay_origin.file_download:
+  path: '/content-relay/v1/files/{uuid}/download'
+  defaults:
+    _controller: '\Drupal\content_relay_origin\Controller\FileController::download'
+  methods: [GET]
+  requirements:
+    # Open on purpose: authorized by the signed link, checked in the controller.
+    _access: 'TRUE'
+    uuid: '[0-9a-fA-F\-]{36}'
+  options:
+    no_cache: TRUE
+
 # Administration.
 content_relay_origin.settings:
   path: '/admin/config/services/content-relay/origin'

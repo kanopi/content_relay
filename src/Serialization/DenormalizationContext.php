@@ -66,6 +66,17 @@ final class DenormalizationContext {
   public array $prefix = [];
 
   /**
+   * Decides the URL a file token in text becomes.
+   *
+   * Given the file's UUID and image style, returns the URL to write, or NULL
+   * when the file is not here yet. Without it, files get this site's own
+   * URLs.
+   *
+   * @var (\Closure(string, string|null): (string|null))|null
+   */
+  public ?\Closure $fileUrl = NULL;
+
+  /**
    * Items replaced or dropped by local policy rather than copied.
    *
    * Applying them to the received snapshot gives what the saved entity should

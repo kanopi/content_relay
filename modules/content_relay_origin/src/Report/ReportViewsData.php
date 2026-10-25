@@ -74,6 +74,7 @@ final class ReportViewsData {
     $data[$table]['last_attempt'] = $this->date($this->t('Last attempt'));
     $data[$table]['last_success'] = $this->date($this->t('Last success'));
     $data[$table]['last_error'] = $this->string($this->t('Last error'));
+    $data[$table]['unresolved_files'] = $this->numeric($this->t('Unresolved file links'));
     $data[$table]['changed'] = $this->date($this->t('Changed on origin'));
     $data[$table]['content_relay_report_actions'] = [
       'title' => $this->t('Report actions'),

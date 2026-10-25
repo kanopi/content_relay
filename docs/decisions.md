@@ -305,3 +305,59 @@ rather than an optional extra.
 The event log pages arrive with the remaining admin UI in phase 12. Until
 then the push form shows the entry's number rather than a link.
 
+## 36. Files follow the content that uses them
+
+Files are not a bundle to publish or subscribe to. A replica receives exactly
+the files its content uses, sent before that content, and later changes to a
+file go only to replicas that have it. The file endpoint and download links
+apply the same rule, through a record of which items use which files kept
+with each item's hash.
+
+## 37. A file's location is metadata, its content is hashed
+
+The specification says a file path change alone must not change the hash and
+a content change must. So a file entity's URI travels as metadata and its
+SHA-256 and size are hashed, and every reference to a file (field items, and
+the list of files linked in a text) carries the file's checksum. A replica
+that already has a file at that URI that it did not sync, or another file
+entity there, gets a free name next to it rather than overwriting it.
+
+## 38. File links in text are tokens; query strings are dropped
+
+A link to one of the site's files becomes `{cr-file:<uuid>}`, or
+`{cr-file:<uuid>:<style>}` for an image style derivative. The derivative's
+`itok` and any other query string or fragment on a file URL are not kept:
+each site generates its own derivative URLs. Links to files that do not exist
+are left untouched and reported, not dropped.
+
+## 39. Download links are signed with the origin's key, and root-relative
+
+No new secret: the origin signs the file UUID, replica ID and expiry with its
+Ed25519 signing key and checks them against its own public keys. Links are
+relative to the origin URL the replica paired with, so they do not depend on
+what URL the origin believes it has during a queue run. The download and the
+file endpoint answer 404 both for files that do not exist and for files the
+replica may not have, so neither can be used to probe.
+
+## 40. Applying ignores "no access to the referenced entity"
+
+Reference fields check that the current user may see each referenced entity.
+Events are applied by whoever handles the request, typically anonymous for a
+webhook, so that check says nothing about the content; whether the target
+exists is still checked.
+
+## 41. File encryption arrives with message encryption
+
+Encrypting a file only helps if its key travels inside an encrypted event,
+and encrypted events are phase 7. The streaming cipher is built and tested
+now (including a 32 MB file without memory growth, and refusal of altered,
+truncated or wrongly keyed files); phase 7 switches it on with the encryption
+mode in the contract.
+
+## 42. Links left at the origin use derivative URLs by convention
+
+With `files.links: origin`, a link to an image style derivative is rebuilt as
+the origin's standard derivative path, without `itok`. That works where the
+derivative already exists on the origin (served by the web server) or where
+the origin allows derivatives without a token; otherwise prefer local links.
+

@@ -9,6 +9,9 @@ use Drupal\content_relay\Contract\SubscriptionContract;
 use Drupal\content_relay\Event\Operation;
 use Drupal\content_relay\Event\ProcessingMode;
 use Drupal\content_relay\Event\SyncEvent;
+use Drupal\content_relay\File\FileChecksums;
+use Drupal\content_relay_origin\Controller\FileController;
+use Drupal\content_relay_origin\File\FileLinks;
 use Drupal\content_relay\Hash\RevisionHasher;
 use Drupal\content_relay\Serialization\EntitySerializer;
 use Drupal\content_relay\Serialization\NormalizationContext;
@@ -16,6 +19,8 @@ use Drupal\Core\Entity\ContentEntityInterface;
 use Drupal\Core\Entity\EntityChangedInterface;
 use Drupal\Core\Entity\EntityRepositoryInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
+use Drupal\Core\File\FileUrlGeneratorInterface;
+use Drupal\file\FileInterface;
 
 /**
  * Builds the event for an outbox row, from the entity as it is now.
@@ -31,6 +36,9 @@ class EventBuilder {
     protected SyncScope $scope,
     protected NotSyncableFlags $flags,
     protected TimeInterface $time,
+    protected FileLinks $fileLinks,
+    protected FileChecksums $checksums,
+    protected FileUrlGeneratorInterface $fileUrlGenerator,
   ) {}
 
   /**
@@ -107,10 +115,30 @@ class EventBuilder {
       contractVersion: $contract->version(),
       created: $this->time->getCurrentTime(),
       dependencies: $dependencies,
+      files: $this->files($entity, $row['replica_id']),
       process: $process,
       previousSequence: $previous_sequence,
       externalReferences: $external,
+      unresolved: $context->unresolved,
     );
+  }
+
+  /**
+   * The binaries a replica fetches for an event: a file entity's own.
+   *
+   * @return array[]
+   *   File metadata with a signed download link; empty for other entities and
+   *   for a file missing from storage, whose entity still goes.
+   */
+  protected function files(ContentEntityInterface $entity, string $replica_id): array {
+    if (!$entity instanceof FileInterface) {
+      return [];
+    }
+    $checksum = $this->checksums->forUri($entity->getFileUri());
+    if ($checksum === NULL) {
+      return [];
+    }
+    return [FileController::metadata($entity, $checksum, $this->fileLinks->build($entity, $replica_id), $this->fileUrlGenerator)];
   }
 
   /**
@@ -148,7 +176,7 @@ class EventBuilder {
       foreach ($uuids as $uuid) {
         $target = $loaded[$uuid] ?? NULL;
         $reference = ['entity_type' => $entity_type_id, 'uuid' => $uuid];
-        if ($target !== NULL && $this->scope->applies($target) && $contract->allowsBundle($entity_type_id, $target->bundle()) && !$this->flags->isBlocked($entity_type_id, $uuid, $replica_id)) {
+        if ($target !== NULL && $this->scope->canSend($target) && $contract->allowsBundle($entity_type_id, $target->bundle()) && !$this->flags->isBlocked($entity_type_id, $uuid, $replica_id)) {
           $dependencies[] = $reference;
         }
         else {

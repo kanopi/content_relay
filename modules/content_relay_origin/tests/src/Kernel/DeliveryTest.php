@@ -94,11 +94,12 @@ final class DeliveryTest extends KernelTestBase {
     $this->installEntitySchema('user');
     $this->installEntitySchema('node');
     $this->installSchema('node', ['node_access']);
-    $this->installSchema('content_relay', ['content_relay_seen_message']);
+    $this->installSchema('content_relay', ['content_relay_seen_message', 'content_relay_file_checksum']);
     $this->installSchema('content_relay_origin', [
       ReplicaRegistry::TABLE,
       Outbox::TABLE,
       HashStore::TABLE,
+      HashStore::FILE_REF_TABLE,
       ContractManager::TABLE,
       PairingCodes::TABLE,
       ReplicaItems::TABLE,

@@ -38,3 +38,41 @@ content_relay_replica.settings:
         follow_deletes:
           type: boolean
           label: 'Delete a detached item when the origin deletes it'
+    files:
+      type: mapping
+      label: 'Files'
+      mapping:
+        pending:
+          type: string
+          label: 'Content whose files have not arrived: publish as received, or hold unpublished'
+          constraints:
+            Choice:
+              - publish
+              - hold
+        links:
+          type: string
+          label: 'Links to files in text point at this site''s copies (local) or the origin''s (origin)'
+          constraints:
+            Choice:
+              - local
+              - origin
+        max_attempts:
+          type: integer
+          label: 'Download attempts before a file is marked as failed'
+        retry_base:
+          type: integer
+          label: 'First retry delay, in seconds'
+        timeout:
+          type: integer
+          label: 'Download timeout, in seconds'
+        fetch_on_miss:
+          type: string
+          label: 'When a synced file is requested and missing here: off, redirect to the origin, or placeholder'
+          constraints:
+            Choice:
+              - 'off'
+              - redirect
+              - placeholder
+        verify_interval:
+          type: integer
+          label: 'Seconds between checks that every synced file is present and intact; 0 to disable'

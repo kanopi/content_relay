@@ -9,3 +9,11 @@ external_references:
     user: '0'
 detach:
   follow_deletes: false
+files:
+  pending: publish
+  links: local
+  max_attempts: 5
+  retry_base: 300
+  timeout: 300
+  fetch_on_miss: redirect
+  verify_interval: 86400

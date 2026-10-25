@@ -34,6 +34,9 @@ use Psr\Http\Message\RequestInterface;
  * - down: TRUE to fail every request with a connection error.
  * - versions: contracts issued; acks: versions acknowledged; requests: log.
  * - notices: detach and attach notices received, each type and body.
+ * - files: files it serves, by UUID: content, uri and url. Downloads are
+ *   answered 410 while expire_downloads is positive and with wrong bytes
+ *   while corrupt_downloads is, each counting down; downloads counts them.
  */
 final class FakeOrigin {
 
@@ -86,7 +89,23 @@ final class FakeOrigin {
       }
       $body = json_decode((string) $request->getBody(), TRUE) ?? [];
       $config['requests'][] = ['path' => $request->getUri()->getPath(), 'body' => $body];
-      [$status, $answer] = match ($request->getUri()->getPath()) {
+      $path = $request->getUri()->getPath();
+      if (preg_match('#^/content-relay/v1/files/([0-9a-f\-]{36})(/download)?$#', $path, $m)) {
+        [$status, $answer] = empty($m[2]) ? $this->fileInfo($config, $m[1], $request) : $this->download($config, $m[1]);
+        $this->state->set(self::STATE, $config);
+        if (is_string($answer)) {
+          // A file: written where the client asked, as a real download is.
+          if (isset($options['sink']) && is_string($options['sink'])) {
+            file_put_contents($options['sink'], $answer);
+          }
+          return Create::promiseFor(new Response($status, ['Content-Type' => 'application/octet-stream'], $answer));
+        }
+        if (isset($options['sink']) && is_string($options['sink'])) {
+          file_put_contents($options['sink'], json_encode($answer));
+        }
+        return Create::promiseFor(new Response($status, ['Content-Type' => 'application/json'], json_encode($answer)));
+      }
+      [$status, $answer] = match ($path) {
         '/content-relay/v1/pair' => $this->pair($config, $body),
         '/content-relay/v1/messages' => $this->message($config, $body),
         default => [404, ['result' => 'not_found']],
@@ -136,6 +155,59 @@ final class FakeOrigin {
       'detach_notice', 'attach_notice' => $this->notice($config, $message['type'], $message['body'] ?? []),
       default => [400, ['result' => 'unsupported_type']],
     };
+  }
+
+  /**
+   * Metadata for a file, as the origin puts it in events and file answers.
+   */
+  public static function fileMeta(string $uuid, string $content, string $uri, int $expires = 0): array {
+    return [
+      'uuid' => $uuid,
+      'uri' => $uri,
+      'sha256' => hash('sha256', $content),
+      'size' => strlen($content),
+      'download' => '/content-relay/v1/files/' . $uuid . '/download?token=' . bin2hex(random_bytes(4)),
+      'expires' => $expires ?: time() + 3600,
+      'url' => '/sites/default/files/' . explode('://', $uri, 2)[1],
+      'encryption' => 'none',
+    ];
+  }
+
+  /**
+   * Answers the file endpoint.
+   */
+  private function fileInfo(array &$config, string $uuid, RequestInterface $request): array {
+    if (!str_starts_with($request->getHeaderLine('Authorization'), 'Bearer ')) {
+      return [401, ['result' => 'unauthenticated']];
+    }
+    $file = $config['files'][$uuid] ?? NULL;
+    if ($file === NULL) {
+      return [404, ['result' => 'not_found']];
+    }
+    return [200, self::fileMeta($uuid, $file['content'], $file['uri'])];
+  }
+
+  /**
+   * Answers a download.
+   *
+   * @return array{0: int, 1: array|string}
+   *   Status, and the bytes or an error answer.
+   */
+  private function download(array &$config, string $uuid): array {
+    $config['downloads'] = ($config['downloads'] ?? 0) + 1;
+    $file = $config['files'][$uuid] ?? NULL;
+    if ($file === NULL) {
+      return [404, ['result' => 'not_found']];
+    }
+    if (($config['expire_downloads'] ?? 0) > 0) {
+      $config['expire_downloads']--;
+      return [410, ['result' => 'expired']];
+    }
+    if (($config['corrupt_downloads'] ?? 0) > 0) {
+      $config['corrupt_downloads']--;
+      return [200, 'corrupted ' . $file['content']];
+    }
+    return [200, $file['content']];
   }
 
   /**

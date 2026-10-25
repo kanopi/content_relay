@@ -6,8 +6,10 @@ namespace Drupal\Tests\content_relay_replica\Functional;
 
 use Drupal\Component\Uuid\Php as PhpUuid;
 use Drupal\content_relay\Event\SyncEvent;
+use Drupal\content_relay_replica\File\FileSync;
 use Drupal\content_relay_replica\SyncStatus;
 use Drupal\content_relay_test\FakeOrigin;
+use Drupal\file\Entity\File;
 use Drupal\node\Entity\Node;
 use Drupal\Tests\BrowserTestBase;
 use Drupal\Tests\content_relay\Traits\FileKeyTrait;
@@ -32,7 +34,7 @@ final class ReplicaItemUiTest extends BrowserTestBase {
   /**
    * {@inheritdoc}
    */
-  protected static $modules = ['content_relay_replica', 'content_relay_test', 'node', 'views'];
+  protected static $modules = ['content_relay_replica', 'content_relay_test', 'file', 'node', 'views'];
 
   /**
    * {@inheritdoc}
@@ -99,8 +101,8 @@ final class ReplicaItemUiTest extends BrowserTestBase {
   /**
    * The item's sync status.
    */
-  private function syncStatus(string $uuid): string {
-    return $this->container->get('content_relay_replica.sync_state')->get('node', $uuid)['status'];
+  private function syncStatus(string $uuid, string $entity_type_id = 'node'): string {
+    return $this->container->get('content_relay_replica.sync_state')->get($entity_type_id, $uuid)['status'];
   }
 
   /**
@@ -222,6 +224,80 @@ final class ReplicaItemUiTest extends BrowserTestBase {
     $this->drush('content-relay:reattach', ['node', $this->uuid], ['accept-origin' => NULL]);
     $this->assertSame(SyncStatus::ERROR, $this->syncStatus($this->uuid));
     $this->drush('content-relay:reattach', ['node', $this->uuid], [], NULL, NULL, 1);
+  }
+
+  /**
+   * Applies a file as the fake origin would send it, and serves it there.
+   *
+   * @return string
+   *   Its UUID.
+   */
+  private function receiveFile(string $name, string $content): string {
+    $uri = 'public://' . $name;
+    file_put_contents($uri, $content);
+    $file = File::create(['uri' => $uri, 'filename' => $name, 'status' => 1, 'uid' => 0]);
+    $file->save();
+    $snapshot = json_decode(json_encode($this->container->get('content_relay.entity_serializer')->normalize($file)), TRUE);
+    $file->delete();
+    $this->container->get('content_relay.uuid_resolver')->reset();
+    $this->container->get('content_relay.file_checksums')->forget($uri);
+    $state = $this->container->get('state');
+    $config = $state->get(FakeOrigin::STATE);
+    $config['files'][$snapshot['uuid']] = ['content' => $content, 'uri' => $uri];
+    $state->set(FakeOrigin::STATE, $config);
+    $event = SyncEvent::fromArray([
+      'v' => SyncEvent::SCHEMA_VERSION,
+      'event_id' => (new PhpUuid())->generate(),
+      'sequence' => 1,
+      'previous_sequence' => NULL,
+      'operation' => 'create',
+      'entity_type' => 'file',
+      'bundle' => 'file',
+      'entity_uuid' => $snapshot['uuid'],
+      'source_revision' => 1,
+      'revisionable' => FALSE,
+      'source_changed' => 1700000000,
+      'default_langcode' => $snapshot['default_langcode'],
+      'langcodes' => array_keys($snapshot['translations']),
+      'hash' => $this->container->get('content_relay.revision_hasher')->hash($snapshot)->toArray(),
+      'contract_version' => 1,
+      'created' => 1700000000,
+      'dependencies' => [],
+      'external_references' => [],
+      'files' => [FakeOrigin::fileMeta($snapshot['uuid'], $content, $uri)],
+      'process' => NULL,
+      'snapshot' => $snapshot,
+    ]);
+    $this->container->get('content_relay_replica.applier')->apply($event, FakeOrigin::SITE_ID);
+    return $snapshot['uuid'];
+  }
+
+  /**
+   * Pulling a file from its page and with Drush.
+   */
+  public function testPullFile(): void {
+    $uuid = $this->receiveFile('pulled.pdf', 'pulled bytes');
+    $this->assertSame(FileSync::PENDING, $this->container->get('content_relay_replica.file_sync')->get($uuid)['status']);
+
+    $this->drupalLogin($this->drupalCreateUser(['pull content relay items', 'view content relay replica report']));
+    $this->drupalGet("admin/content/content-relay/file/$uuid/pull-files");
+    $this->assertSession()->pageTextContains('Pull pulled.pdf from the origin again?');
+    $this->submitForm([], 'Pull');
+    $this->assertSession()->pageTextContains('Fetched 1 file.');
+    $this->assertSame('pulled bytes', file_get_contents('public://pulled.pdf'));
+    $this->assertSame(SyncStatus::SYNCED, $this->syncStatus($uuid, 'file'));
+
+    // Drush, after the copy here was lost.
+    unlink('public://pulled.pdf');
+    $this->drush('content-relay:pull-missing-files', [], ['all' => NULL]);
+    $this->assertSame('pulled bytes', file_get_contents('public://pulled.pdf'));
+    $this->drush('content-relay:pull-file', [$uuid]);
+    $this->drush('content-relay:pull-file', ['9a4a4f0e-3b8e-4e8c-9d2c-2c6f8f4b1a01'], [], NULL, NULL, 1);
+
+    // Without the permission.
+    $this->drupalLogin($this->drupalCreateUser(['view content relay replica report']));
+    $this->drupalGet("admin/content/content-relay/file/$uuid/pull-files");
+    $this->assertSession()->statusCodeEquals(403);
   }
 
 }

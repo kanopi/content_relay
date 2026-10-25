@@ -347,7 +347,7 @@ class DeliveryService {
   protected function enqueueDependency(Replica $replica, string $entity_type_id, string $uuid): ?array {
     /** @var \Drupal\Core\Entity\EntityInterface|null $entity */
     $entity = $this->entityRepository->loadEntityByUuid($entity_type_id, $uuid);
-    if (!$entity instanceof ContentEntityInterface || !$this->scope->applies($entity)) {
+    if (!$entity instanceof ContentEntityInterface || !$this->scope->canSend($entity)) {
       return NULL;
     }
     $ids = $this->outbox->enqueue(Operation::Create, $entity_type_id, $entity->bundle(), $uuid, NULL, [$replica->id]);

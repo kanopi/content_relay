@@ -52,6 +52,7 @@ services:
       - '@datetime.time'
       - '@logger.channel.content_relay_replica'
       - '@content_relay_replica.local_changes'
+      - '@content_relay_replica.file_sync'
 
   content_relay_replica.contracts:
     class: Drupal\content_relay_replica\ContractStore
@@ -85,6 +86,7 @@ services:
       - '@http_client'
       - '@state'
       - '@logger.channel.content_relay_replica'
+      - '@content_relay.pull_authenticator'
 
   content_relay_replica.detacher:
     class: Drupal\content_relay_replica\ItemDetacher
@@ -104,3 +106,38 @@ services:
   content_relay_replica.sync_state_views_data:
     class: Drupal\content_relay_replica\Report\SyncStateViewsData
     arguments: ['@content_relay.syncable_entity_types']
+
+  # Replace to fetch binaries some other way, such as from replicated storage.
+  content_relay_replica.file_transport:
+    class: Drupal\content_relay_replica\File\HttpFileTransport
+    arguments: ['@http_client', '@content_relay_replica.origin', '@config.factory']
+
+  content_relay_replica.file_sync:
+    class: Drupal\content_relay_replica\File\FileSync
+    arguments:
+      - '@database'
+      - '@queue'
+      - '@content_relay_replica.file_transport'
+      - '@content_relay_replica.origin_client'
+      - '@content_relay_replica.origin'
+      - '@content_relay.file_checksums'
+      - '@file_system'
+      - '@content_relay.file_url_mapper'
+      - '@entity.repository'
+      - '@content_relay_replica.sync_state'
+      - '@content_relay.entity_serializer'
+      - '@content_relay.revision_hasher'
+      - '@config.factory'
+      - '@datetime.time'
+      - '@logger.channel.content_relay_replica'
+
+  content_relay_replica.fetch_on_miss:
+    class: Drupal\content_relay_replica\EventSubscriber\FetchOnMiss
+    arguments:
+      - '@content_relay.file_url_mapper'
+      - '@entity_type.manager'
+      - '@content_relay_replica.sync_state'
+      - '@content_relay_replica.file_sync'
+      - '@config.factory'
+    tags:
+      - { name: event_subscriber }

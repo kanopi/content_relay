@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Drupal\content_relay_replica;
 
+use Drupal\content_relay\Auth\PullAuthenticatorInterface;
 use Drupal\content_relay\Crypto\MessageSigner;
 use Drupal\Core\State\StateInterface;
 use GuzzleHttp\ClientInterface;
@@ -11,7 +12,10 @@ use GuzzleHttp\Exception\GuzzleException;
 use Psr\Log\LoggerInterface;
 
 /**
- * Sends signed notices about items to the origin's inbox.
+ * Talks to the origin on the replica's initiative: notices and file requests.
+ *
+ * Notices about items are signed messages to the origin's inbox; file
+ * requests carry the replica's short-lived JWT.
  *
  * A notice that cannot be delivered is kept and sent again by cron. Only the
  * latest notice per item is kept: a detach followed by a reattach while the
@@ -27,7 +31,44 @@ class OriginClient {
     protected ClientInterface $httpClient,
     protected StateInterface $state,
     protected LoggerInterface $logger,
+    protected PullAuthenticatorInterface $authenticator,
   ) {}
+
+  /**
+   * Fresh metadata and a download link for a file, from the file endpoint.
+   *
+   * @return array{uuid: string, uri: string, sha256: string, size: int, download: string, expires: int, url: string|null}
+   *   The metadata.
+   *
+   * @throws \Drupal\content_relay_replica\SubscriptionException
+   *   When the origin cannot be asked or will not say.
+   */
+  public function fileInfo(string $uuid): array {
+    $origin = $this->origin->get();
+    if ($origin === NULL) {
+      throw new SubscriptionException('This site is not paired.');
+    }
+    try {
+      $token = $this->authenticator->issue($origin['site_id'], 'sync:read');
+      $response = $this->httpClient->request('GET', rtrim($origin['url'], '/') . '/content-relay/v1/files/' . rawurlencode($uuid), [
+        'headers' => ['Accept' => 'application/json', 'Authorization' => 'Bearer ' . $token],
+        'timeout' => 30,
+        'http_errors' => FALSE,
+        'allow_redirects' => FALSE,
+      ]);
+    }
+    catch (GuzzleException $e) {
+      throw new SubscriptionException(sprintf('The origin could not be reached: %s', $e->getMessage()), 0, $e);
+    }
+    catch (\RuntimeException $e) {
+      throw new SubscriptionException(sprintf('No token could be issued: %s', $e->getMessage()), 0, $e);
+    }
+    $info = json_decode((string) $response->getBody(), TRUE);
+    if ($response->getStatusCode() !== 200 || !is_array($info) || !is_string($info['sha256'] ?? NULL) || !is_string($info['download'] ?? NULL)) {
+      throw new SubscriptionException(sprintf('The origin answered HTTP %d%s.', $response->getStatusCode(), is_array($info) && is_string($info['result'] ?? NULL) ? ' (' . $info['result'] . ')' : ''));
+    }
+    return $info;
+  }
 
   /**
    * Sends a notice about an item, or keeps it for later.
