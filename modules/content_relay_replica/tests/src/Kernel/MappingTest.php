@@ -10,9 +10,13 @@ use Drupal\content_relay_replica\Entity\ContentRelayMapping;
 use Drupal\content_relay_replica\SyncStatus;
 use Drupal\field\Entity\FieldConfig;
 use Drupal\field\Entity\FieldStorageConfig;
+use Drupal\language\Entity\ConfigurableLanguage;
+use Drupal\language\Entity\ContentLanguageSettings;
+use Drupal\node\Entity\Node;
 use Drupal\node\Entity\NodeType;
 use Drupal\node\NodeInterface;
 use Drupal\taxonomy\Entity\Term;
+use Drupal\Tests\ConfigTestTrait;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
 
@@ -24,6 +28,13 @@ use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
 #[Group('content_relay')]
 #[RunTestsInSeparateProcesses]
 final class MappingTest extends ReplicaTestBase {
+
+  use ConfigTestTrait;
+
+  /**
+   * {@inheritdoc}
+   */
+  protected static $modules = ['language', 'content_translation'];
 
   /**
    * A term that exists on both sites, with the same UUID.
@@ -201,6 +212,117 @@ final class MappingTest extends ReplicaTestBase {
     $snapshot = $this->article('As it is', ['body' => ['value' => 'Plain', 'format' => 'plain_text']]);
     $this->assertSame(ApplyResult::APPLIED, $this->apply($this->event($snapshot, Operation::Create, 1))->result);
     $this->assertSame('article', $this->local($snapshot['uuid'])->bundle());
+  }
+
+  /**
+   * A local edit to a mapped item is a conflict; no edit, no false flag.
+   */
+  public function testLocalEditOnMappedItem(): void {
+    $this->mapping();
+    $snapshot = $this->article('Discovery');
+    $this->apply($this->event($snapshot, Operation::Create, 1));
+
+    $result = $this->apply($this->event($this->retitle($snapshot, 'Discovery 2'), Operation::Update, 2));
+    $this->assertSame(ApplyResult::APPLIED, $result->result);
+    $this->assertNull($result->code, 'An unedited mapped item is not a conflict.');
+    $state = $this->container->get('content_relay_replica.sync_state')->get('node', $snapshot['uuid']);
+    $this->assertSame(SyncStatus::SYNCED, $state['status']);
+
+    // Edited here, in a field the origin also fills.
+    $this->newsItem($snapshot['uuid'])->set('field_subtitle', 'Our subtitle')->save();
+    $result = $this->apply($this->event($this->retitle($snapshot, 'Discovery 3'), Operation::Update, 3));
+    $this->assertSame(ApplyResult::APPLIED, $result->result);
+    $this->assertSame('conflict_overwritten', $result->code);
+    $node = $this->newsItem($snapshot['uuid']);
+    $this->assertSame(['Discovery 3', 'No subtitle'], [$node->label(), $node->get('field_subtitle')->value]);
+    $state = $this->container->get('content_relay_replica.sync_state')->get('node', $snapshot['uuid']);
+    $this->assertSame(SyncStatus::CONFLICT, $state['status']);
+    $edit = $this->container->get('entity_type.manager')->getStorage('node')->loadRevision($state['conflict_revision']);
+    assert($edit instanceof NodeInterface);
+    $this->assertSame('Our subtitle', $edit->get('field_subtitle')->value);
+  }
+
+  /**
+   * A mapping made on another environment arrives through config import.
+   */
+  public function testMappingImportsThroughConfigSync(): void {
+    $this->installConfig(['system']);
+    $this->mapping();
+    $active = $this->container->get('config.storage');
+    $sync = $this->container->get('config.storage.sync');
+    $this->copyConfig($active, $sync);
+    ContentRelayMapping::load('node__article')->delete();
+    $this->assertSame([], $this->container->get('config.storage')->listAll('content_relay_replica.mapping.'));
+
+    $this->configImporter()->import();
+    $mapping = ContentRelayMapping::load('node__article');
+    assert($mapping instanceof ContentRelayMapping);
+    $this->assertSame('news_item', $mapping->getTargetBundle());
+    $this->assertSame([], $this->container->get('content_relay_replica.mapped_importer')->validate($mapping));
+    $snapshot = $this->article('Imported mapping');
+    $this->assertSame(ApplyResult::APPLIED, $this->apply($this->event($snapshot, Operation::Create, 1))->result);
+    $this->assertSame('news_item', $this->newsItem($snapshot['uuid'])->bundle());
+  }
+
+  /**
+   * An untranslatable target takes the origin language the mapping names.
+   */
+  public function testUntranslatableTarget(): void {
+    $this->installConfig(['language']);
+    ConfigurableLanguage::createFromLangcode('fr')->save();
+    foreach (['article', 'news_item'] as $bundle) {
+      ContentLanguageSettings::loadByEntityTypeBundle('node', $bundle)
+        ->setLanguageAlterable(TRUE)
+        ->setThirdPartySetting('content_translation', 'enabled', TRUE)
+        ->save();
+      $this->container->get('content_translation.manager')->setEnabled('node', $bundle, TRUE);
+    }
+    // The origin translates its body; this site keeps one content field.
+    FieldConfig::loadByName('node', 'news_item', 'field_content')->set('translatable', FALSE)->save();
+    $this->container->get('entity_type.manager')->clearCachedDefinitions();
+    $this->container->get('entity_field.manager')->clearCachedFieldDefinitions();
+    $mapping = $this->mapping();
+    $mapping->set('ignored_source_fields', [
+      ...$mapping->get('ignored_source_fields'),
+      'content_translation_source',
+      'content_translation_outdated',
+    ])->save();
+
+    $node = Node::create([
+      'type' => 'article',
+      'title' => 'Discovery',
+      'langcode' => 'en',
+      'uid' => 0,
+      'body' => ['value' => '<p>English</p>', 'format' => 'full_html'],
+      'field_tags' => [$this->term],
+    ]);
+    $node->addTranslation('fr', [
+      'title' => 'Découverte',
+      'body' => ['value' => '<p>Français</p>', 'format' => 'full_html'],
+    ]);
+    $node->save();
+    $snapshot = $this->snapshot($node);
+    $this->forget($node);
+
+    // By default, from the origin's default language.
+    $result = $this->apply($this->event($snapshot, Operation::Create, 1));
+    $this->assertSame(ApplyResult::APPLIED, $result->result, (string) $result->message);
+    $item = $this->newsItem($snapshot['uuid']);
+    $this->assertSame(['en', 'fr'], array_keys($item->getTranslationLanguages()));
+    $this->assertSame('Découverte', $item->getTranslation('fr')->label());
+    foreach (['en', 'fr'] as $langcode) {
+      $this->assertSame('<p>English</p>', $item->getTranslation($langcode)->get('field_content')->value);
+    }
+
+    // Named: French feeds it, in every translation.
+    $mapping->set('translation', ['untranslatable_source' => 'fr'])->save();
+    $snapshot['translations']['en']['title'][0]['value'] = 'Discovery 2';
+    $this->assertSame(ApplyResult::APPLIED, $this->apply($this->event($snapshot, Operation::Update, 2))->result);
+    $item = $this->newsItem($snapshot['uuid']);
+    foreach (['en', 'fr'] as $langcode) {
+      $this->assertSame('<p>Français</p>', $item->getTranslation($langcode)->get('field_content')->value);
+    }
+    $this->assertSame(['Discovery 2', 'Découverte'], [$item->label(), $item->getTranslation('fr')->label()]);
   }
 
 }

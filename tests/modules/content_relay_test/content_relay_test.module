@@ -8,6 +8,7 @@
 declare(strict_types=1);
 
 use Drupal\Core\Database\DatabaseExceptionWrapper;
+use Drupal\media\MediaInterface;
 use Drupal\node\NodeInterface;
 
 /**
@@ -28,5 +29,16 @@ function content_relay_test_node_presave(NodeInterface $node): void {
     $pdo = new \PDOException('SQLSTATE[40001]: Serialization failure: 1213 Deadlock found when trying to get lock');
     $pdo->errorInfo = ['40001', 1213, 'Deadlock found when trying to get lock'];
     throw new DatabaseExceptionWrapper($pdo->getMessage(), 0, $pdo);
+  }
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_presave() for media.
+ *
+ * A name of "Explode" throws, as for nodes.
+ */
+function content_relay_test_media_presave(MediaInterface $media): void {
+  if ($media->label() === 'Explode') {
+    throw new \RuntimeException('Exploded while saving media.');
   }
 }

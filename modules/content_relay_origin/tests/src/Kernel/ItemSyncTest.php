@@ -230,8 +230,19 @@ final class ItemSyncTest extends OriginTestBase {
       'by' => 'editor',
       'at' => 1700000000,
     ];
+    // A notice altered after signing is refused and changes nothing.
+    $tampered = $this->replica->message('detach_notice', ['uuid' => $this->randomMachineName()] + $notice);
+    $tampered['message']['body']['uuid'] = $node->uuid();
+    $this->assertSame(403, $this->post('/content-relay/v1/messages', $tampered)->getStatusCode());
+    $this->assertNotSame(ReportIndex::DETACHED_BY_REPLICA, $this->reportStatus($node));
+
     $response = $this->post('/content-relay/v1/messages', $this->replica->message('detach_notice', $notice));
     $this->assertSame(200, $response->getStatusCode(), (string) $response->getContent());
+    $this->assertSame(ReportIndex::DETACHED_BY_REPLICA, $this->reportStatus($node));
+
+    $tampered = $this->replica->message('attach_notice', ['uuid' => $this->randomMachineName()] + $notice);
+    $tampered['message']['body']['uuid'] = $node->uuid();
+    $this->assertSame(403, $this->post('/content-relay/v1/messages', $tampered)->getStatusCode());
     $this->assertSame(ReportIndex::DETACHED_BY_REPLICA, $this->reportStatus($node));
 
     $node->setTitle('Changed')->save();

@@ -19,7 +19,9 @@ use Drupal\content_relay_replica\ProcessedEvents;
 use Drupal\content_relay_replica\Reconciler;
 use Drupal\content_relay_replica\StreamTracker;
 use Drupal\content_relay_replica\SyncStateStore;
+use Drupal\content_relay\Serialization\NormalizationContext;
 use Drupal\content_relay_test\FakeOrigin;
+use Drupal\Core\Entity\ContentEntityInterface;
 use Drupal\Core\Field\FieldStorageDefinitionInterface;
 use Drupal\key\Entity\Key;
 use Drupal\KernelTests\KernelTestBase;
@@ -272,6 +274,47 @@ abstract class ReplicaTestBase extends KernelTestBase {
     $this->updateFakeOrigin(function (array &$config) use ($snapshot, $event): void {
       $config['items'][$snapshot['entity_type'] . ':' . $snapshot['uuid']] = $event;
     });
+  }
+
+  /**
+   * Runs a queue until it is empty.
+   */
+  protected function drainQueue(string $name): void {
+    $queue = $this->container->get('queue')->get($name);
+    $worker = $this->container->get('plugin.manager.queue_worker')->createInstance($name);
+    while (is_object($item = $queue->claimItem())) {
+      $worker->processItem($item->data);
+      $queue->deleteItem($item);
+    }
+  }
+
+  /**
+   * Runs the retry queue until it is empty.
+   */
+  protected function runRetryQueue(): void {
+    $this->drainQueue(FailedEventStore::RETRY_QUEUE);
+  }
+
+  /**
+   * The snapshot of an entity, as the origin would send it.
+   *
+   * @param \Drupal\Core\Entity\ContentEntityInterface $entity
+   *   The entity, saved.
+   * @param string[]|null $langcodes
+   *   The languages the replica gets, or NULL for all.
+   */
+  protected function snapshot(ContentEntityInterface $entity, ?array $langcodes = NULL): array {
+    return json_decode(json_encode($this->container->get('content_relay.entity_serializer')->normalize($entity, new NormalizationContext($langcodes))), TRUE);
+  }
+
+  /**
+   * Deletes entities that stood in for the origin's, so only events remain.
+   */
+  protected function forget(ContentEntityInterface ...$entities): void {
+    foreach ($entities as $entity) {
+      $entity->delete();
+    }
+    $this->container->get('content_relay.uuid_resolver')->reset();
   }
 
   /**

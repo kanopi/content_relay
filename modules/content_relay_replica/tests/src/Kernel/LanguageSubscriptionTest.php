@@ -9,6 +9,7 @@ use Drupal\content_relay\Event\Operation;
 use Drupal\content_relay\Serialization\NormalizationContext;
 use Drupal\content_relay_replica\Apply\ApplyResult;
 use Drupal\content_relay_replica\LanguageSubscription;
+use Drupal\content_relay_replica\Reconciler;
 use Drupal\content_relay_replica\SyncStatus;
 use Drupal\language\Entity\ConfigurableLanguage;
 use Drupal\language\Entity\ContentLanguageSettings;
@@ -219,6 +220,11 @@ final class LanguageSubscriptionTest extends ReplicaTestBase {
         'taxonomy_term:tags' => [],
       ];
     });
+    // The origin serves both; which one the capped run takes first depends on
+    // the UUIDs.
+    $served = $changed;
+    $served['uuid'] = $other['uuid'];
+    $this->serveItem($served, 2);
     $this->container->get('state')->set('content_relay_replica.reconciled', time());
     $this->container->get('content_relay_replica.reconciler')->cron(5);
     $this->assertNull($this->container->get('state')->get(LanguageSubscription::BACKFILL));
@@ -227,6 +233,15 @@ final class LanguageSubscriptionTest extends ReplicaTestBase {
       $this->state($other['uuid'])['status'],
     ];
     $this->assertContains(SyncStatus::PENDING_BACKFILL, $statuses);
+
+    // Once the queue is worked through, both are in sync, French included.
+    $this->config('content_relay_replica.settings')->set('reconcile.max_items', 100)->save();
+    $this->drainQueue(Reconciler::QUEUE);
+    foreach ([$changed['uuid'], $other['uuid']] as $uuid) {
+      $state = $this->state($uuid);
+      $this->assertSame(SyncStatus::SYNCED, $state['status'], (string) $state['last_error']);
+      $this->assertSame('Bonjour encore', $this->local($uuid)->getTranslation('fr')->label());
+    }
   }
 
 }

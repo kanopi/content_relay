@@ -27,6 +27,26 @@ use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
 final class ApplyTest extends ReplicaTestBase {
 
   /**
+   * Unpublishing and republishing follow the origin, without moderation.
+   */
+  public function testUnpublishAndRepublish(): void {
+    $snapshot = $this->originArticle('Published');
+    $this->apply($this->event($snapshot, Operation::Create, 1));
+    $this->assertTrue($this->local($snapshot['uuid'])->isPublished());
+
+    $unpublished = $snapshot;
+    $unpublished['shared']['status'][0]['value'] = FALSE;
+    $this->assertSame(ApplyResult::APPLIED, $this->apply($this->event($unpublished, Operation::Update, 2))->result);
+    $this->assertFalse($this->local($snapshot['uuid'])->isPublished());
+    $this->assertSame(SyncStatus::SYNCED, $this->container->get('content_relay_replica.sync_state')->get('node', $snapshot['uuid'])['status']);
+
+    $this->assertSame(ApplyResult::APPLIED, $this->apply($this->event($snapshot, Operation::Update, 3))->result);
+    $node = $this->local($snapshot['uuid']);
+    $this->assertTrue($node->isPublished());
+    $this->assertCount(3, $this->revisions($node));
+  }
+
+  /**
    * Create, update and delete, with the same UUID and matching hashes.
    */
   public function testCreateUpdateDelete(): void {
@@ -414,18 +434,6 @@ final class ApplyTest extends ReplicaTestBase {
     $this->container->get('entity_type.manager')->getStorage('entity_test_mul')->resetCache();
     $stored = $this->container->get('entity.repository')->loadEntityByUuid('entity_test_mul', $snapshot['uuid']);
     $this->assertSame('v2', $stored->label());
-  }
-
-  /**
-   * Runs the retry queue until it is empty.
-   */
-  private function runRetryQueue(): void {
-    $queue = $this->container->get('queue')->get(FailedEventStore::RETRY_QUEUE);
-    $worker = $this->container->get('plugin.manager.queue_worker')->createInstance(FailedEventStore::RETRY_QUEUE);
-    while (is_object($item = $queue->claimItem())) {
-      $worker->processItem($item->data);
-      $queue->deleteItem($item);
-    }
   }
 
 }

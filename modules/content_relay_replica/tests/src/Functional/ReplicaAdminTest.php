@@ -8,6 +8,7 @@ use Drupal\content_relay_test\FakeOrigin;
 use Drupal\Tests\BrowserTestBase;
 use Drupal\Tests\content_relay\Traits\FileKeyTrait;
 use Drupal\content_relay_replica\LanguageSubscription;
+use Drupal\content_relay_replica\Schema\SchemaWatcher;
 use Drupal\language\Entity\ConfigurableLanguage;
 use Drush\TestTraits\DrushTestTrait;
 use PHPUnit\Framework\Attributes\Group;
@@ -199,6 +200,20 @@ final class ReplicaAdminTest extends BrowserTestBase {
     $this->assertSession()->pageTextContains('The origin confirmed contract version 2.');
     $terms = $this->container->get('content_relay_replica.subscription')->getReplicaTerms();
     $this->assertSame(['node.article' => ['mode' => 'selected', 'selected' => ['en']]], $terms['languages']['per_bundle']);
+  }
+
+  /**
+   * Switching to selected languages with none ticked keeps what is received.
+   */
+  public function testSwitchToSelectedLanguages(): void {
+    $this->container->get('state')->set(SchemaWatcher::STATE, ['_languages' => ['en' => 'English', 'es' => 'Spanish']]);
+    $this->pair();
+    $this->submitForm(['terms[language_mode]' => 'selected'], 'Propose changes');
+    $this->assertSession()->pageTextContains('The origin confirmed contract version 2.');
+    $terms = $this->container->get('content_relay_replica.subscription')->getReplicaTerms();
+    $this->assertSame(['selected', ['en', 'es']], [$terms['languages']['mode'], $terms['languages']['selected']]);
+    $this->assertSession()->checkboxChecked('terms[languages][en]');
+    $this->assertSession()->checkboxChecked('terms[languages][es]');
   }
 
   /**

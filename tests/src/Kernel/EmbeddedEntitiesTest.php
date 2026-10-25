@@ -10,6 +10,7 @@ use Drupal\field\Entity\FieldConfig;
 use Drupal\field\Entity\FieldStorageConfig;
 use Drupal\KernelTests\KernelTestBase;
 use Drupal\language\Entity\ConfigurableLanguage;
+use Drupal\Core\Entity\ContentEntityInterface;
 use Drupal\node\Entity\Node;
 use Drupal\node\Entity\NodeType;
 use Drupal\node\NodeInterface;
@@ -201,6 +202,7 @@ final class EmbeddedEntitiesTest extends KernelTestBase {
     $serializer = $this->container->get('content_relay.entity_serializer');
     $snapshot = $serializer->normalize($node);
     $removed = $this->paragraph($node, 0)->uuid();
+    $earlier_revision = $node->getRevisionId();
 
     // On the origin: the container is removed, "Last" edited and a new
     // paragraph added before it.
@@ -216,6 +218,22 @@ final class EmbeddedEntitiesTest extends KernelTestBase {
     $this->assertSame(['New', 'Last, edited'], $this->texts($saved));
     $this->assertNotContains($removed, [$this->paragraph($saved, 0)->uuid(), $this->paragraph($saved, 1)->uuid()]);
     $this->assertSame($last[Snapshot::EMBEDDED]['uuid'], $this->paragraph($saved, 1)->uuid(), 'The edited paragraph is the same entity.');
+
+    // The removed paragraph is kept only for the earlier revision. Once that
+    // revision is gone it is an orphan, and Entity Reference Revisions'
+    // purger deletes it.
+    $purger = $this->container->get('entity_reference_revisions.orphan_purger');
+    $paragraphs = $this->container->get('entity_type.manager')->getStorage('paragraph');
+    $orphan = $this->container->get('entity.repository')->loadEntityByUuid('paragraph', $removed);
+    assert($orphan instanceof ContentEntityInterface);
+    $this->assertTrue($purger->isUsed($orphan));
+    $this->container->get('entity_type.manager')->getStorage('node')->deleteRevision($earlier_revision);
+    $paragraphs->resetCache();
+    $orphan = $paragraphs->load($orphan->id());
+    assert($orphan instanceof ContentEntityInterface);
+    $this->assertFalse($purger->isUsed($orphan));
+    $this->assertTrue($purger->deleteUnusedRevision($orphan));
+    $this->assertNull($this->container->get('entity.repository')->loadEntityByUuid('paragraph', $removed));
   }
 
   /**

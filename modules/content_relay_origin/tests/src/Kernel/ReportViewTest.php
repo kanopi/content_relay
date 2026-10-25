@@ -6,6 +6,7 @@ namespace Drupal\Tests\content_relay_origin\Kernel;
 
 use Drupal\content_relay_origin\Report\ReportIndex;
 use Drupal\content_relay_origin\Report\ReportViews;
+use Drupal\node\Entity\Node;
 use Drupal\Tests\user\Traits\UserCreationTrait;
 use Drupal\views\Views;
 use PHPUnit\Framework\Attributes\Group;
@@ -71,6 +72,35 @@ final class ReportViewTest extends OriginTestBase {
     $this->assertSame(['Synced article'], $this->labels(['search' => 'Synced']));
     $this->assertSame(['Synced article'], $this->labels(['search' => $synced->uuid()]));
     $this->assertSame([], $this->labels(['replica' => 'nobody']));
+  }
+
+  /**
+   * Detached and failed rows, and the date range, filter as the others do.
+   */
+  public function testMoreFilters(): void {
+    $old = Node::create(['type' => 'article', 'title' => 'Old article', 'uid' => 0, 'changed' => 1600000000]);
+    $old->save();
+    $detached = $this->node('article', 'Detached article');
+    $this->deliver();
+    $this->container->get('content_relay_origin.item_sync_control')->replicaDetached($this->replica->siteId, 'node', $detached->uuid(), 'article');
+    // Refused for good, then refused for now.
+    $this->replica->eventResponses[] = [422, ['result' => 'failed', 'code' => 'save_failed']];
+    $this->node('page', 'Refused page');
+    $this->deliver();
+    $this->replica->eventResponses[] = [503, ['result' => 'busy']];
+    $this->node('page', 'Busy page');
+    $this->deliver();
+
+    $this->assertSame(['Detached article'], $this->labels(['status' => [ReportIndex::DETACHED_BY_REPLICA]]));
+    $this->assertSame(['Refused page'], $this->labels(['status' => [ReportIndex::DEAD_LETTERED]]));
+    $this->assertSame(['Busy page'], $this->labels(['status' => [ReportIndex::FAILED]]));
+    $this->assertSame(['Busy page', 'Refused page'], $this->labels(['any_out_of_sync' => 1]));
+    $this->assertSame(['Old article'], $this->labels(['changed' => ['min' => '2020-09-01', 'max' => '2020-09-30']]));
+    $this->assertSame([], $this->labels([
+      'changed' => ['min' => '2020-09-01', 'max' => '2020-09-30'],
+      'bundle' => 'page',
+    ]));
+    $this->assertSame(['Busy page', 'Detached article', 'Old article', 'Refused page'], $this->labels(['langcode' => 'en']));
   }
 
   /**

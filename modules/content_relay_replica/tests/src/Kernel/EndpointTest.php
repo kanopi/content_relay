@@ -28,8 +28,14 @@ final class EndpointTest extends ReplicaTestBase {
   /**
    * {@inheritdoc}
    */
+  protected static $modules = ['dblog'];
+
+  /**
+   * {@inheritdoc}
+   */
   protected function setUp(): void {
     parent::setUp();
+    $this->installSchema('dblog', ['watchdog']);
     $this->container->get('router.builder')->rebuild();
   }
 
@@ -110,6 +116,44 @@ final class EndpointTest extends ReplicaTestBase {
     $this->post($this->envelope($first));
     $this->post($this->envelope($third));
     $this->assertSame([[1, 2]], $this->container->get('content_relay_replica.stream')->getGaps(self::ORIGIN));
+  }
+
+  /**
+   * Language notices are signed; a tampered one changes and logs nothing.
+   */
+  public function testLanguageNotices(): void {
+    $message = new Message((new PhpUuid())->generate(), 'language_notice', self::ORIGIN, $this->container->get('content_relay.site_identity')->getSiteId(), time(), EncryptionMode::None, [
+      'changes' => [['change' => 'added', 'langcode' => 'de', 'name' => 'German']],
+    ]);
+    $signed = $this->container->get('content_relay.message_signer')->signMessage($message, $this->originKey)->toArray();
+
+    $tampered = $signed;
+    $tampered['message']['body']['changes'][0]['langcode'] = 'fr';
+    $response = $this->post($tampered);
+    $this->assertSame([403, 'bad_signature'], [
+      $response->getStatusCode(),
+      json_decode((string) $response->getContent(), TRUE)['result'],
+    ]);
+    $this->assertSame([], $this->logged('The origin added language%'));
+
+    $response = $this->post($signed);
+    $this->assertSame(['result' => 'acknowledged'], json_decode((string) $response->getContent(), TRUE));
+    $this->assertSame(['The origin added language de; it is received from now on.'], $this->logged('The origin added language%'));
+  }
+
+  /**
+   * Log messages like a pattern, with their placeholders filled in.
+   *
+   * @return string[]
+   *   The messages.
+   */
+  private function logged(string $like): array {
+    $rows = $this->container->get('database')->select('watchdog', 'w')
+      ->fields('w', ['message', 'variables'])
+      ->condition('message', $like, 'LIKE')
+      ->execute()
+      ->fetchAll();
+    return array_map(fn (object $row) => strtr($row->message, unserialize($row->variables, ['allowed_classes' => FALSE])), $rows);
   }
 
 }

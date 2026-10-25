@@ -192,6 +192,12 @@ final class MultilingualTest extends ReplicaTestBase {
     $this->assertSame(ApplyResult::CONFLICT, $result->result);
     $this->assertSame('Bonjour d’ici', $this->titles($snapshot['uuid'])['fr']);
 
+    // The diff shows the two French versions side by side.
+    $this->serveItem($with_fr, 2);
+    $diff = $this->container->get('content_relay_replica.conflicts')->diff('node', $snapshot['uuid']);
+    $this->assertContains(['field' => 'Title', 'langcode' => 'fr', 'local' => 'Bonjour d’ici', 'origin' => 'Bonjour'], $diff['rows']);
+    $this->assertSame([], array_values(array_filter($diff['rows'], fn (array $row) => $row['langcode'] === 'en')));
+
     // Keep ours: only French is detached; the rest follows the origin.
     $this->serveItem($this->translated(['en' => 'Hello, updated', 'fr' => 'Bonjour'], NULL, $snapshot['uuid']), 3);
     $this->container->get('content_relay_replica.conflicts')->keepLocal('node', $snapshot['uuid'], 'fr');
@@ -258,6 +264,24 @@ final class MultilingualTest extends ReplicaTestBase {
     }
     $this->assertSame(['en' => 'Hello', 'zh-cn' => '你好'], $this->titles($snapshot['uuid']));
     $this->assertNull($this->container->get('content_relay_replica.local_changes')->editedTranslations($this->local($snapshot['uuid']), $this->state($snapshot['uuid'])));
+  }
+
+  /**
+   * A failed save leaves every translation as it was.
+   */
+  public function testFailedSaveKeepsTranslations(): void {
+    $snapshot = $this->translated(['en' => 'Hello', 'fr' => 'Bonjour']);
+    $this->apply($this->event($snapshot, Operation::Create, 1));
+    $node = $this->local($snapshot['uuid']);
+    $revisions = count($this->revisions($node));
+
+    $exploding = $this->translated(['en' => 'Hello', 'fr' => 'Bonjour 2'], NULL, $snapshot['uuid']);
+    $exploding['translations']['en']['title'][0]['value'] = 'Explode';
+    $result = $this->apply($this->event($exploding, Operation::Update, 2));
+    $this->assertSame([422, 'save_failed'], [$result->httpStatus, $result->code]);
+    $this->assertSame(['en' => 'Hello', 'fr' => 'Bonjour'], $this->titles($snapshot['uuid']));
+    $this->assertCount($revisions, $this->revisions($this->local($snapshot['uuid'])));
+    $this->assertSame(1, (int) $this->state($snapshot['uuid'])['source_revision']);
   }
 
 }

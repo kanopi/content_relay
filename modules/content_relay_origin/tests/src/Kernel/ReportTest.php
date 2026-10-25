@@ -11,6 +11,7 @@ use Drupal\content_relay_origin\Report\ReportIndex;
 use Drupal\content_relay_origin\Report\ReportRebuild;
 use Drupal\Core\Queue\SuspendQueueException;
 use Drupal\node\NodeInterface;
+use Drupal\user\Entity\User;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
 
@@ -161,14 +162,17 @@ final class ReportTest extends OriginTestBase {
     // Languages the rows are not in select nothing.
     $this->assertSame([], $bulk->plan($ids, ['fr'])['items']);
 
+    $account = User::create(['name' => 'bulk pusher', 'status' => 1]);
+    $account->save();
+    $this->container->get('current_user')->setAccount($account);
     $context = [];
     $bulk::batchStep($plan['items'], $context);
     $this->assertSame(['queued' => 1], $context['results'][$this->replica->siteId]);
     $this->deliver();
     $this->assertCount($before + 1, $this->replica->events);
     $this->assertSame('One', $this->replica->events[$before]['snapshot']['shared']['title'][0]['value']);
-    $reasons = $this->container->get('database')->select(Outbox::TABLE, 'o')->fields('o', ['reason'])->condition('reason', Outbox::REASON_BULK)->execute()->fetchCol();
-    $this->assertCount(1, $reasons);
+    $bulk_rows = $this->container->get('database')->select(Outbox::TABLE, 'o')->fields('o', ['triggered_by'])->condition('reason', Outbox::REASON_BULK)->execute()->fetchCol();
+    $this->assertSame([(string) $account->id()], $bulk_rows, 'Logged with the user who pushed.');
 
     $this->assertSame(ReportIndex::IN_SYNC, $this->itemStatus($nodes['One']));
     $summary = (string) $bulk::summarize($context['results'])[0];

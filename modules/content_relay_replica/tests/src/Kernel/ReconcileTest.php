@@ -248,6 +248,30 @@ final class ReconcileTest extends ReplicaTestBase {
   }
 
   /**
+   * Validation sees a change made in the database, behind the entity API.
+   */
+  public function testValidateFindsDatabaseEdit(): void {
+    $item = $this->synced('Valid');
+    $this->serveItem($item, 1);
+    $node = $this->local($item['uuid']);
+    foreach (['node_field_data', 'node_field_revision'] as $table) {
+      $this->container->get('database')->update($table)
+        ->fields(['title' => 'Edited in SQL'])
+        ->condition('nid', $node->id())
+        ->execute();
+    }
+    // Nothing invalidated the entity cache, as with any direct query.
+    $this->container->get('entity.memory_cache')->deleteAll();
+    $this->container->get('cache.entity')->deleteAll();
+
+    $result = $this->container->get('content_relay_replica.validator')->validate('node', $item['uuid']);
+    $this->assertFalse($result['local']);
+    $this->assertTrue($result['origin'], 'The origin has nothing newer.');
+    $this->assertSame(SyncStatus::ERROR, $this->state($item['uuid'])['status']);
+    $this->assertStringContainsString('changed here', (string) $this->state($item['uuid'])['last_error']);
+  }
+
+  /**
    * Works through the reconciliation queue as cron would.
    *
    * @return int
