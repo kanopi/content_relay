@@ -12,6 +12,7 @@ conflicts:
   on_event: overwrite
 reconcile:
   interval: 86400
+  max_items: 100
 detach:
   follow_deletes: false
 files:

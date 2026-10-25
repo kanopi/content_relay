@@ -143,8 +143,10 @@ class OriginClient {
    * @param int[] $sequences
    *   Sequence numbers.
    *
-   * @return list<array{sequence: int, operation: string, entity_type: string, bundle: string, uuid: string, current: string}>
-   *   The events the origin knows of; see the origin's ReadController.
+   * @return array{answered: int[], events: list<array{sequence: int, operation: string, entity_type: string, bundle: string, uuid: string, current: string}>}
+   *   The sequences the origin looked up (fewer than asked when this site is
+   *   near its read limit), and the events it knows of among them; see the
+   *   origin's ReadController.
    *
    * @throws \Drupal\content_relay_replica\SubscriptionException
    */
@@ -163,7 +165,8 @@ class OriginClient {
         ];
       }
     }
-    return $events;
+    $answered = is_array($body['answered'] ?? NULL) ? array_map('intval', $body['answered']) : $sequences;
+    return ['answered' => $answered, 'events' => $events];
   }
 
   /**
@@ -193,6 +196,9 @@ class OriginClient {
     }
     catch (\RuntimeException $e) {
       throw new SubscriptionException(sprintf('No token could be issued: %s', $e->getMessage()), 0, $e);
+    }
+    if ($response->getStatusCode() === 429) {
+      throw new RateLimitedException(max(1, (int) $response->getHeaderLine('Retry-After') ?: 60));
     }
     $answer = json_decode((string) $response->getBody(), TRUE);
     if ($response->getStatusCode() !== 200 || !is_array($answer)) {

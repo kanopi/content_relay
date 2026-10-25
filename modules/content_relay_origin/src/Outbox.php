@@ -47,6 +47,11 @@ class Outbox {
    */
   public const REASON_ATTACH = 'attach';
 
+  /**
+   * Re-sent by reconciliation, because the replica did not have it.
+   */
+  public const REASON_RECONCILE = 'reconcile';
+
   public function __construct(
     protected Connection $database,
     protected ReplicaRegistry $registry,

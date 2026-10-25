@@ -112,17 +112,17 @@ class BulkPush {
    *   "queued", or why it was not: not_syncable, detached_by_replica,
    *   not_in_contract or gone.
    */
-  public function queue(array $item): string {
-    $reason = $this->control->blockReason($item['replica_id'], $item['entity_type'], $item['uuid'], $item['bundle']);
-    if ($reason !== NULL) {
-      return $reason;
+  public function queue(array $item, string $reason = Outbox::REASON_BULK): string {
+    $blocked = $this->control->blockReason($item['replica_id'], $item['entity_type'], $item['uuid'], $item['bundle']);
+    if ($blocked !== NULL) {
+      return $blocked;
     }
     $latest = $this->hashStore->latest($item['entity_type'], $item['uuid']);
     if ($latest === NULL) {
       return 'gone';
     }
     $operation = $this->items->isKnown($item['replica_id'], $item['entity_type'], $item['uuid']) ? Operation::Update : Operation::Create;
-    $ids = $this->outbox->enqueue($operation, $item['entity_type'], $item['bundle'], $item['uuid'], $latest['revision'], [$item['replica_id']], (int) $this->currentUser->id(), reason: Outbox::REASON_BULK);
+    $ids = $this->outbox->enqueue($operation, $item['entity_type'], $item['bundle'], $item['uuid'], $latest['revision'], [$item['replica_id']], (int) $this->currentUser->id(), reason: $reason);
     return isset($ids[$item['replica_id']]) ? 'queued' : 'not_in_contract';
   }
 
@@ -132,10 +132,10 @@ class BulkPush {
    * @return array<string, array<string, int>>
    *   By replica, counts of outcomes.
    */
-  public function queueMultiple(array $items): array {
+  public function queueMultiple(array $items, string $reason = Outbox::REASON_BULK): array {
     $outcomes = [];
     foreach ($items as $item) {
-      $outcome = $this->queue($item);
+      $outcome = $this->queue($item, $reason);
       $outcomes[$item['replica_id']][$outcome] = ($outcomes[$item['replica_id']][$outcome] ?? 0) + 1;
     }
     $this->scheduler->schedule(array_keys($outcomes));

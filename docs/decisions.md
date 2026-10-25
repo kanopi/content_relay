@@ -521,3 +521,25 @@ deletes or marks it accordingly, which brings it to the same place.
 which compares both sides from one button. The origin's report already
 learns each replica's state from delivery results and status polling.
 
+## 65. Reconciliation is capped on both sides, and the rest is queued
+
+Each side acts on at most `reconcile.max_items` items per run; the rest go
+into a Drupal queue whose worker stops at the same number per cron run. A new
+run waits for the queue to empty, so nothing is queued twice. A queued delete
+is skipped if the item was applied after it was queued.
+
+## 66. The origin limits what each replica reads
+
+A per-replica budget of items per window, kept in expirable key/value, covers
+the endpoints whose cost grows with items: items, hash listings and stream
+lookups. Over it the answer is 429 with Retry-After; a hash page or stream
+lookup near the limit is cut short instead. Concurrent requests can overshoot
+the budget slightly; it is a brake, not an exact quota.
+
+## 67. The origin's reconciliation re-sends from the status report
+
+The origin cannot see a replica's local edits or deletions, only what the
+replica acknowledged. So its reconciliation re-sends what the report already
+shows as missing or out of date (out of sync, never sent, failed,
+dead-lettered); the replica's reconciliation covers the rest.
+

@@ -295,7 +295,22 @@ services:
       - '@content_relay_origin.replica_registry'
       - '@content_relay.message_signer'
       - '@logger.channel.content_relay_origin'
+      - '@config.factory'
+      - '@keyvalue.expirable'
+      - '@datetime.time'
 
   content_relay_origin.hash_backfill:
     class: Drupal\content_relay_origin\HashBackfill
     arguments: ['@entity_type.manager', '@content_relay_origin.sync_scope', '@content_relay_origin.hash_store']
+
+  content_relay_origin.reconciler:
+    class: Drupal\content_relay_origin\OriginReconciler
+    arguments:
+      - '@database'
+      - '@content_relay_origin.report'
+      - '@content_relay_origin.bulk_push'
+      - '@queue'
+      - '@config.factory'
+      - '@state'
+      - '@datetime.time'
+      - '@logger.channel.content_relay_origin'

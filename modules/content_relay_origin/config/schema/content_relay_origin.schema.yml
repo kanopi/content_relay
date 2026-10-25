@@ -62,6 +62,26 @@ content_relay_origin.settings:
         require_approval:
           type: boolean
           label: 'Hold events until an administrator approves a new replica'
+    read_limit:
+      type: mapping
+      label: 'What one replica may read'
+      mapping:
+        items:
+          type: integer
+          label: 'Items a replica may read per window (items, hash listings, stream lookups); 0 for no limit'
+        window:
+          type: integer
+          label: 'The window, in seconds'
+    reconcile:
+      type: mapping
+      label: 'Re-sending what replicas are missing'
+      mapping:
+        interval:
+          type: integer
+          label: 'Seconds between runs that re-send out of sync, never sent, failed and dead-lettered items; 0 to run only on demand'
+        max_items:
+          type: integer
+          label: 'Items re-sent directly per run, and per cron run from the queue; the rest wait in the queue'
     not_syncable:
       type: mapping
       label: 'Not syncable items'

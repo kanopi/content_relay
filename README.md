@@ -283,6 +283,12 @@ messages, sealed when the contract is encrypted:
   sequence numbers were about, and where each item stands now (exists, gone,
   not_syncable or not_in_contract), for filling gaps.
 
+Each replica has a read budget: `read_limit.items` per `read_limit.window`
+seconds (2000 per minute by default; 0 for no limit), counted over items,
+hash listings and stream lookups. Past it, a hash page is cut short, and
+further reads get `429 rate_limited` with `Retry-After`; the replica keeps
+the rest of its work queued until then. File downloads are not counted.
+
 These are custom endpoints rather than JSON:API: they answer in the same
 snapshot form as events, with hashes, so a pulled item is applied like any
 event; access is decided per replica by its contract and not-syncable flags
@@ -343,6 +349,19 @@ for files or dependencies. Every change goes through the apply service with
 its locks and checks, so a run is safe to repeat and changes nothing when the
 sites agree. Each run is recorded with counts and problems on the
 Reconciliation page. Cron works through a run 30 seconds at a time.
+
+A run acts on at most `reconcile.max_items` items itself (100 by default);
+the rest go into a queue that cron works through at the same number per cron
+run, as does anything the origin turned away for being over the read limit.
+A listing turned away makes the run wait and carry on at a later cron run.
+A new run does not start while the queue still has items.
+
+**On the origin**, reconciliation re-sends to each replica what the status
+report shows as out of sync, never sent, failed or dead-lettered, as a bulk
+push would. It runs from cron (`reconcile.interval`, nightly by default) or
+`drush content-relay:reconcile [--replica=]`; at most `reconcile.max_items`
+(200 by default) are recorded for sending in the run, the rest are queued
+and sent by cron at the same rate.
 
 **Gap filling**: when an event names a predecessor this site never received,
 the gap is recorded. On cron (or `drush content-relay:fill-gaps`) the replica
@@ -593,6 +612,7 @@ Every push, flag, detach and reattach is logged with the user who did it.
 | `content-relay:fill-gaps` | replica |
 | `content-relay:validate <type> <uuid>` | replica |
 | `content-relay:backfill-hashes [--all]` | origin |
+| `content-relay:reconcile [--replica=]` | origin |
 | `content-relay:keys` | both |
 | `content-relay:generate-key <purpose> <key id> <path>` | both |
 | `content-relay:rotate-key <purpose> <key id>` | both |

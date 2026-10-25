@@ -187,4 +187,27 @@ final class ReadEndpointTest extends OriginTestBase {
     $this->assertSame(0, $this->container->get('content_relay_origin.hash_backfill')->run());
   }
 
+  /**
+   * A replica over its read limit is told to wait.
+   */
+  public function testReadLimit(): void {
+    $this->pairAndAcknowledge();
+    foreach (['One', 'Two', 'Three'] as $title) {
+      $node = $this->node('article', $title);
+    }
+    $this->config('content_relay_origin.settings')->set('read_limit', ['items' => 3, 'window' => 60])->save();
+
+    $page = $this->answer($this->read('/content-relay/v1/hashes?entity_type=node&bundle=article&limit=2'), 'hashes');
+    $this->assertCount(2, $page['items']);
+    // One left: the next page is cut to it.
+    $page = $this->answer($this->read('/content-relay/v1/hashes?entity_type=node&bundle=article&limit=2&after=' . $page['next']), 'hashes');
+    $this->assertCount(1, $page['items']);
+
+    $response = $this->read('/content-relay/v1/items/node/' . $node->uuid());
+    $this->assertSame(429, $response->getStatusCode());
+    $this->assertSame('rate_limited', $this->json($response)['result']);
+    $this->assertGreaterThan(0, (int) $response->headers->get('Retry-After'));
+    $this->assertSame(429, $this->read('/content-relay/v1/stream?sequences=1')->getStatusCode());
+  }
+
 }

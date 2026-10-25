@@ -42,6 +42,7 @@ function content_relay_origin_cron(): void {
   \Drupal::service('content_relay_origin.status_poller')->pollAll();
   \Drupal::service('content_relay_origin.outbox')->prune();
   \Drupal::service('content_relay_origin.report_rebuild')->rebuildIfChanged();
+  \Drupal::service('content_relay_origin.reconciler')->cron();
 }
 
 /**

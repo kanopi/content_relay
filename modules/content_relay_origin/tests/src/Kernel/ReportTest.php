@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace Drupal\Tests\content_relay_origin\Kernel;
 
+use Drupal\content_relay_origin\OriginReconciler;
 use Drupal\content_relay_origin\Outbox;
 use Drupal\content_relay_origin\ReplicaItems;
 use Drupal\content_relay_origin\Report\ReportIndex;
 use Drupal\content_relay_origin\Report\ReportRebuild;
+use Drupal\Core\Queue\SuspendQueueException;
 use Drupal\node\NodeInterface;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
@@ -171,6 +173,51 @@ final class ReportTest extends OriginTestBase {
     $this->assertSame(ReportIndex::IN_SYNC, $this->itemStatus($nodes['One']));
     $summary = (string) $bulk::summarize($context['results'])[0];
     $this->assertStringContainsString('1 queued', $summary);
+  }
+
+  /**
+   * Reconciliation re-sends what a replica lacks, a limited number at once.
+   */
+  public function testReconcile(): void {
+    $nodes = [];
+    foreach (['One', 'Two', 'Three', 'Four'] as $title) {
+      $nodes[] = $this->node('article', $title);
+    }
+    $this->pairAndAcknowledge();
+    $this->container->get('content_relay_origin.report_rebuild')->rebuildIfChanged();
+    $this->runRebuildQueue();
+    $this->assertSame(ReportIndex::NEVER_SENT, $this->itemStatus($nodes[0]));
+    $this->config('content_relay_origin.settings')->set('reconcile.max_items', 1)->save();
+    $reconciler = $this->container->get('content_relay_origin.reconciler');
+
+    $result = $reconciler->run('manual');
+    $this->assertSame([$this->replica->siteId => ['queued' => 1]], $result['sent']);
+    $this->assertSame(3, $result['queued']);
+    // Not again while the last run's queue has items.
+    $this->assertSame(3, $reconciler->run('manual')['busy']);
+
+    // The worker sends as many per cron run as the limit allows.
+    $queue = $this->container->get('queue')->get(OriginReconciler::QUEUE);
+    $worker = $this->container->get('plugin.manager.queue_worker')->createInstance(OriginReconciler::QUEUE);
+    $processed = 0;
+    try {
+      while (is_object($item = $queue->claimItem())) {
+        $worker->processItem($item->data);
+        $queue->deleteItem($item);
+        $processed++;
+      }
+    }
+    catch (SuspendQueueException) {
+      $queue->releaseItem($item);
+    }
+    $this->assertSame(1, $processed);
+    $this->assertSame(2, $queue->numberOfItems());
+
+    $this->deliver();
+    $this->assertCount(2, $this->replica->events);
+    $reasons = $this->container->get('database')->select(Outbox::TABLE, 'o')->fields('o', ['reason'])->condition('reason', Outbox::REASON_RECONCILE)->execute()->fetchCol();
+    $this->assertCount(2, $reasons);
+    $this->assertSame(ReportIndex::IN_SYNC, $this->itemStatus($nodes[0]));
   }
 
 }

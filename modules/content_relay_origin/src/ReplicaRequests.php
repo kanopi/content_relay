@@ -6,7 +6,10 @@ namespace Drupal\content_relay_origin;
 
 use Drupal\content_relay\Auth\AuthenticationException;
 use Drupal\content_relay\Auth\PullAuthenticatorInterface;
+use Drupal\Component\Datetime\TimeInterface;
 use Drupal\content_relay\Crypto\MessageSigner;
+use Drupal\Core\Config\ConfigFactoryInterface;
+use Drupal\Core\KeyValueStore\KeyValueExpirableFactoryInterface;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
@@ -17,6 +20,13 @@ use Symfony\Component\HttpFoundation\Request;
  * Replicas read from the origin (files, schema, items) with a short-lived JWT
  * they issue themselves; see JwtAuthenticator. Answers are signed messages to
  * that replica, sealed when its contract is encrypted.
+ *
+ * Each replica has a budget of items it may read per window (read_limit in
+ * the settings), counted over items, hash listings and stream lookups, so a
+ * large reconciliation, or many replicas at once, cannot swamp the origin. A
+ * replica over its budget is answered 429 with Retry-After, and keeps the
+ * rest of its work queued until then. Files are not counted: they have their
+ * own download queue on the replica.
  */
 class ReplicaRequests {
 
@@ -30,7 +40,70 @@ class ReplicaRequests {
     protected ReplicaRegistry $registry,
     protected MessageSigner $signer,
     protected LoggerInterface $logger,
+    protected ConfigFactoryInterface $configFactory,
+    protected KeyValueExpirableFactoryInterface $keyValueExpirable,
+    protected TimeInterface $time,
   ) {}
+
+  /**
+   * How many more items a replica may read in the current window.
+   *
+   * @return int
+   *   The number, or PHP_INT_MAX without a limit.
+   */
+  public function remaining(string $replica_id): int {
+    [$limit, $window] = $this->limit();
+    if ($limit <= 0) {
+      return PHP_INT_MAX;
+    }
+    $used = $this->keyValueExpirable->get('content_relay_origin.read_budget')->get($replica_id);
+    $now = $this->time->getCurrentTime();
+    if (!is_array($used) || $used['start'] + $window <= $now) {
+      return $limit;
+    }
+    return max(0, $limit - $used['count']);
+  }
+
+  /**
+   * Counts items read by a replica against its budget.
+   */
+  public function consume(string $replica_id, int $count): void {
+    [$limit, $window] = $this->limit();
+    if ($limit <= 0 || $count <= 0) {
+      return;
+    }
+    $store = $this->keyValueExpirable->get('content_relay_origin.read_budget');
+    $used = $store->get($replica_id);
+    $now = $this->time->getCurrentTime();
+    if (!is_array($used) || $used['start'] + $window <= $now) {
+      $used = ['start' => $now, 'count' => 0];
+    }
+    $used['count'] += $count;
+    $store->setWithExpire($replica_id, $used, max(1, $used['start'] + $window - $now));
+  }
+
+  /**
+   * The refusal for a replica over its read budget.
+   */
+  public function overBudget(string $replica_id): JsonResponse {
+    [, $window] = $this->limit();
+    $used = $this->keyValueExpirable->get('content_relay_origin.read_budget')->get($replica_id);
+    $retry = is_array($used) ? max(1, $used['start'] + $window - $this->time->getCurrentTime()) : $window;
+    $response = self::refuse(429, 'rate_limited', 'This replica has read as much as it may for now.');
+    $response->headers->set('Retry-After', (string) $retry);
+    return $response;
+  }
+
+  /**
+   * The read limit: items per window, and the window in seconds.
+   *
+   * @return array{0: int, 1: int}
+   *   Items (0 for no limit) and seconds.
+   */
+  protected function limit(): array {
+    $config = $this->configFactory->get('content_relay_origin.settings');
+    return [(int) ($config->get('read_limit.items') ?? 0), max(1, (int) ($config->get('read_limit.window') ?? 60))];
+  }
 
   /**
    * The replica a request comes from, or a refusal to send instead.

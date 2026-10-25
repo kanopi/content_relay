@@ -45,6 +45,8 @@ use Psr\Http\Message\RequestInterface;
  *   entries (uuid, revision, changed, hash, not_syncable), paged by UUID.
  *   hashes_contract_version is the contract version it reports (1).
  * - stream: what the stream endpoint knows, entries by sequence.
+ * - rate_limited: the number of read requests (items, hashes, stream) to
+ *   answer 429, counting down; rate_limited_items the same for items only.
  * - files: files it serves, by UUID: content, uri and, to serve it
  *   encrypted, key (base64 file key). Downloads are
  *   answered 410 while expire_downloads is positive and with wrong bytes
@@ -103,6 +105,16 @@ final class FakeOrigin {
       $body = json_decode((string) $request->getBody(), TRUE) ?? [];
       $config['requests'][] = ['path' => $request->getUri()->getPath(), 'body' => $body];
       $path = $request->getUri()->getPath();
+      $limited = match (TRUE) {
+        ($config['rate_limited'] ?? 0) > 0 && preg_match('#^/content-relay/v1/(items/|hashes|stream)#', $path) === 1 => 'rate_limited',
+        ($config['rate_limited_items'] ?? 0) > 0 && str_starts_with($path, '/content-relay/v1/items/') => 'rate_limited_items',
+        default => NULL,
+      };
+      if ($limited !== NULL) {
+        $config[$limited]--;
+        $this->state->set(self::STATE, $config);
+        return Create::promiseFor(new Response(429, ['Content-Type' => 'application/json', 'Retry-After' => '30'], json_encode(['result' => 'rate_limited'])));
+      }
       if (preg_match('#^/content-relay/v1/files/([0-9a-f\-]{36})(/download)?$#', $path, $m)) {
         [$status, $answer] = empty($m[2]) ? $this->fileInfo($config, $m[1], $request) : $this->download($config, $m[1]);
         $this->state->set(self::STATE, $config);

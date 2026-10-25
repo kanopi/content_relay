@@ -259,6 +259,9 @@ final class ReplicaCommands extends DrushCommands {
     foreach ($run['messages'] as $message) {
       $this->logger()->warning($message);
     }
+    if ($run['status'] === 'running') {
+      $this->logger()->warning(dt('The origin asked this site to wait before reading more; cron carries on with run @id.', ['@id' => $run['id']]));
+    }
     $counts = [];
     foreach ($run['counts'] as $outcome => $number) {
       $counts[] = $outcome . ': ' . $number;

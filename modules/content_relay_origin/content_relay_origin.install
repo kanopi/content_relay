@@ -110,7 +110,7 @@ function content_relay_origin_schema(): array {
         'type' => 'varchar_ascii',
         'length' => 32,
         'not null' => FALSE,
-        'description' => 'Why the row was recorded, when not by an entity save: manual, bulk, not_syncable or attach.',
+        'description' => 'Why the row was recorded, when not by an entity save: manual, bulk, reconcile, not_syncable or attach.',
       ],
       'process' => [
         'type' => 'varchar_ascii',

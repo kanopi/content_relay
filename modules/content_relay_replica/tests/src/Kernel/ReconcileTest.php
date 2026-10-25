@@ -9,6 +9,7 @@ use Drupal\content_relay_replica\Apply\ApplyResult;
 use Drupal\content_relay_replica\Reconciler;
 use Drupal\content_relay_replica\SyncStatus;
 use Drupal\content_relay_test\FakeOrigin;
+use Drupal\Core\Queue\SuspendQueueException;
 use Drupal\node\Entity\Node;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
@@ -244,6 +245,93 @@ final class ReconcileTest extends ReplicaTestBase {
     $this->assertFalse($result['origin']);
     $this->assertSame(2, $result['origin_revision']);
     $this->assertSame(SyncStatus::ERROR, $this->state($item['uuid'])['status']);
+  }
+
+  /**
+   * Works through the reconciliation queue as cron would.
+   *
+   * @return int
+   *   Items processed before the worker stopped.
+   */
+  private function runQueue(): int {
+    $queue = $this->container->get('queue')->get(Reconciler::QUEUE);
+    $worker = $this->container->get('plugin.manager.queue_worker')->createInstance(Reconciler::QUEUE);
+    $processed = 0;
+    try {
+      while (is_object($item = $queue->claimItem())) {
+        $worker->processItem($item->data);
+        $queue->deleteItem($item);
+        $processed++;
+      }
+    }
+    catch (SuspendQueueException) {
+      $queue->releaseItem($item);
+    }
+    return $processed;
+  }
+
+  /**
+   * A run acts on a limited number of items; the queue does the rest.
+   */
+  public function testMaxItemsQueuesTheRest(): void {
+    $this->config('content_relay_replica.settings')->set('reconcile.max_items', 2)->save();
+    $items = [];
+    foreach (['One', 'Two', 'Three'] as $title) {
+      $item = $this->synced($title);
+      $this->serveItem($this->retitle($item, "$title updated"), 2);
+      $items[] = [$this->retitle($item, "$title updated"), 2];
+    }
+    $this->onOrigin($items);
+
+    $run = $this->reconciler->run('manual');
+    $this->assertSame('completed', $run['status']);
+    $this->assertSame(2, $run['counts']['pulled']);
+    $this->assertSame(1, $run['counts']['queued']);
+    $this->expectExceptionMessageMatches('/still queued/');
+    try {
+      $this->reconciler->start('manual');
+    }
+    finally {
+      $this->assertSame(1, $this->runQueue());
+      foreach ($items as [$snapshot]) {
+        $this->assertStringEndsWith('updated', $this->local($snapshot['uuid'])->label());
+      }
+      $this->assertSame(1, $this->reconciler->load((int) $run['id'])['counts']['queue_pulled']);
+    }
+  }
+
+  /**
+   * Turned away by the origin's read limit, a run waits and carries on.
+   */
+  public function testRateLimitedRunWaits(): void {
+    $item = $this->synced('Before');
+    $this->serveItem($this->retitle($item, 'After'), 2);
+    $this->onOrigin([[$this->retitle($item, 'After'), 2]]);
+    $this->updateFakeOrigin(fn (array &$config) => $config['rate_limited'] = 1);
+
+    $run = $this->reconciler->run('manual');
+    $this->assertSame('running', $run['status']);
+    $this->assertSame(Reconciler::WAIT, $this->reconciler->step((int) $run['id']));
+
+    // Later, it picks up where it stopped.
+    $cursor = $run['cursor'];
+    $cursor['wait_until'] = 0;
+    $this->container->get('database')->update(Reconciler::TABLE)->fields(['cursor' => json_encode($cursor)])->condition('id', $run['id'])->execute();
+    while ($this->reconciler->step((int) $run['id']) === Reconciler::MORE) {
+      // Step through.
+    }
+    $this->assertSame('completed', $this->reconciler->load((int) $run['id'])['status']);
+    $this->assertSame('After', $this->local($item['uuid'])->label());
+
+    // A pull turned away is queued, and the queue waits too.
+    $this->serveItem($this->retitle($item, 'Again'), 3);
+    $this->onOrigin([[$this->retitle($item, 'Again'), 3]]);
+    $this->updateFakeOrigin(fn (array &$config) => $config['rate_limited_items'] = 2);
+    $run = $this->reconciler->run('manual');
+    $this->assertSame(1, $run['counts']['queued']);
+    $this->assertSame(0, $this->runQueue());
+    $this->assertSame(1, $this->runQueue());
+    $this->assertSame('Again', $this->local($item['uuid'])->label());
   }
 
 }

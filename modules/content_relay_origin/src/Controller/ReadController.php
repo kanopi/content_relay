@@ -115,6 +115,10 @@ final class ReadController implements ContainerInjectionInterface {
     if ($replica_id instanceof JsonResponse) {
       return $replica_id;
     }
+    if ($this->requests->remaining($replica_id) < 1) {
+      return $this->requests->overBudget($replica_id);
+    }
+    $this->requests->consume($replica_id, 1);
     $contract = $this->contracts->getActive($replica_id);
     /** @var \Drupal\Core\Entity\EntityInterface|null $entity */
     $entity = $this->entityTypeManager->hasDefinition($entity_type) ? $this->entityRepository->loadEntityByUuid($entity_type, $uuid) : NULL;
@@ -153,7 +157,10 @@ final class ReadController implements ContainerInjectionInterface {
     $entity_type_id = (string) $request->query->get('entity_type', '');
     $bundle = (string) $request->query->get('bundle', '');
     $after = (string) $request->query->get('after', '');
-    $limit = max(1, min(self::MAX_HASHES, (int) $request->query->get('limit', 200)));
+    $limit = max(1, min(self::MAX_HASHES, (int) $request->query->get('limit', 200), $this->requests->remaining($replica_id)));
+    if ($this->requests->remaining($replica_id) < 1) {
+      return $this->requests->overBudget($replica_id);
+    }
     $contract = $this->contracts->getActive($replica_id);
     $definition = $this->entityTypeManager->getDefinition($entity_type_id, FALSE);
     if ($contract === NULL || !$definition instanceof ContentEntityTypeInterface || !$contract->allowsBundle($entity_type_id, $bundle) || !$this->scope->isBundleSynced($entity_type_id, $bundle)) {
@@ -181,6 +188,7 @@ final class ReadController implements ContainerInjectionInterface {
     /** @var array<int, array<string, string|int|null>> $rows */
     $rows = $query->execute();
     $uuids = array_map(fn (array $row) => (string) $row[$uuid_key], $rows);
+    $this->requests->consume($replica_id, count($uuids));
     $hashes = $this->hashStore->latestMany($entity_type_id, $uuids);
     $blocked = $this->flags->blockedAmong($entity_type_id, $uuids, $replica_id);
 
@@ -227,7 +235,13 @@ final class ReadController implements ContainerInjectionInterface {
     if ($replica_id instanceof JsonResponse) {
       return $replica_id;
     }
-    $sequences = array_slice(array_values(array_unique(array_filter(array_map('intval', explode(',', (string) $request->query->get('sequences', ''))), fn (int $sequence) => $sequence > 0))), 0, self::MAX_SEQUENCES);
+    $remaining = $this->requests->remaining($replica_id);
+    if ($remaining < 1) {
+      return $this->requests->overBudget($replica_id);
+    }
+    // Over budget, the first ones are answered; the replica asks again later.
+    $sequences = array_slice(array_values(array_unique(array_filter(array_map('intval', explode(',', (string) $request->query->get('sequences', ''))), fn (int $sequence) => $sequence > 0))), 0, min(self::MAX_SEQUENCES, $remaining));
+    $this->requests->consume($replica_id, count($sequences));
     $contract = $this->contracts->getActive($replica_id);
     $events = [];
     foreach ($this->outbox->bySequence($replica_id, $sequences) as $sequence => $row) {
@@ -242,6 +256,8 @@ final class ReadController implements ContainerInjectionInterface {
     }
     return $this->requests->answer($replica_id, 'stream', [
       'contract_version' => $contract?->version(),
+      // The sequences looked up; any others were left for later.
+      'answered' => $sequences,
       'events' => $events,
     ]);
   }

@@ -68,6 +68,9 @@ content_relay_replica.settings:
         interval:
           type: integer
           label: 'Seconds between scheduled reconciliation runs; 0 to run only on demand'
+        max_items:
+          type: integer
+          label: 'Items a run pulls, deletes or marks itself, and the queue worker per cron run; the rest wait in the queue'
     detach:
       type: mapping
       label: 'Items detached on this replica'

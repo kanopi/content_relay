@@ -273,6 +273,7 @@ services:
       - '@datetime.time'
       - '@uuid'
       - '@logger.channel.content_relay_replica'
+      - '@queue'
 
   content_relay_replica.validator:
     class: Drupal\content_relay_replica\Validator

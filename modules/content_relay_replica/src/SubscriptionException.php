@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Drupal\content_relay_replica;
 
 /**
- * Pairing or a subscription change failed. The message is for administrators.
+ * Pairing, a subscription change or a read from the origin failed.
+ *
+ * The message is for administrators.
  */
-final class SubscriptionException extends \RuntimeException {}
+class SubscriptionException extends \RuntimeException {}

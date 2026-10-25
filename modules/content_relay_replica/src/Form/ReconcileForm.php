@@ -111,10 +111,12 @@ final class ReconcileForm extends FormBase {
   public static function batchStep(int $run_id, &$context): void {
     $reconciler = \Drupal::service('content_relay_replica.reconciler');
     $context['results']['run'] = $run_id;
-    $done = $reconciler->step($run_id);
+    $next = $reconciler->step($run_id);
     $run = $reconciler->load($run_id);
+    $context['results']['waiting'] = $next === Reconciler::WAIT;
     $context['message'] = new TranslatableMarkup('@checked item(s) checked.', ['@checked' => $run['counts']['checked'] ?? 0]);
-    $context['finished'] = $done ? 1 : 0.5;
+    // Waiting for the origin: cron carries on with the run.
+    $context['finished'] = $next === Reconciler::MORE ? 0.5 : 1;
   }
 
   /**
@@ -122,15 +124,20 @@ final class ReconcileForm extends FormBase {
    */
   public static function batchFinished(bool $success, array $results): void {
     $run = isset($results['run']) ? \Drupal::service('content_relay_replica.reconciler')->load((int) $results['run']) : NULL;
+    if (!empty($results['waiting'])) {
+      \Drupal::messenger()->addWarning(new TranslatableMarkup('The origin asked this site to wait before reading more. Cron carries on with the run.'));
+      return;
+    }
     if (!$success || $run === NULL) {
       \Drupal::messenger()->addError(new TranslatableMarkup('Reconciliation did not finish. Cron continues it.'));
       return;
     }
-    \Drupal::messenger()->addStatus(new TranslatableMarkup('Reconciliation finished: @checked checked, @pulled pulled, @deleted deleted, @failed failed.', [
+    \Drupal::messenger()->addStatus(new TranslatableMarkup('Reconciliation finished: @checked checked, @pulled pulled, @deleted deleted, @failed failed, @queued queued for cron.', [
       '@checked' => $run['counts']['checked'] ?? 0,
       '@pulled' => $run['counts']['pulled'] ?? 0,
       '@deleted' => $run['counts']['deleted'] ?? 0,
       '@failed' => $run['counts']['failed'] ?? 0,
+      '@queued' => $run['counts']['queued'] ?? 0,
     ]));
   }
 

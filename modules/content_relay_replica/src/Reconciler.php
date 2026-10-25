@@ -14,6 +14,7 @@ use Drupal\content_relay_replica\Apply\SyncApplier;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Database\Connection;
 use Drupal\Core\Entity\EntityRepositoryInterface;
+use Drupal\Core\Queue\QueueFactory;
 use Drupal\Core\Session\AccountInterface;
 use Drupal\Core\State\StateInterface;
 use Psr\Log\LoggerInterface;
@@ -40,12 +41,28 @@ use Psr\Log\LoggerInterface;
  * A run is done in steps that each read one page, so cron can spread a large
  * site over several runs and the admin page can drive it with a batch.
  *
+ * A run acts on at most reconcile.max_items items itself (pulls, deletes,
+ * detaches); the rest go into a queue that cron works through at the same
+ * rate per cron run. So does anything the origin turns away because this
+ * site is over its read limit; a run whose listing is turned away waits and
+ * carries on at a later cron run. A new run does not start while the queue
+ * still has items, so nothing is queued twice.
+ *
  * Gap filling is the quick version, for a few events: the origin says what
  * the missed events were about and where those items stand now.
  */
 class Reconciler {
 
   public const TABLE = 'content_relay_reconcile_run';
+
+  public const QUEUE = 'content_relay_replica_reconcile';
+
+  /**
+   * What a step left: the run is done, has more to do, or must wait.
+   */
+  public const DONE = 'done';
+  public const MORE = 'more';
+  public const WAIT = 'wait';
 
   /**
    * Items per page of hashes.
@@ -84,7 +101,15 @@ class Reconciler {
     protected TimeInterface $time,
     protected UuidInterface $uuid,
     protected LoggerInterface $logger,
+    protected QueueFactory $queueFactory,
   ) {}
+
+  /**
+   * Items a run acts on itself, and the queue worker per cron run.
+   */
+  public function maxItems(): int {
+    return max(1, (int) ($this->configFactory->get('content_relay_replica.settings')->get('reconcile.max_items') ?? 100));
+  }
 
   /**
    * Starts a run.
@@ -96,12 +121,17 @@ class Reconciler {
    *   The run ID.
    *
    * @throws \Drupal\content_relay_replica\SubscriptionException
-   *   When this site has no contract to reconcile against.
+   *   When this site has no contract to reconcile against, or items from
+   *   the last run are still queued.
    */
   public function start(string $trigger): int {
     $contract = $this->contracts->getCurrent();
     if ($contract === NULL || $this->origin->get() === NULL) {
       throw new SubscriptionException('This site is not paired with an origin.');
+    }
+    $waiting = $this->queueFactory->get(self::QUEUE)->numberOfItems();
+    if ($waiting > 0) {
+      throw new SubscriptionException(sprintf('%d item(s) from the last run are still queued; cron works through them first.', $waiting));
     }
     $bundles = [];
     foreach ($contract->effectiveBundles() as $entity_type_id => $list) {
@@ -122,6 +152,8 @@ class Reconciler {
         'phase' => 'list',
         'after' => '',
         'contract_version' => $contract->version(),
+        'acted' => 0,
+        'wait_until' => 0,
       ]),
     ])->execute();
   }
@@ -129,22 +161,29 @@ class Reconciler {
   /**
    * Does the next step of a run: one page of one bundle.
    *
-   * @return bool
-   *   TRUE when the run is finished.
+   * @return string
+   *   DONE, MORE, or WAIT when the origin asked this site to wait.
+   *
+   * @phpstan-impure
    */
-  public function step(int $run_id): bool {
+  public function step(int $run_id): string {
     $run = $this->load($run_id);
     if ($run === NULL || $run['status'] !== 'running') {
-      return TRUE;
+      return self::DONE;
     }
     $cursor = $run['cursor'];
     $counts = $run['counts'];
     $messages = $run['messages'];
+    if (($cursor['wait_until'] ?? 0) > $this->time->getCurrentTime()) {
+      return self::WAIT;
+    }
     if (!isset($cursor['bundles'][$cursor['index']])) {
       $this->finish($run_id, $counts, $messages, 'completed');
-      return TRUE;
+      return self::DONE;
     }
     [$entity_type_id, $bundle] = $cursor['bundles'][$cursor['index']];
+    $next = self::MORE;
+    $acted = (int) ($cursor['acted'] ?? 0);
     try {
       if ($cursor['phase'] === 'list') {
         $page = $this->originClient->hashes($entity_type_id, $bundle, $cursor['after'], self::PAGE);
@@ -153,7 +192,7 @@ class Reconciler {
           $counts['contract_mismatch'] = 1;
           $cursor['mismatch_noted'] = TRUE;
         }
-        $this->compare($run_id, $entity_type_id, $bundle, $page['items'], $counts, $messages);
+        $this->compare($run_id, $entity_type_id, $bundle, $page['items'], $counts, $messages, $acted);
         if ($page['next'] === NULL) {
           $cursor['phase'] = 'delete';
         }
@@ -161,9 +200,14 @@ class Reconciler {
           $cursor['after'] = $page['next'];
         }
       }
-      elseif (!$this->deleteMissing($run_id, $entity_type_id, $bundle, $counts, $messages)) {
+      elseif (!$this->deleteMissing($run_id, $entity_type_id, $bundle, $counts, $messages, $acted)) {
         $cursor = ['index' => $cursor['index'] + 1, 'phase' => 'list', 'after' => ''] + $cursor;
       }
+    }
+    catch (RateLimitedException $e) {
+      // The same page is asked for again once the origin allows it.
+      $cursor['wait_until'] = $this->time->getCurrentTime() + $e->retryAfter;
+      $next = self::WAIT;
     }
     catch (SubscriptionException $e) {
       // Nothing is deleted from a bundle the origin could not list in full.
@@ -175,25 +219,26 @@ class Reconciler {
       ->fields([
         'counts' => json_encode($counts),
         'messages' => json_encode(array_slice($messages, 0, self::MAX_MESSAGES)),
-        'cursor' => json_encode($cursor),
+        'cursor' => json_encode(['acted' => $acted] + $cursor),
       ])
       ->condition('id', $run_id)
       ->execute();
-    return FALSE;
+    return $next;
   }
 
   /**
-   * Runs a whole reconciliation now.
+   * Runs a whole reconciliation now, or as far as the origin allows.
    *
    * @return array
-   *   The finished run; see load().
+   *   The run; see load(). Still running when the origin asked this site to
+   *   wait: cron carries on with it.
    *
    * @throws \Drupal\content_relay_replica\SubscriptionException
    *   When it cannot start.
    */
   public function run(string $trigger): array {
     $run_id = $this->start($trigger);
-    while (!$this->step($run_id)) {
+    while ($this->step($run_id) === self::MORE) {
       // Each step does one page.
     }
     return $this->load($run_id) ?? [];
@@ -225,7 +270,7 @@ class Reconciler {
       $this->state->set('content_relay_replica.reconciled', $this->time->getCurrentTime());
     }
     $until = microtime(TRUE) + $budget;
-    while (microtime(TRUE) < $until && !$this->step((int) $run_id)) {
+    while (microtime(TRUE) < $until && $this->step((int) $run_id) === self::MORE) {
       // Each step does one page.
     }
   }
@@ -274,6 +319,7 @@ class Reconciler {
     }
     $counts = [];
     $messages = [];
+    $acted = 0;
     foreach ($this->streams->getGaps($origin['site_id']) as $gap) {
       [$after, $missing] = $gap;
       $last = min($missing, $after + $budget);
@@ -282,9 +328,16 @@ class Reconciler {
       try {
         $latest = [];
         foreach (array_chunk($sequences, 200) as $chunk) {
-          foreach ($this->originClient->stream($chunk) as $event) {
+          $answer = $this->originClient->stream($chunk);
+          foreach ($answer['events'] as $event) {
             // The item's current state answers for all its missed events.
             $latest[$event['entity_type'] . ':' . $event['uuid']] = $event;
+          }
+          // Near its read limit, the origin answers only the first ones.
+          if (count($answer['answered']) < count($chunk)) {
+            $last = $answer['answered'] === [] ? $chunk[0] - 1 : max($answer['answered']);
+            $budget = 0;
+            break;
           }
         }
       }
@@ -296,9 +349,11 @@ class Reconciler {
         break;
       }
       foreach ($latest as $event) {
-        $this->settle($event['entity_type'], $event['bundle'], $event['uuid'], $event['current'], $counts, $messages);
+        $this->act($event['entity_type'], $event['bundle'], $event['uuid'], $event['current'], $counts, $messages, $acted);
       }
-      $this->streams->replaceGap($origin['site_id'], $gap, $last < $missing ? [$last, $missing] : NULL);
+      if ($last > $after) {
+        $this->streams->replaceGap($origin['site_id'], $gap, $last < $missing ? [$last, $missing] : NULL);
+      }
       $this->logger->notice('Filled the gap in the stream from sequence @from to @to: @counts.', [
         '@from' => $after + 1,
         '@to' => $last,
@@ -326,8 +381,10 @@ class Reconciler {
    *   Counts, updated.
    * @param string[] $messages
    *   Problems, added to.
+   * @param int $acted
+   *   Items the run acted on so far, updated.
    */
-  protected function compare(int $run_id, string $entity_type_id, string $bundle, array $items, array &$counts, array &$messages): void {
+  protected function compare(int $run_id, string $entity_type_id, string $bundle, array $items, array &$counts, array &$messages, int &$acted): void {
     $contract = $this->contracts->getCurrent();
     $found = [];
     foreach ($items as $item) {
@@ -338,7 +395,7 @@ class Reconciler {
         $counts['in_sync'] = ($counts['in_sync'] ?? 0) + 1;
         continue;
       }
-      $this->settle($entity_type_id, $bundle, $item['uuid'], $item['not_syncable'] ? 'not_syncable' : 'exists', $counts, $messages);
+      $this->act($entity_type_id, $bundle, $item['uuid'], $item['not_syncable'] ? 'not_syncable' : 'exists', $counts, $messages, $acted, $run_id);
     }
     $this->syncState->markReconciled($entity_type_id, $found, $run_id);
   }
@@ -349,10 +406,10 @@ class Reconciler {
    * @return bool
    *   TRUE if there may be more.
    */
-  protected function deleteMissing(int $run_id, string $entity_type_id, string $bundle, array &$counts, array &$messages): bool {
+  protected function deleteMissing(int $run_id, string $entity_type_id, string $bundle, array &$counts, array &$messages, int &$acted): bool {
     $uuids = $this->syncState->notReconciled($entity_type_id, $bundle, $run_id, self::PAGE);
     foreach ($uuids as $uuid) {
-      $this->settle($entity_type_id, $bundle, $uuid, 'gone', $counts, $messages);
+      $this->act($entity_type_id, $bundle, $uuid, 'gone', $counts, $messages, $acted, $run_id);
     }
     // Whatever was kept (detached here, or failed) is not looked at again.
     $this->syncState->markReconciled($entity_type_id, $uuids, $run_id);
@@ -466,10 +523,89 @@ class Reconciler {
         $messages[] = sprintf('%s %s: %s', $entity_type_id, $uuid, $result->message ?? $result->result);
       }
     }
+    catch (RateLimitedException $e) {
+      throw $e;
+    }
     catch (SubscriptionException $e) {
       $count('failed');
       $messages[] = sprintf('%s %s: %s', $entity_type_id, $uuid, $e->getMessage());
     }
+  }
+
+  /**
+   * Settles an item now, or queues it once the run has acted on enough.
+   *
+   * @param string $entity_type_id
+   *   The origin entity type.
+   * @param string $bundle
+   *   The bundle.
+   * @param string $uuid
+   *   The UUID.
+   * @param string $current
+   *   Where it stands on the origin; see settle().
+   * @param array $counts
+   *   Counts, updated.
+   * @param string[] $messages
+   *   Problems, added to.
+   * @param int $acted
+   *   Items acted on so far, updated.
+   * @param int|null $run_id
+   *   The run, if any, for the queue worker to report to.
+   */
+  protected function act(string $entity_type_id, string $bundle, string $uuid, string $current, array &$counts, array &$messages, int &$acted, ?int $run_id = NULL): void {
+    $item = [
+      'entity_type' => $entity_type_id,
+      'bundle' => $bundle,
+      'uuid' => $uuid,
+      'current' => $current,
+      'queued' => $this->time->getCurrentTime(),
+      'run' => $run_id,
+    ];
+    if ($acted < $this->maxItems()) {
+      $acted++;
+      try {
+        $this->settle($entity_type_id, $bundle, $uuid, $current, $counts, $messages);
+        return;
+      }
+      catch (RateLimitedException) {
+        // Queued below, for when the origin allows more.
+      }
+    }
+    $this->queueFactory->get(self::QUEUE)->createItem($item);
+    $counts['queued'] = ($counts['queued'] ?? 0) + 1;
+  }
+
+  /**
+   * Settles an item a run queued. For the queue worker.
+   *
+   * @throws \Drupal\content_relay_replica\RateLimitedException
+   *   When the origin asks this site to wait; the item stays queued.
+   */
+  public function processQueued(array $item): void {
+    $state = $this->syncState->get($item['entity_type'], $item['uuid']);
+    // Applied since it was queued: what the run saw is out of date.
+    if ($state !== NULL && (int) $state['last_synced'] > (int) $item['queued']) {
+      return;
+    }
+    $counts = [];
+    $messages = [];
+    $this->settle($item['entity_type'], $item['bundle'], $item['uuid'], $item['current'], $counts, $messages);
+    foreach ($messages as $message) {
+      $this->logger->warning('Queued reconciliation: @message', ['@message' => $message]);
+    }
+    if ($item['run'] === NULL || ($run = $this->load((int) $item['run'])) === NULL) {
+      return;
+    }
+    foreach ($counts as $outcome => $number) {
+      $run['counts']['queue_' . $outcome] = ($run['counts']['queue_' . $outcome] ?? 0) + $number;
+    }
+    $this->database->update(self::TABLE)
+      ->fields([
+        'counts' => json_encode($run['counts']),
+        'messages' => json_encode(array_slice([...$run['messages'], ...$messages], 0, self::MAX_MESSAGES)),
+      ])
+      ->condition('id', (int) $item['run'])
+      ->execute();
   }
 
   /**

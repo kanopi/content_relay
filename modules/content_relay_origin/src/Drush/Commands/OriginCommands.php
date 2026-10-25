@@ -11,6 +11,7 @@ use Drupal\content_relay_origin\HashBackfill;
 use Drupal\content_relay_origin\ItemSyncControl;
 use Drupal\content_relay_origin\ManualPush;
 use Drupal\content_relay_origin\NotSyncableFlags;
+use Drupal\content_relay_origin\OriginReconciler;
 use Drupal\content_relay_origin\Report\ReportIndex;
 use Drupal\Component\Uuid\Uuid;
 use Drupal\Core\Entity\ContentEntityInterface;
@@ -45,6 +46,8 @@ final class OriginCommands extends DrushCommands {
     private readonly EntityRepositoryInterface $entityRepository,
     #[Autowire(service: 'content_relay_origin.hash_backfill')]
     private readonly HashBackfill $backfill,
+    #[Autowire(service: 'content_relay_origin.reconciler')]
+    private readonly OriginReconciler $reconciler,
   ) {
     parent::__construct();
   }
@@ -226,6 +229,30 @@ final class OriginCommands extends DrushCommands {
       ]));
     });
     $this->logger()->success(dt('@count item(s) hashed.', ['@count' => $count]));
+    return self::EXIT_SUCCESS;
+  }
+
+  /**
+   * Re-sends what replicas are missing, according to the status report.
+   *
+   * At most reconcile.max_items are recorded for sending now; the rest are
+   * queued and sent by cron at the same rate.
+   */
+  #[CLI\Command(name: 'content-relay:reconcile', aliases: ['cr-reconcile'])]
+  #[CLI\Option(name: 'replica', description: 'One replica ID. Defaults to every replica.')]
+  public function reconcile(array $options = ['replica' => NULL]): int {
+    $result = $this->reconciler->run('drush', $options['replica'] ?: NULL);
+    if ($result['busy'] > 0) {
+      $this->logger()->error(dt('@count item(s) from the last run are still queued; try again once cron has sent them.', ['@count' => $result['busy']]));
+      return self::EXIT_FAILURE;
+    }
+    foreach ($result['sent'] as $replica_id => $outcomes) {
+      $this->logger()->notice(dt('@replica: @outcomes.', [
+        '@replica' => $replica_id,
+        '@outcomes' => json_encode($outcomes),
+      ]));
+    }
+    $this->logger()->success(dt('@queued more item(s) queued for cron.', ['@queued' => $result['queued']]));
     return self::EXIT_SUCCESS;
   }
 
