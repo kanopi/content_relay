@@ -27,3 +27,32 @@ content_relay_replica.pair:
     _title: 'Pair with an origin'
   requirements:
     _permission: 'administer content relay replica'
+
+content_relay_replica.detach:
+  path: '/admin/content/content-relay/{entity_type_id}/{uuid}/detach'
+  defaults:
+    _form: '\Drupal\content_relay_replica\Form\DetachForm'
+    _title: 'Detach'
+  requirements:
+    _permission: 'detach content relay items'
+  options:
+    _admin_route: TRUE
+
+content_relay_replica.reattach:
+  path: '/admin/content/content-relay/{entity_type_id}/{uuid}/reattach'
+  defaults:
+    _form: '\Drupal\content_relay_replica\Form\ReattachForm'
+    _title: 'Reattach'
+  requirements:
+    _permission: 'detach content relay items'
+  options:
+    _admin_route: TRUE
+
+content_relay_replica.bulk_detach:
+  path: '/admin/reports/content-relay/{operation}'
+  defaults:
+    _form: '\Drupal\content_relay_replica\Form\BulkDetachConfirmForm'
+    _title: 'Detach or reattach items'
+  requirements:
+    _permission: 'detach content relay items'
+    operation: 'detach|reattach'

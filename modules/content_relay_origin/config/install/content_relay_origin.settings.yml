@@ -13,3 +13,5 @@ pairing:
   flood_limit: 5
   flood_window: 3600
   require_approval: false
+not_syncable:
+  behavior: detach

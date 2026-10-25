@@ -1,0 +1,766 @@
+langcode: en
+status: true
+dependencies:
+  module:
+    - content_relay_origin
+id: content_relay_origin_report
+label: 'Content Relay status'
+module: views
+description: 'Which items are in sync on which replica.'
+tag: 'Content Relay'
+base_table: content_relay_report
+base_field: id
+display:
+  default:
+    id: default
+    display_title: Default
+    display_plugin: default
+    position: 0
+    display_options:
+      title: 'Content Relay status'
+      fields:
+        content_relay_bulk_push:
+          id: content_relay_bulk_push
+          table: content_relay_report
+          field: content_relay_bulk_push
+          relationship: none
+          group_type: group
+          admin_label: ''
+          plugin_id: content_relay_bulk_push
+          label: ''
+          exclude: false
+        entity_type:
+          id: entity_type
+          table: content_relay_report
+          field: entity_type
+          relationship: none
+          group_type: group
+          admin_label: ''
+          plugin_id: machine_name
+          label: 'Entity type'
+          exclude: false
+        bundle:
+          id: bundle
+          table: content_relay_report
+          field: bundle
+          relationship: none
+          group_type: group
+          admin_label: ''
+          plugin_id: machine_name
+          label: Bundle
+          exclude: false
+        label:
+          id: label
+          table: content_relay_report
+          field: label
+          relationship: none
+          group_type: group
+          admin_label: ''
+          plugin_id: standard
+          label: Label
+          exclude: false
+        uuid:
+          id: uuid
+          table: content_relay_report
+          field: uuid
+          relationship: none
+          group_type: group
+          admin_label: ''
+          plugin_id: standard
+          label: UUID
+          exclude: false
+        langcode:
+          id: langcode
+          table: content_relay_report
+          field: langcode
+          relationship: none
+          group_type: group
+          admin_label: ''
+          plugin_id: language
+          label: Language
+          exclude: false
+        translation_status:
+          id: translation_status
+          table: content_relay_report
+          field: translation_status
+          relationship: none
+          group_type: group
+          admin_label: ''
+          plugin_id: machine_name
+          label: Translation
+          exclude: false
+        replica_id:
+          id: replica_id
+          table: content_relay_report
+          field: replica_id
+          relationship: none
+          group_type: group
+          admin_label: ''
+          plugin_id: machine_name
+          label: Replica
+          exclude: false
+        status:
+          id: status
+          table: content_relay_report
+          field: status
+          relationship: none
+          group_type: group
+          admin_label: ''
+          plugin_id: machine_name
+          label: Status
+          exclude: false
+        origin_revision:
+          id: origin_revision
+          table: content_relay_report
+          field: origin_revision
+          relationship: none
+          group_type: group
+          admin_label: ''
+          plugin_id: numeric
+          label: 'Origin revision'
+          exclude: false
+        origin_hash:
+          id: origin_hash
+          table: content_relay_report
+          field: origin_hash
+          relationship: none
+          group_type: group
+          admin_label: ''
+          plugin_id: standard
+          label: 'Origin hash'
+          exclude: false
+          alter:
+            alter_text: false
+            max_length: 12
+            trim: true
+            word_boundary: false
+            ellipsis: true
+        replica_hash:
+          id: replica_hash
+          table: content_relay_report
+          field: replica_hash
+          relationship: none
+          group_type: group
+          admin_label: ''
+          plugin_id: standard
+          label: 'Replica hash'
+          exclude: false
+          alter:
+            alter_text: false
+            max_length: 12
+            trim: true
+            word_boundary: false
+            ellipsis: true
+        not_syncable:
+          id: not_syncable
+          table: content_relay_report
+          field: not_syncable
+          relationship: none
+          group_type: group
+          admin_label: ''
+          plugin_id: boolean
+          label: 'Not syncable'
+          exclude: false
+          type: yes-no
+        detached_by:
+          id: detached_by
+          table: content_relay_report
+          field: detached_by
+          relationship: none
+          group_type: group
+          admin_label: ''
+          plugin_id: standard
+          label: 'Detached by'
+          exclude: false
+        detached_at:
+          id: detached_at
+          table: content_relay_report
+          field: detached_at
+          relationship: none
+          group_type: group
+          admin_label: ''
+          plugin_id: date
+          label: Detached
+          exclude: false
+          date_format: short
+        last_attempt:
+          id: last_attempt
+          table: content_relay_report
+          field: last_attempt
+          relationship: none
+          group_type: group
+          admin_label: ''
+          plugin_id: date
+          label: 'Last attempt'
+          exclude: false
+          date_format: short
+        last_success:
+          id: last_success
+          table: content_relay_report
+          field: last_success
+          relationship: none
+          group_type: group
+          admin_label: ''
+          plugin_id: date
+          label: 'Last success'
+          exclude: false
+          date_format: short
+        last_error:
+          id: last_error
+          table: content_relay_report
+          field: last_error
+          relationship: none
+          group_type: group
+          admin_label: ''
+          plugin_id: standard
+          label: 'Last error'
+          exclude: false
+      pager:
+        type: full
+        options:
+          offset: 0
+          items_per_page: 50
+      exposed_form:
+        type: basic
+        options:
+          submit_button: Filter
+          reset_button: true
+          reset_button_label: Reset
+          exposed_sorts_label: 'Sort by'
+          expose_sort_order: false
+          sort_asc_label: Asc
+          sort_desc_label: Desc
+      access:
+        type: perm
+        options:
+          perm: 'view content relay status report'
+      cache:
+        type: none
+        options: {  }
+      empty:
+        area_text_custom:
+          id: area_text_custom
+          table: views
+          field: area_text_custom
+          relationship: none
+          group_type: group
+          admin_label: ''
+          plugin_id: text_custom
+          empty: true
+          content: 'No synced items match.'
+          tokenize: false
+      sorts:
+        changed:
+          id: changed
+          table: content_relay_report
+          field: changed
+          relationship: none
+          group_type: group
+          admin_label: ''
+          plugin_id: date
+          order: DESC
+          expose:
+            label: ''
+            field_identifier: changed
+          exposed: false
+          granularity: second
+        id:
+          id: id
+          table: content_relay_report
+          field: id
+          relationship: none
+          group_type: group
+          admin_label: ''
+          plugin_id: standard
+          order: ASC
+          expose:
+            label: ''
+            field_identifier: id
+          exposed: false
+      arguments: {  }
+      filters:
+        search:
+          id: search
+          table: content_relay_report
+          field: search
+          relationship: none
+          group_type: group
+          admin_label: ''
+          plugin_id: content_relay_label_or_uuid
+          operator: contains
+          value: ''
+          group: 1
+          exposed: true
+          expose:
+            operator_id: search_op
+            label: 'Label or UUID'
+            description: ''
+            use_operator: false
+            operator: search_op
+            operator_limit_selection: false
+            operator_list: {  }
+            identifier: search
+            required: false
+            remember: false
+            multiple: false
+            remember_roles:
+              authenticated: authenticated
+          is_grouped: false
+        entity_type:
+          id: entity_type
+          table: content_relay_report
+          field: entity_type
+          relationship: none
+          group_type: group
+          admin_label: ''
+          plugin_id: in_operator
+          operator: in
+          value: {  }
+          group: 1
+          exposed: true
+          expose:
+            operator_id: entity_type_op
+            label: 'Entity type'
+            description: ''
+            use_operator: false
+            operator: entity_type_op
+            operator_limit_selection: false
+            operator_list: {  }
+            identifier: entity_type
+            required: false
+            remember: false
+            multiple: false
+            remember_roles:
+              authenticated: authenticated
+            reduce: false
+          is_grouped: false
+        bundle:
+          id: bundle
+          table: content_relay_report
+          field: bundle
+          relationship: none
+          group_type: group
+          admin_label: ''
+          plugin_id: in_operator
+          operator: in
+          value: {  }
+          group: 1
+          exposed: true
+          expose:
+            operator_id: bundle_op
+            label: Bundle
+            description: ''
+            use_operator: false
+            operator: bundle_op
+            operator_limit_selection: false
+            operator_list: {  }
+            identifier: bundle
+            required: false
+            remember: false
+            multiple: false
+            remember_roles:
+              authenticated: authenticated
+            reduce: false
+          is_grouped: false
+        status:
+          id: status
+          table: content_relay_report
+          field: status
+          relationship: none
+          group_type: group
+          admin_label: ''
+          plugin_id: in_operator
+          operator: in
+          value: {  }
+          group: 1
+          exposed: true
+          expose:
+            operator_id: status_op
+            label: Status
+            description: ''
+            use_operator: false
+            operator: status_op
+            operator_limit_selection: false
+            operator_list: {  }
+            identifier: status
+            required: false
+            remember: false
+            multiple: true
+            remember_roles:
+              authenticated: authenticated
+            reduce: false
+          is_grouped: false
+        replica_id:
+          id: replica_id
+          table: content_relay_report
+          field: replica_id
+          relationship: none
+          group_type: group
+          admin_label: ''
+          plugin_id: in_operator
+          operator: in
+          value: {  }
+          group: 1
+          exposed: true
+          expose:
+            operator_id: replica_id_op
+            label: Replica
+            description: ''
+            use_operator: false
+            operator: replica_id_op
+            operator_limit_selection: false
+            operator_list: {  }
+            identifier: replica
+            required: false
+            remember: false
+            multiple: false
+            remember_roles:
+              authenticated: authenticated
+            reduce: false
+          is_grouped: false
+        langcode:
+          id: langcode
+          table: content_relay_report
+          field: langcode
+          relationship: none
+          group_type: group
+          admin_label: ''
+          plugin_id: language
+          operator: in
+          value: {  }
+          group: 1
+          exposed: true
+          expose:
+            operator_id: langcode_op
+            label: Language
+            description: ''
+            use_operator: false
+            operator: langcode_op
+            operator_limit_selection: false
+            operator_list: {  }
+            identifier: langcode
+            required: false
+            remember: false
+            multiple: false
+            remember_roles:
+              authenticated: authenticated
+            reduce: false
+          is_grouped: false
+        item_out_of_sync:
+          id: item_out_of_sync
+          table: content_relay_report
+          field: item_out_of_sync
+          relationship: none
+          group_type: group
+          admin_label: ''
+          plugin_id: boolean
+          operator: '='
+          value: All
+          group: 1
+          exposed: true
+          expose:
+            operator_id: item_out_of_sync_op
+            label: 'Any translation out of sync'
+            description: ''
+            use_operator: false
+            operator: item_out_of_sync_op
+            operator_limit_selection: false
+            operator_list: {  }
+            identifier: any_out_of_sync
+            required: false
+            remember: false
+            multiple: false
+            remember_roles:
+              authenticated: authenticated
+          is_grouped: false
+        translation_status:
+          id: translation_status
+          table: content_relay_report
+          field: translation_status
+          relationship: none
+          group_type: group
+          admin_label: ''
+          plugin_id: in_operator
+          operator: in
+          value: {  }
+          group: 1
+          exposed: true
+          expose:
+            operator_id: translation_status_op
+            label: Translation
+            description: ''
+            use_operator: false
+            operator: translation_status_op
+            operator_limit_selection: false
+            operator_list: {  }
+            identifier: translation
+            required: false
+            remember: false
+            multiple: false
+            remember_roles:
+              authenticated: authenticated
+            reduce: false
+          is_grouped: false
+        default_translation:
+          id: default_translation
+          table: content_relay_report
+          field: default_translation
+          relationship: none
+          group_type: group
+          admin_label: ''
+          plugin_id: boolean
+          operator: '='
+          value: All
+          group: 1
+          exposed: true
+          expose:
+            operator_id: default_translation_op
+            label: 'Default translation only'
+            description: ''
+            use_operator: false
+            operator: default_translation_op
+            operator_limit_selection: false
+            operator_list: {  }
+            identifier: default_translation
+            required: false
+            remember: false
+            multiple: false
+            remember_roles:
+              authenticated: authenticated
+          is_grouped: false
+        changed:
+          id: changed
+          table: content_relay_report
+          field: changed
+          relationship: none
+          group_type: group
+          admin_label: ''
+          plugin_id: date
+          operator: between
+          value:
+            min: ''
+            max: ''
+            value: ''
+            type: date
+          group: 1
+          exposed: true
+          expose:
+            operator_id: changed_op
+            label: 'Changed on origin between'
+            description: ''
+            use_operator: false
+            operator: changed_op
+            operator_limit_selection: false
+            operator_list: {  }
+            identifier: changed
+            required: false
+            remember: false
+            multiple: false
+            remember_roles:
+              authenticated: authenticated
+          is_grouped: false
+      filter_groups:
+        operator: AND
+        groups:
+          1: AND
+      style:
+        type: table
+        options:
+          grouping: {  }
+          row_class: ''
+          default_row_class: true
+          columns:
+            content_relay_bulk_push: content_relay_bulk_push
+            entity_type: entity_type
+            bundle: bundle
+            label: label
+            uuid: uuid
+            langcode: langcode
+            translation_status: translation_status
+            replica_id: replica_id
+            status: status
+            origin_revision: origin_revision
+            origin_hash: origin_hash
+            replica_hash: replica_hash
+            not_syncable: not_syncable
+            detached_by: detached_by
+            detached_at: detached_at
+            last_attempt: last_attempt
+            last_success: last_success
+            last_error: last_error
+          default: '-1'
+          info:
+            content_relay_bulk_push:
+              sortable: false
+              default_sort_order: asc
+              align: ''
+              separator: ''
+              empty_column: false
+              responsive: ''
+            entity_type:
+              sortable: true
+              default_sort_order: asc
+              align: ''
+              separator: ''
+              empty_column: false
+              responsive: ''
+            bundle:
+              sortable: true
+              default_sort_order: asc
+              align: ''
+              separator: ''
+              empty_column: false
+              responsive: ''
+            label:
+              sortable: true
+              default_sort_order: asc
+              align: ''
+              separator: ''
+              empty_column: false
+              responsive: ''
+            uuid:
+              sortable: true
+              default_sort_order: asc
+              align: ''
+              separator: ''
+              empty_column: false
+              responsive: ''
+            langcode:
+              sortable: true
+              default_sort_order: asc
+              align: ''
+              separator: ''
+              empty_column: false
+              responsive: ''
+            translation_status:
+              sortable: true
+              default_sort_order: asc
+              align: ''
+              separator: ''
+              empty_column: false
+              responsive: ''
+            replica_id:
+              sortable: true
+              default_sort_order: asc
+              align: ''
+              separator: ''
+              empty_column: false
+              responsive: ''
+            status:
+              sortable: true
+              default_sort_order: asc
+              align: ''
+              separator: ''
+              empty_column: false
+              responsive: ''
+            origin_revision:
+              sortable: true
+              default_sort_order: asc
+              align: ''
+              separator: ''
+              empty_column: false
+              responsive: ''
+            origin_hash:
+              sortable: true
+              default_sort_order: asc
+              align: ''
+              separator: ''
+              empty_column: false
+              responsive: ''
+            replica_hash:
+              sortable: true
+              default_sort_order: asc
+              align: ''
+              separator: ''
+              empty_column: false
+              responsive: ''
+            not_syncable:
+              sortable: true
+              default_sort_order: asc
+              align: ''
+              separator: ''
+              empty_column: false
+              responsive: ''
+            detached_by:
+              sortable: true
+              default_sort_order: asc
+              align: ''
+              separator: ''
+              empty_column: false
+              responsive: ''
+            detached_at:
+              sortable: true
+              default_sort_order: asc
+              align: ''
+              separator: ''
+              empty_column: false
+              responsive: ''
+            last_attempt:
+              sortable: true
+              default_sort_order: asc
+              align: ''
+              separator: ''
+              empty_column: false
+              responsive: ''
+            last_success:
+              sortable: true
+              default_sort_order: asc
+              align: ''
+              separator: ''
+              empty_column: false
+              responsive: ''
+            last_error:
+              sortable: true
+              default_sort_order: asc
+              align: ''
+              separator: ''
+              empty_column: false
+              responsive: ''
+          override: true
+          sticky: true
+          summary: ''
+          empty_table: false
+          caption: ''
+          description: ''
+          class: ''
+      row:
+        type: fields
+      query:
+        type: views_query
+        options:
+          query_comment: ''
+          disable_sql_rewrite: false
+          distinct: false
+          replica: false
+          query_tags: {  }
+      relationships: {  }
+      header:
+        content_relay_report_actions:
+          id: content_relay_report_actions
+          table: content_relay_report
+          field: content_relay_report_actions
+          relationship: none
+          group_type: group
+          admin_label: ''
+          plugin_id: content_relay_report_actions
+          empty: true
+      footer: {  }
+      display_extenders: {  }
+  page_1:
+    id: page_1
+    display_title: Page
+    display_plugin: page
+    position: 1
+    display_options:
+      display_extenders: {  }
+      path: admin/reports/content-relay
+      menu:
+        type: normal
+        title: 'Content Relay status'
+        description: 'Which items are in sync on which replica.'
+        weight: 0
+        menu_name: admin
+        parent: system.admin_reports
+        context: '0'
+        expanded: false
+        enabled: true

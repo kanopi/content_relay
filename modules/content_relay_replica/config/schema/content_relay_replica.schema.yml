@@ -31,3 +31,10 @@ content_relay_replica.settings:
     processed_retention_days:
       type: integer
       label: 'Days to remember processed event IDs'
+    detach:
+      type: mapping
+      label: 'Items detached on this replica'
+      mapping:
+        follow_deletes:
+          type: boolean
+          label: 'Delete a detached item when the origin deletes it'

@@ -52,6 +52,7 @@ abstract class ReplicaTestBase extends KernelTestBase {
     'field',
     'filter',
     'user',
+    'views',
   ];
 
   /**

@@ -18,6 +18,11 @@ final class ApplyResult {
   public const DELETED = 'deleted';
   public const ACCEPTED = 'accepted';
   public const STALE = 'stale';
+  // The item is detached on this replica; the event was not applied.
+  public const SKIPPED_DETACHED = 'skipped_detached';
+  // A detach or attach event was recorded.
+  public const DETACHED = 'detached';
+  public const ATTACHED = 'attached';
   // The event names a contract version this replica does not accept.
   public const CONTRACT_MISMATCH = 'contract_mismatch';
   public const APPLY_FAILED = 'apply_failed';

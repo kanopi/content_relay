@@ -16,6 +16,7 @@ use Drupal\content_relay\Serialization\EntitySerializer;
 use Drupal\content_relay\Serialization\NormalizationContext;
 use Drupal\content_relay_replica\ContractStore;
 use Drupal\content_relay_replica\FailedEventStore;
+use Drupal\content_relay_replica\LocalChanges;
 use Drupal\content_relay_replica\OriginPeer;
 use Drupal\content_relay_replica\ProcessedEvents;
 use Drupal\content_relay_replica\SyncStateStore;
@@ -52,6 +53,11 @@ use Symfony\Contracts\EventDispatcher\EventDispatcherInterface;
  * 7. After saving, the copy is hashed again and compared with the origin's
  *    hash.
  *
+ * An item detached on this replica is never written by an event: creates and
+ * updates are answered "skipped_detached", and deletes too unless this site
+ * follows deletes of detached items. Detach and attach events from the origin
+ * only change the item's sync state.
+ *
  * Failures are recorded on this site with the full event, so they can be
  * seen, retried and dismissed here; see FailedEventStore.
  */
@@ -74,6 +80,7 @@ class SyncApplier {
     protected ConfigFactoryInterface $configFactory,
     protected TimeInterface $time,
     protected LoggerInterface $logger,
+    protected LocalChanges $localChanges,
   ) {}
 
   /**
@@ -103,9 +110,6 @@ class SyncApplier {
       return new ApplyResult(409, ApplyResult::CONTRACT_MISMATCH, NULL, $contract === NULL
         ? sprintf('This replica does not accept contract version %d; it has version %s.', $event->contractVersion, $current ?? 'none')
         : sprintf('Contract version %d does not include %s %s.', $event->contractVersion, $event->entityType, $event->bundle), ['current_version' => $current]);
-    }
-    if (!in_array($event->operation, [Operation::Create, Operation::Update, Operation::Delete], TRUE)) {
-      return new ApplyResult(400, ApplyResult::REJECTED, 'unsupported_operation', sprintf('This replica does not handle "%s" events yet.', $event->operation->value));
     }
     if (!$this->entityTypeManager->hasDefinition($event->entityType)) {
       return $this->fail($event, $source_site, FailedEventStore::PERMANENT, 'unknown_entity_type', sprintf('Entity type "%s" does not exist on this site.', $event->entityType));
@@ -149,8 +153,21 @@ class SyncApplier {
     $entity = $this->entityRepository->loadEntityByUuid($event->entityType, $event->entityUuid);
     $entity = $entity instanceof ContentEntityInterface ? $entity : NULL;
 
+    if ($event->operation === Operation::Detach || $event->operation === Operation::Attach) {
+      return $this->applyDetachment($event, $state, $entity);
+    }
     if ($entity !== NULL && $state === NULL) {
       return $this->fail($event, $source_site, FailedEventStore::PERMANENT, 'uuid_collision', 'An item with this UUID exists on the replica but was not created by sync, so sync leaves it alone.');
+    }
+    if ($state !== NULL && $state['detached_at'] !== NULL) {
+      $follow = (bool) $this->configFactory->get('content_relay_replica.settings')->get('detach.follow_deletes');
+      if ($event->operation !== Operation::Delete || !$follow) {
+        return $this->answer($event, new ApplyResult(200, ApplyResult::SKIPPED_DETACHED, NULL, 'The item is detached on this replica.', [
+          'detached_at' => (int) $state['detached_at'],
+          'detached_by' => $this->userName($state['detached_by'] === NULL ? NULL : (int) $state['detached_by']),
+        ]));
+      }
+      return $this->applyDelete($event, $source_site, $entity, $state);
     }
     if ($state !== NULL) {
       if ($this->isStale($event, $state)) {
@@ -165,6 +182,69 @@ class SyncApplier {
     return $event->operation === Operation::Delete
       ? $this->applyDelete($event, $source_site, $entity, $state)
       : $this->applySnapshot($event, $source_site, $entity);
+  }
+
+  /**
+   * Records that the origin detached or reattached an item.
+   *
+   * The copy is not touched either way. An attach is followed by the item
+   * itself, which brings the copy up to date, replacing anything edited here
+   * while it was detached.
+   */
+  protected function applyDetachment(SyncEvent $event, ?array $state, ?ContentEntityInterface $entity): ApplyResult {
+    if ($state === NULL) {
+      return $this->answer($event, new ApplyResult(200, ApplyResult::UNCHANGED, 'not_synced'));
+    }
+    $replica_detached = $state['detached_at'] !== NULL;
+    if ($event->operation === Operation::Detach) {
+      $this->syncState->save($event->entityType, $event->entityUuid, [
+        'origin_detached_at' => $this->time->getCurrentTime(),
+        'status' => $replica_detached ? SyncStatus::DETACHED_BY_REPLICA : SyncStatus::DETACHED_BY_ORIGIN,
+        'last_error' => NULL,
+        'last_event_id' => $event->eventId,
+        'last_synced' => (int) $state['last_synced'],
+      ]);
+      $this->logger->notice('The origin detached @type @uuid.', [
+        '@type' => $event->entityType,
+        '@uuid' => $event->entityUuid,
+      ]);
+      return $this->answer($event, new ApplyResult(200, ApplyResult::DETACHED));
+    }
+    $status = $state['status'];
+    $error = $state['last_error'];
+    if ($replica_detached) {
+      $status = SyncStatus::DETACHED_BY_REPLICA;
+    }
+    elseif ($status === SyncStatus::DETACHED_BY_ORIGIN) {
+      // Edited while detached: not in sync, so the item that follows is
+      // applied even if the origin has not changed it since.
+      $edited = $entity === NULL ? NULL : $this->localChanges->editedTranslations($entity, $state);
+      $status = $edited === NULL ? SyncStatus::SYNCED : SyncStatus::ERROR;
+      $error = $edited === NULL ? NULL : 'Edited on this replica while detached by the origin; the origin\'s version replaces it.';
+    }
+    $this->syncState->save($event->entityType, $event->entityUuid, [
+      'origin_detached_at' => NULL,
+      'status' => $status,
+      'last_error' => $error,
+      'last_event_id' => $event->eventId,
+      'last_synced' => (int) $state['last_synced'],
+    ]);
+    $this->logger->notice('The origin reattached @type @uuid.', [
+      '@type' => $event->entityType,
+      '@uuid' => $event->entityUuid,
+    ]);
+    return $this->answer($event, new ApplyResult(200, ApplyResult::ATTACHED, $replica_detached ? 'detached_by_replica' : NULL));
+  }
+
+  /**
+   * A local user's name, for telling the origin who detached an item.
+   */
+  protected function userName(?int $uid): ?string {
+    if ($uid === NULL) {
+      return NULL;
+    }
+    $account = $this->entityTypeManager->getStorage('user')->load($uid);
+    return $account ? (string) $account->getDisplayName() : (string) $uid;
   }
 
   /**
@@ -239,6 +319,7 @@ class SyncApplier {
         'source_translation_hashes' => $event->hashes->translations,
         'local_hash' => $local->entity,
         'import_mode' => 'as_is',
+        'origin_detached_at' => NULL,
         'status' => $status,
         'last_error' => $error,
         'last_event_id' => $event->eventId,

@@ -7,6 +7,7 @@ namespace Drupal\content_relay_origin;
 use Drupal\Component\Datetime\TimeInterface;
 use Drupal\content_relay\Contract\SubscriptionContract;
 use Drupal\content_relay\Event\Operation;
+use Drupal\content_relay\Event\ProcessingMode;
 use Drupal\content_relay\Event\SyncEvent;
 use Drupal\content_relay\Hash\RevisionHasher;
 use Drupal\content_relay\Serialization\EntitySerializer;
@@ -28,6 +29,7 @@ class EventBuilder {
     protected RevisionHasher $hasher,
     protected HashStore $hashStore,
     protected SyncScope $scope,
+    protected NotSyncableFlags $flags,
     protected TimeInterface $time,
   ) {}
 
@@ -36,7 +38,8 @@ class EventBuilder {
    *
    * Nothing is sent for a create or update whose entity has since been
    * deleted (the delete row follows), or for a delete whose entity exists
-   * again (it was replayed after the entity came back).
+   * again (it was replayed after the entity came back), unless the delete was
+   * recorded to remove the replica's copy of an item marked not syncable.
    *
    * @param array $row
    *   The outbox row.
@@ -51,8 +54,9 @@ class EventBuilder {
     $entity = $this->entityRepository->loadEntityByUuid($row['entity_type'], $row['entity_uuid']);
     $entity = $entity instanceof ContentEntityInterface ? $entity : NULL;
 
+    $process = $row['process'] === NULL ? NULL : ProcessingMode::tryFrom($row['process']);
     if (!$operation->carriesSnapshot()) {
-      if ($operation === Operation::Delete && $entity !== NULL) {
+      if ($operation === Operation::Delete && $entity !== NULL && $row['reason'] !== Outbox::REASON_NOT_SYNCABLE) {
         return NULL;
       }
       return new SyncEvent(
@@ -71,6 +75,7 @@ class EventBuilder {
         snapshot: NULL,
         contractVersion: $contract->version(),
         created: $this->time->getCurrentTime(),
+        process: $process,
         previousSequence: $previous_sequence,
       );
     }
@@ -81,7 +86,7 @@ class EventBuilder {
     $context = new NormalizationContext($contract->languagesFor($entity->getEntityTypeId(), $entity->bundle()));
     $snapshot = $this->serializer->normalize($entity, $context);
     $hashes = $this->hasher->hash($snapshot);
-    [$dependencies, $external] = $this->classifyReferences(array_values($context->references), $contract);
+    [$dependencies, $external] = $this->classifyReferences(array_values($context->references), $contract, $row['replica_id']);
     $revisionable = $entity->getEntityType()->isRevisionable();
     $revision = $revisionable ? (int) $entity->getRevisionId() : (int) ($this->hashStore->latest($entity->getEntityTypeId(), $entity->uuid())['revision'] ?? 1);
 
@@ -102,6 +107,7 @@ class EventBuilder {
       contractVersion: $contract->version(),
       created: $this->time->getCurrentTime(),
       dependencies: $dependencies,
+      process: $process,
       previousSequence: $previous_sequence,
       externalReferences: $external,
     );
@@ -112,18 +118,21 @@ class EventBuilder {
    *
    * A reference to something the replica subscribes to is a dependency: it is
    * sent first, and the replica waits for it if it has not arrived. Anything
-   * else (an entity type or bundle outside the contract, or one the origin
-   * does not publish) will never be sent, and the replica is told so.
+   * else (an entity type or bundle outside the contract, one the origin does
+   * not publish, or an item marked not syncable for the replica) will never
+   * be sent, and the replica is told so.
    *
    * @param array<array{entity_type: string, uuid: string}> $references
    *   Referenced entities.
    * @param \Drupal\content_relay\Contract\SubscriptionContract $contract
    *   The contract in force.
+   * @param string $replica_id
+   *   The replica the event is for.
    *
    * @return array{0: array, 1: array}
    *   Dependencies and external references.
    */
-  protected function classifyReferences(array $references, SubscriptionContract $contract): array {
+  protected function classifyReferences(array $references, SubscriptionContract $contract, string $replica_id): array {
     $by_type = [];
     foreach ($references as $reference) {
       $by_type[$reference['entity_type']][] = $reference['uuid'];
@@ -139,7 +148,7 @@ class EventBuilder {
       foreach ($uuids as $uuid) {
         $target = $loaded[$uuid] ?? NULL;
         $reference = ['entity_type' => $entity_type_id, 'uuid' => $uuid];
-        if ($target !== NULL && $this->scope->applies($target) && $contract->allowsBundle($entity_type_id, $target->bundle())) {
+        if ($target !== NULL && $this->scope->applies($target) && $contract->allowsBundle($entity_type_id, $target->bundle()) && !$this->flags->isBlocked($entity_type_id, $uuid, $replica_id)) {
           $dependencies[] = $reference;
         }
         else {

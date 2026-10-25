@@ -68,8 +68,24 @@ function content_relay_replica_schema(): array {
       'last_error' => ['type' => 'text', 'not null' => FALSE],
       'last_event_id' => ['type' => 'varchar_ascii', 'length' => 36, 'not null' => FALSE],
       'last_synced' => ['type' => 'int', 'size' => 'big', 'not null' => TRUE, 'default' => 0],
-      'detached_by' => ['type' => 'int', 'unsigned' => TRUE, 'not null' => FALSE],
-      'detached_at' => ['type' => 'int', 'size' => 'big', 'not null' => FALSE],
+      'detached_by' => [
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => FALSE,
+        'description' => 'The local user who detached the item.',
+      ],
+      'detached_at' => [
+        'type' => 'int',
+        'size' => 'big',
+        'not null' => FALSE,
+        'description' => 'When this replica detached the item; NULL while attached.',
+      ],
+      'origin_detached_at' => [
+        'type' => 'int',
+        'size' => 'big',
+        'not null' => FALSE,
+        'description' => 'When the origin detached the item; NULL while the origin sends it.',
+      ],
     ],
     'primary key' => ['entity_type', 'uuid'],
     'indexes' => [

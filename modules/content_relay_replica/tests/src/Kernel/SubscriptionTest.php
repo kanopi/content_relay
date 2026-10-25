@@ -56,6 +56,7 @@ final class SubscriptionTest extends KernelTestBase {
     'field',
     'filter',
     'user',
+    'views',
   ];
 
   /**

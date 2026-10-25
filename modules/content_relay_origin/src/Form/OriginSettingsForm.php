@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Drupal\content_relay_origin\Form;
 
 use Drupal\content_relay\Serialization\SyncableEntityTypes;
+use Drupal\content_relay_origin\NotSyncableFlags;
 use Drupal\content_relay_origin\PairingCodes;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Config\TypedConfigManagerInterface;
@@ -136,6 +137,16 @@ final class OriginSettingsForm extends ConfigFormBase {
       '#min' => 1,
       '#default_value' => $config->get('retention_days'),
     ];
+    $form['not_syncable_behavior'] = [
+      '#type' => 'radios',
+      '#title' => $this->t('When an item replicas already have is marked not syncable'),
+      '#options' => [
+        NotSyncableFlags::DETACH => $this->t('Replicas keep their copy, detached'),
+        NotSyncableFlags::REMOVE => $this->t('Replicas delete their copy'),
+      ],
+      '#default_value' => $config->get('not_syncable.behavior') ?? NotSyncableFlags::DETACH,
+      '#description' => $this->t('The default; it can be chosen each time an item is marked.'),
+    ];
     return parent::buildForm($form, $form_state);
   }
 
@@ -175,6 +186,7 @@ final class OriginSettingsForm extends ConfigFormBase {
       ->set('delivery.max_attempts', (int) $form_state->getValue(['delivery', 'max_attempts']))
       ->set('delivery.timeout', (int) $form_state->getValue(['delivery', 'timeout']))
       ->set('retention_days', (int) $form_state->getValue('retention_days'))
+      ->set('not_syncable.behavior', (string) $form_state->getValue('not_syncable_behavior'))
       ->save();
     parent::submitForm($form, $form_state);
   }

@@ -10,3 +10,15 @@ generate content relay pairing codes:
   title: 'Generate Content Relay pairing codes'
   description: 'Anyone with a code can pair a replica that receives published content.'
   restrict access: true
+push content relay items:
+  title: 'Push Content Relay items'
+  description: 'Send an item to replicas now, from its push form or Drush (manual resync).'
+bulk push content relay items:
+  title: 'Bulk push Content Relay items'
+  description: 'Push many items at once from the status report (bulk resync), and refresh the report.'
+view content relay status report:
+  title: 'View the Content Relay status report'
+  description: 'See which items are in sync on which replica.'
+mark content relay items not syncable:
+  title: 'Mark Content Relay items not syncable'
+  description: 'Stop or resume sending individual items to replicas.'

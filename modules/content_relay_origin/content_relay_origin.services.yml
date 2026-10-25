@@ -47,6 +47,8 @@ services:
       - '@content_relay_origin.delivery_scheduler'
       - '@content_relay_origin.replica_registry'
       - '@content_relay_origin.contract_manager'
+      - '@content_relay_origin.not_syncable'
+      - '@content_relay_origin.report'
 
   content_relay_origin.event_builder:
     class: Drupal\content_relay_origin\EventBuilder
@@ -57,6 +59,7 @@ services:
       - '@content_relay.revision_hasher'
       - '@content_relay_origin.hash_store'
       - '@content_relay_origin.sync_scope'
+      - '@content_relay_origin.not_syncable'
       - '@datetime.time'
 
   content_relay_origin.delivery:
@@ -68,6 +71,8 @@ services:
       - '@content_relay_origin.contract_manager'
       - '@content_relay_origin.replica_items'
       - '@content_relay_origin.sync_scope'
+      - '@content_relay_origin.not_syncable'
+      - '@content_relay_origin.report'
       - '@entity.repository'
       - '@content_relay.message_signer'
       - '@http_client'
@@ -126,3 +131,101 @@ services:
   content_relay_origin.replica_items:
     class: Drupal\content_relay_origin\ReplicaItems
     arguments: ['@database', '@datetime.time']
+
+  content_relay_origin.not_syncable:
+    class: Drupal\content_relay_origin\NotSyncableFlags
+    arguments: ['@database', '@datetime.time']
+
+  content_relay_origin.item_sync_control:
+    class: Drupal\content_relay_origin\ItemSyncControl
+    arguments:
+      - '@content_relay_origin.not_syncable'
+      - '@content_relay_origin.outbox'
+      - '@content_relay_origin.delivery_scheduler'
+      - '@content_relay_origin.hash_store'
+      - '@content_relay_origin.replica_items'
+      - '@content_relay_origin.replica_registry'
+      - '@content_relay_origin.contract_manager'
+      - '@content_relay_origin.sync_scope'
+      - '@content_relay_origin.report'
+      - '@config.factory'
+      - '@current_user'
+      - '@logger.channel.content_relay_origin'
+
+  content_relay_origin.manual_push:
+    class: Drupal\content_relay_origin\ManualPush
+    arguments:
+      - '@content_relay_origin.item_sync_control'
+      - '@content_relay_origin.outbox'
+      - '@content_relay_origin.replica_items'
+      - '@content_relay_origin.hash_store'
+      - '@content_relay_origin.replica_registry'
+      - '@content_relay_origin.contract_manager'
+      - '@content_relay_origin.delivery'
+      - '@current_user'
+      - '@logger.channel.content_relay_origin'
+
+  content_relay_origin.bulk_push:
+    class: Drupal\content_relay_origin\BulkPush
+    arguments:
+      - '@database'
+      - '@content_relay_origin.item_sync_control'
+      - '@content_relay_origin.outbox'
+      - '@content_relay_origin.replica_items'
+      - '@content_relay_origin.hash_store'
+      - '@content_relay_origin.delivery_scheduler'
+      - '@current_user'
+      - '@logger.channel.content_relay_origin'
+
+  content_relay_origin.report:
+    class: Drupal\content_relay_origin\Report\ReportIndex
+    arguments:
+      - '@database'
+      - '@entity.repository'
+      - '@entity_type.manager'
+      - '@content_relay_origin.hash_store'
+      - '@content_relay_origin.replica_items'
+      - '@content_relay_origin.outbox'
+      - '@content_relay_origin.not_syncable'
+      - '@content_relay_origin.replica_registry'
+      - '@content_relay_origin.contract_manager'
+      - '@content_relay_origin.sync_scope'
+      - '@datetime.time'
+
+  content_relay_origin.report_rebuild:
+    class: Drupal\content_relay_origin\Report\ReportRebuild
+    arguments:
+      - '@content_relay_origin.report'
+      - '@content_relay_origin.sync_scope'
+      - '@content_relay_origin.replica_registry'
+      - '@content_relay_origin.contract_manager'
+      - '@database'
+      - '@queue'
+      - '@state'
+
+  content_relay_origin.entity_ui:
+    class: Drupal\content_relay_origin\EntityUi
+    arguments:
+      - '@content_relay_origin.sync_scope'
+      - '@content_relay_origin.not_syncable'
+      - '@content_relay_origin.item_sync_control'
+      - '@content_relay_origin.manual_push'
+      - '@current_user'
+
+  content_relay_origin.item_routes:
+    class: Drupal\content_relay_origin\Routing\ItemRoutes
+    arguments: ['@content_relay.syncable_entity_types']
+
+  content_relay_origin.item_access:
+    class: Drupal\content_relay_origin\Access\ItemAccessCheck
+    arguments: ['@content_relay_origin.sync_scope']
+    tags:
+      - { name: access_check, applies_to: _content_relay_item }
+
+  content_relay_origin.report_views:
+    class: Drupal\content_relay_origin\Report\ReportViews
+    arguments: ['@entity_type.manager', '@views.executable', '@current_user']
+
+  content_relay_origin.report_views_data:
+    class: Drupal\content_relay_origin\Report\ReportViewsData
+    arguments: ['@content_relay.syncable_entity_types']

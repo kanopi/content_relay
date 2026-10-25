@@ -7,6 +7,7 @@ namespace Drupal\content_relay_origin;
 use Drupal\Component\Datetime\TimeInterface;
 use Drupal\Component\Uuid\UuidInterface;
 use Drupal\content_relay\Event\Operation;
+use Drupal\content_relay\Event\ProcessingMode;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Database\Connection;
 
@@ -22,6 +23,29 @@ use Drupal\Core\Database\Connection;
 class Outbox {
 
   public const TABLE = 'content_relay_outbox';
+
+  /**
+   * Pushed by hand from the item's push form or Drush.
+   */
+  public const REASON_MANUAL = 'manual';
+
+  /**
+   * Pushed from the status report or Drush, in bulk.
+   */
+  public const REASON_BULK = 'bulk';
+
+  /**
+   * Sent because the item was marked not syncable.
+   *
+   * A delete recorded for this reason removes the replica's copy of an item
+   * the origin still has.
+   */
+  public const REASON_NOT_SYNCABLE = 'not_syncable';
+
+  /**
+   * Sent because the item was marked syncable again.
+   */
+  public const REASON_ATTACH = 'attach';
 
   public function __construct(
     protected Connection $database,
@@ -51,11 +75,15 @@ class Outbox {
    *   The user who triggered it, for manual actions.
    * @param int|null $replay_of
    *   The row this replays.
+   * @param string|null $reason
+   *   Why, when not an entity save: one of the REASON_* constants.
+   * @param \Drupal\content_relay\Event\ProcessingMode|null $process
+   *   A processing mode for the replica to use instead of its own.
    *
    * @return array<string, int>
    *   New row IDs by replica ID.
    */
-  public function enqueue(Operation $operation, string $entity_type_id, string $bundle, string $uuid, ?int $source_revision = NULL, ?array $replica_ids = NULL, ?int $uid = NULL, ?int $replay_of = NULL): array {
+  public function enqueue(Operation $operation, string $entity_type_id, string $bundle, string $uuid, ?int $source_revision = NULL, ?array $replica_ids = NULL, ?int $uid = NULL, ?int $replay_of = NULL, ?string $reason = NULL, ?ProcessingMode $process = NULL): array {
     $now = $this->time->getCurrentTime();
     $ids = [];
     foreach ($this->registry->getAll() as $replica) {
@@ -77,6 +105,8 @@ class Outbox {
           'next_attempt' => $now,
           'triggered_by' => $uid,
           'replay_of' => $replay_of,
+          'reason' => $reason,
+          'process' => $process?->value,
           'created' => $now,
           'changed' => $now,
         ])
@@ -87,6 +117,8 @@ class Outbox {
 
   /**
    * A row by ID.
+   *
+   * @phpstan-impure
    */
   public function load(int $id): ?array {
     return $this->database->select(self::TABLE, 'o')->fields('o')->condition('id', $id)->execute()->fetchAssoc() ?: NULL;
@@ -123,6 +155,38 @@ class Outbox {
       ->range(0, 1)
       ->execute()
       ->fetchAssoc() ?: NULL;
+  }
+
+  /**
+   * The latest row for an item and a replica that is or was meant to be sent.
+   *
+   * Superseded and replayed rows are left out: another row speaks for them.
+   */
+  public function latestFor(string $replica_id, string $entity_type_id, string $uuid): ?array {
+    return $this->database->select(self::TABLE, 'o')
+      ->fields('o')
+      ->condition('replica_id', $replica_id)
+      ->condition('entity_type', $entity_type_id)
+      ->condition('entity_uuid', $uuid)
+      ->condition('status', [EventStatus::SUPERSEDED, EventStatus::REPLAYED], 'NOT IN')
+      ->orderBy('sequence', 'DESC')
+      ->range(0, 1)
+      ->execute()
+      ->fetchAssoc() ?: NULL;
+  }
+
+  /**
+   * The time of the last answer a replica gave that settled an item.
+   */
+  public function lastSuccessFor(string $replica_id, string $entity_type_id, string $uuid): ?int {
+    $query = $this->database->select(self::TABLE, 'o')
+      ->condition('replica_id', $replica_id)
+      ->condition('entity_type', $entity_type_id)
+      ->condition('entity_uuid', $uuid)
+      ->condition('status', [EventStatus::APPLIED, EventStatus::ACCEPTED, EventStatus::STALE], 'IN');
+    $query->addExpression('MAX(changed)', 'last');
+    $value = $query->execute()->fetchField();
+    return $value === NULL || $value === FALSE ? NULL : (int) $value;
   }
 
   /**
@@ -180,6 +244,9 @@ class Outbox {
       ->condition('sequence', $row['sequence'], '>')
       ->condition('operation', [Operation::Create->value, Operation::Update->value], 'IN')
       ->condition('status', EventStatus::QUEUED)
+      // A manual push is sent as asked, with its own processing mode, even
+      // when an earlier event already carries the same state.
+      ->condition($this->database->condition('OR')->isNull('reason')->condition('reason', self::REASON_MANUAL, '<>'))
       ->execute();
   }
 

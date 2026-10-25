@@ -1,3 +1,6 @@
+route_callbacks:
+  - 'content_relay_origin.item_routes:routes'
+
 # Machine endpoints. Each authenticates the caller itself: pairing by code and
 # a signature from the key being registered, the inbox by the signature of a
 # registered replica. There is no session and no CSRF token.
@@ -64,3 +67,27 @@ content_relay_origin.replica_action:
   requirements:
     _permission: 'administer content relay replicas'
     action: 'approve|suspend|resume|revoke'
+
+content_relay_origin.bulk_push:
+  path: '/admin/reports/content-relay/push'
+  defaults:
+    _form: '\Drupal\content_relay_origin\Form\BulkPushConfirmForm'
+    _title: 'Push items'
+  requirements:
+    _permission: 'bulk push content relay items'
+
+content_relay_origin.report_refresh:
+  path: '/admin/reports/content-relay/refresh'
+  defaults:
+    _controller: '\Drupal\content_relay_origin\Controller\ReportController::refresh'
+    _title: 'Refresh status'
+  requirements:
+    _permission: 'bulk push content relay items'
+    _csrf_token: 'TRUE'
+
+content_relay_origin.report_export:
+  path: '/admin/reports/content-relay/export'
+  defaults:
+    _controller: '\Drupal\content_relay_origin\Controller\ReportController::export'
+  requirements:
+    _permission: 'view content relay status report'

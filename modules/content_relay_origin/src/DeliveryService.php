@@ -9,6 +9,7 @@ use Drupal\content_relay\Contract\SubscriptionContract;
 use Drupal\content_relay\Crypto\MessageSigner;
 use Drupal\content_relay\Event\Operation;
 use Drupal\content_relay\Event\SyncEvent;
+use Drupal\content_relay_origin\Report\ReportIndex;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Entity\ContentEntityInterface;
 use Drupal\Core\Entity\EntityRepositoryInterface;
@@ -26,6 +27,9 @@ use Psr\Log\LoggerInterface;
  * - 202: accepted; the replica will apply it later.
  * - 409: the replica has this or a newer revision, or refused it as a
  *   conflict. Done, never retried.
+ * - 200 with result "skipped_detached": the replica detached the item and
+ *   did not apply it. Recorded as skipped; creates and updates of the item
+ *   are no longer sent to that replica until it reattaches.
  * - 422 with result "apply_failed": the replica could not save a valid event.
  *   The replica keeps it and owns the retries; the origin records the failure
  *   and does not resend.
@@ -48,6 +52,10 @@ use Psr\Log\LoggerInterface;
  * back everything behind it, so a replica always receives its stream in
  * order.
  *
+ * Creates and updates of an item marked not syncable for the replica, or
+ * detached by it, are skipped when their turn comes. Detach, attach and
+ * delete events still go.
+ *
  * The contract in force decides the rest: nothing is sent before the replica
  * acknowledged its first contract, while it has paused delivery, or outside
  * its delivery windows; at most its rate limit is sent per minute; and events
@@ -67,6 +75,8 @@ class DeliveryService {
     protected ContractManager $contracts,
     protected ReplicaItems $items,
     protected SyncScope $scope,
+    protected NotSyncableFlags $flags,
+    protected ReportIndex $report,
     protected EntityRepositoryInterface $entityRepository,
     protected MessageSigner $signer,
     protected ClientInterface $httpClient,
@@ -128,16 +138,42 @@ class DeliveryService {
   }
 
   /**
-   * Sends one row and records the outcome.
+   * Sends one row, records the outcome and updates the item's report rows.
    *
    * @return bool
    *   FALSE when delivery to this replica should pause.
    */
   protected function send(array $row, Replica $replica, SubscriptionContract $contract, array &$visited = []): bool {
+    try {
+      return $this->sendRow($row, $replica, $contract, $visited);
+    }
+    finally {
+      $this->report->refresh($row['entity_type'], $row['entity_uuid']);
+    }
+  }
+
+  /**
+   * Sends one row and records the outcome.
+   *
+   * @return bool
+   *   FALSE when delivery to this replica should pause.
+   */
+  protected function sendRow(array $row, Replica $replica, SubscriptionContract $contract, array &$visited): bool {
     $id = (int) $row['id'];
     if (!$contract->allowsBundle($row['entity_type'], $row['bundle'])) {
       $this->outbox->update($id, ['status' => EventStatus::SKIPPED, 'result_code' => 'not_in_contract']);
       return TRUE;
+    }
+    if (in_array($row['operation'], [Operation::Create->value, Operation::Update->value], TRUE)) {
+      $blocked = match (TRUE) {
+        $this->flags->isBlocked($row['entity_type'], $row['entity_uuid'], $replica->id) => ReportIndex::NOT_SYNCABLE,
+        $this->items->isDetached($replica->id, $row['entity_type'], $row['entity_uuid']) => ReportIndex::DETACHED_BY_REPLICA,
+        default => NULL,
+      };
+      if ($blocked !== NULL) {
+        $this->outbox->update($id, ['status' => EventStatus::SKIPPED, 'result_code' => $blocked]);
+        return TRUE;
+      }
     }
     $visited[$row['entity_type'] . ':' . $row['entity_uuid']] = TRUE;
     try {
@@ -235,6 +271,12 @@ class DeliveryService {
       $this->contracts->push($replica->id, TRUE);
       return FALSE;
     }
+    if ($code === 200 && $result === 'skipped_detached') {
+      $this->outbox->update($id, $fields + ['status' => EventStatus::SKIPPED]);
+      $this->items->markDetached($replica->id, $event->entityType, $event->entityUuid, $event->bundle, is_string($decoded['details']['detached_by'] ?? NULL) ? $decoded['details']['detached_by'] : NULL, is_int($decoded['details']['detached_at'] ?? NULL) ? $decoded['details']['detached_at'] : NULL);
+      $this->registry->recordSuccess($replica->id);
+      return TRUE;
+    }
     if ($code === 200 || $code === 202 || $code === 409) {
       $status = match ($code) {
         200 => EventStatus::APPLIED,
@@ -246,6 +288,11 @@ class DeliveryService {
         200 => ReplicaItems::APPLIED,
         default => ReplicaItems::ACCEPTED,
       });
+      if ($code === 200 && $event->operation->carriesSnapshot()) {
+        // The replica applied the item, so it is not detached there, whatever
+        // a lost notice left recorded here.
+        $this->items->markAttached($replica->id, $event->entityType, $event->entityUuid);
+      }
       $this->registry->recordSuccess($replica->id);
       return TRUE;
     }

@@ -1,0 +1,11 @@
+langcode: en
+status: true
+dependencies:
+  module:
+    - content_relay_origin
+    - node
+id: content_relay_node_syncable
+label: 'Make syncable (Content Relay)'
+type: node
+plugin: 'content_relay_syncable:node'
+configuration: {  }

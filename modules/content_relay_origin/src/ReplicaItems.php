@@ -13,8 +13,11 @@ use Drupal\Core\Database\Connection;
  * What each replica has of each item, as far as the origin knows.
  *
  * Updated from every answer a replica gives. Delivery reads it to know which
- * dependencies a replica still needs, and the status report (phase 5) reads
- * it for each replica's acknowledged hashes.
+ * dependencies a replica still needs, and the status report reads it for
+ * each replica's acknowledged hashes.
+ *
+ * Whether the replica detached an item is kept apart from its status, so
+ * reattaching finds the item as it was.
  */
 class ReplicaItems {
 
@@ -47,6 +50,9 @@ class ReplicaItems {
       'last_event_id' => $event->eventId,
       'updated' => $this->time->getCurrentTime(),
     ];
+    if ($fields['status'] === self::DELETED) {
+      $fields += ['detached_at' => NULL, 'detached_by' => NULL];
+    }
     if ($event->hashes !== NULL && $status === self::APPLIED) {
       $fields += [
         'revision' => $event->sourceRevision,
@@ -89,6 +95,67 @@ class ReplicaItems {
       ->condition('uuid', $uuid)
       ->execute()
       ->fetchAssoc() ?: NULL;
+  }
+
+  /**
+   * Records that a replica detached an item.
+   *
+   * @param string $replica_id
+   *   The replica.
+   * @param string $entity_type_id
+   *   Entity type.
+   * @param string $uuid
+   *   UUID.
+   * @param string $bundle
+   *   Bundle, for an item the origin has no record of on that replica.
+   * @param string|null $by
+   *   Who detached it, as the replica reported.
+   * @param int|null $at
+   *   When, as the replica reported; now if not.
+   *
+   * @return bool
+   *   TRUE if the item was not already recorded as detached.
+   */
+  public function markDetached(string $replica_id, string $entity_type_id, string $uuid, string $bundle, ?string $by, ?int $at = NULL): bool {
+    $was = $this->isDetached($replica_id, $entity_type_id, $uuid);
+    $fields = [
+      'detached_at' => $at ?? $this->time->getCurrentTime(),
+      'detached_by' => $by === NULL ? NULL : mb_substr($by, 0, 255),
+    ];
+    $this->database->merge(self::TABLE)
+      ->keys(['replica_id' => $replica_id, 'entity_type' => $entity_type_id, 'uuid' => $uuid])
+      ->insertFields($fields + [
+        'bundle' => $bundle,
+        'status' => self::APPLIED,
+        'last_event_id' => '',
+        'updated' => $this->time->getCurrentTime(),
+      ])
+      ->updateFields($fields)
+      ->execute();
+    return !$was;
+  }
+
+  /**
+   * Records that a replica reattached an item.
+   *
+   * @return bool
+   *   TRUE if it was recorded as detached.
+   */
+  public function markAttached(string $replica_id, string $entity_type_id, string $uuid): bool {
+    return (bool) $this->database->update(self::TABLE)
+      ->fields(['detached_at' => NULL, 'detached_by' => NULL])
+      ->condition('replica_id', $replica_id)
+      ->condition('entity_type', $entity_type_id)
+      ->condition('uuid', $uuid)
+      ->isNotNull('detached_at')
+      ->execute();
+  }
+
+  /**
+   * Whether a replica detached an item.
+   */
+  public function isDetached(string $replica_id, string $entity_type_id, string $uuid): bool {
+    return ($this->get($replica_id, $entity_type_id, $uuid)['detached_at'] ?? NULL) !== NULL;
   }
 
 }

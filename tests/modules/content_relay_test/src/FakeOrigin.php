@@ -33,6 +33,7 @@ use Psr\Http\Message\RequestInterface;
  * - allowed: bundles it grants, by entity type.
  * - down: TRUE to fail every request with a connection error.
  * - versions: contracts issued; acks: versions acknowledged; requests: log.
+ * - notices: detach and attach notices received, each type and body.
  */
 final class FakeOrigin {
 
@@ -132,8 +133,17 @@ final class FakeOrigin {
         'contract' => $this->sign($config, 'contract', $this->contract($config, $message['body']['replica_terms'] ?? [])->toArray()),
       ],
       ],
+      'detach_notice', 'attach_notice' => $this->notice($config, $message['type'], $message['body'] ?? []),
       default => [400, ['result' => 'unsupported_type']],
     };
+  }
+
+  /**
+   * Records a detach or attach notice.
+   */
+  private function notice(array &$config, string $type, array $body): array {
+    $config['notices'][] = ['type' => $type, 'body' => $body];
+    return [200, ['result' => 'recorded']];
   }
 
   /**

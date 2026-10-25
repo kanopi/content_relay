@@ -4,3 +4,9 @@ services:
     arguments: ['@state']
     tags:
       - { name: http_client_middleware }
+
+  content_relay_test.fake_replica_endpoint:
+    class: Drupal\content_relay_test\FakeReplicaEndpoint
+    arguments: ['@state']
+    tags:
+      - { name: http_client_middleware }

@@ -1,0 +1,11 @@
+langcode: en
+status: true
+dependencies:
+  module:
+    - content_relay_origin
+    - node
+id: content_relay_node_not_syncable
+label: 'Mark not syncable (Content Relay)'
+type: node
+plugin: 'content_relay_not_syncable:node'
+configuration: {  }

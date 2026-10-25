@@ -7,3 +7,5 @@ processed_retention_days: 60
 external_references:
   fallbacks:
     user: '0'
+detach:
+  follow_deletes: false

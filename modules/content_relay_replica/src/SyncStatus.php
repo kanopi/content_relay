@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Drupal\content_relay_replica;
 
+use Drupal\Core\StringTranslation\TranslatableMarkup;
+
 /**
  * States of a synced item on the replica.
  */
@@ -20,5 +22,25 @@ final class SyncStatus {
   public const DETACHED_BY_ORIGIN = 'detached_by_origin';
   public const DETACHED_BY_REPLICA = 'detached_by_replica';
   public const SCHEMA_DRIFT = 'schema_drift';
+
+  /**
+   * Labels, by status.
+   *
+   * @return array<string, \Drupal\Core\StringTranslation\TranslatableMarkup>
+   *   Labels.
+   */
+  public static function labels(): array {
+    return [
+      self::SYNCED => new TranslatableMarkup('Synced'),
+      self::CONFLICT => new TranslatableMarkup('Conflict'),
+      self::ERROR => new TranslatableMarkup('Error'),
+      self::APPLY_FAILED => new TranslatableMarkup('Apply failed'),
+      self::WAITING_FILES => new TranslatableMarkup('Waiting for files'),
+      self::WAITING_DEPENDENCY => new TranslatableMarkup('Waiting for a dependency'),
+      self::DETACHED_BY_ORIGIN => new TranslatableMarkup('Detached by origin'),
+      self::DETACHED_BY_REPLICA => new TranslatableMarkup('Detached by replica'),
+      self::SCHEMA_DRIFT => new TranslatableMarkup('Schema drift'),
+    ];
+  }
 
 }

@@ -12,3 +12,5 @@ content_relay_origin.pairing_code:
   route_name: content_relay_origin.pairing_code
   base_route: content_relay_origin.settings
   weight: 20
+content_relay_origin.item_push:
+  deriver: Drupal\content_relay_origin\Plugin\Derivative\PushLocalTasks

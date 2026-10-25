@@ -7,7 +7,9 @@
 
 declare(strict_types=1);
 
+use Drupal\Core\Cache\CacheableMetadata;
 use Drupal\Core\Entity\EntityInterface;
+use Drupal\Core\Form\FormStateInterface;
 
 /**
  * Implements hook_entity_insert().
@@ -38,4 +40,20 @@ function content_relay_origin_cron(): void {
   \Drupal::service('content_relay_origin.pairing_codes')->prune();
   \Drupal::service('content_relay_origin.delivery_scheduler')->scheduleDue();
   \Drupal::service('content_relay_origin.outbox')->prune();
+  \Drupal::service('content_relay_origin.report_rebuild')->rebuildIfChanged();
+}
+
+/**
+ * Implements hook_entity_operation().
+ */
+function content_relay_origin_entity_operation(EntityInterface $entity, ?CacheableMetadata $cacheability = NULL): array {
+  $cacheability?->addCacheContexts(['user.permissions']);
+  return \Drupal::service('content_relay_origin.entity_ui')->operations($entity);
+}
+
+/**
+ * Implements hook_form_alter().
+ */
+function content_relay_origin_form_alter(array &$form, FormStateInterface $form_state, string $form_id): void {
+  \Drupal::service('content_relay_origin.entity_ui')->formAlter($form, $form_state);
 }

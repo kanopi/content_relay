@@ -9,10 +9,12 @@ declare(strict_types=1);
 
 use Drupal\content_relay_origin\ContractManager;
 use Drupal\content_relay_origin\HashStore;
+use Drupal\content_relay_origin\NotSyncableFlags;
 use Drupal\content_relay_origin\Outbox;
 use Drupal\content_relay_origin\PairingCodes;
 use Drupal\content_relay_origin\ReplicaItems;
 use Drupal\content_relay_origin\ReplicaRegistry;
+use Drupal\content_relay_origin\Report\ReportIndex;
 
 /**
  * Implements hook_requirements().
@@ -104,6 +106,18 @@ function content_relay_origin_schema(): array {
         'description' => 'User who triggered a manual push or replay.',
       ],
       'replay_of' => ['type' => 'int', 'size' => 'big', 'unsigned' => TRUE, 'not null' => FALSE],
+      'reason' => [
+        'type' => 'varchar_ascii',
+        'length' => 32,
+        'not null' => FALSE,
+        'description' => 'Why the row was recorded, when not by an entity save: manual, bulk, not_syncable or attach.',
+      ],
+      'process' => [
+        'type' => 'varchar_ascii',
+        'length' => 16,
+        'not null' => FALSE,
+        'description' => 'Processing mode requested for this event, overriding the replica\'s.',
+      ],
       'created' => ['type' => 'int', 'size' => 'big', 'not null' => TRUE],
       'changed' => ['type' => 'int', 'size' => 'big', 'not null' => TRUE],
       'first_sent' => ['type' => 'int', 'size' => 'big', 'not null' => FALSE],
@@ -154,6 +168,18 @@ function content_relay_origin_schema(): array {
       'translation_hashes' => ['type' => 'text', 'not null' => FALSE],
       'last_event_id' => ['type' => 'varchar_ascii', 'length' => 36, 'not null' => TRUE],
       'updated' => ['type' => 'int', 'size' => 'big', 'not null' => TRUE],
+      'detached_at' => [
+        'type' => 'int',
+        'size' => 'big',
+        'not null' => FALSE,
+        'description' => 'When the replica detached the item; NULL while attached.',
+      ],
+      'detached_by' => [
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => FALSE,
+        'description' => 'Who detached it, as the replica reported.',
+      ],
     ],
     'primary key' => ['replica_id', 'entity_type', 'uuid'],
     'indexes' => ['status' => ['replica_id', 'status']],
@@ -211,6 +237,100 @@ function content_relay_origin_schema(): array {
     ],
     'primary key' => ['replica_id', 'version'],
     'indexes' => ['status' => ['replica_id', 'status']],
+  ];
+
+  $schema[NotSyncableFlags::TABLE] = [
+    'description' => 'Items the origin does not send, to every replica or to one.',
+    'fields' => [
+      'entity_type' => ['type' => 'varchar_ascii', 'length' => 32, 'not null' => TRUE],
+      'uuid' => ['type' => 'varchar_ascii', 'length' => 128, 'not null' => TRUE],
+      'replica_id' => [
+        'type' => 'varchar_ascii',
+        'length' => 64,
+        'not null' => TRUE,
+        'default' => '',
+        'description' => 'The replica the flag applies to; empty for all.',
+      ],
+      'bundle' => ['type' => 'varchar_ascii', 'length' => 128, 'not null' => TRUE],
+      'behavior' => [
+        'type' => 'varchar_ascii',
+        'length' => 16,
+        'not null' => TRUE,
+        'description' => 'detach or remove: what replicas that had the item were told.',
+      ],
+      'uid' => ['type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE, 'default' => 0],
+      'created' => ['type' => 'int', 'size' => 'big', 'not null' => TRUE],
+    ],
+    'primary key' => ['entity_type', 'uuid', 'replica_id'],
+  ];
+
+  $schema[ReportIndex::TABLE] = [
+    'description' => 'The sync status report: one row per item, translation and replica, derived from the other tables.',
+    'fields' => [
+      'id' => ['type' => 'serial', 'unsigned' => TRUE, 'not null' => TRUE],
+      'entity_type' => ['type' => 'varchar_ascii', 'length' => 32, 'not null' => TRUE],
+      'entity_id' => [
+        'type' => 'varchar_ascii',
+        'length' => 128,
+        'not null' => TRUE,
+        'description' => 'Local ID, for joining to the entity in Views.',
+      ],
+      'uuid' => ['type' => 'varchar_ascii', 'length' => 128, 'not null' => TRUE],
+      'bundle' => ['type' => 'varchar_ascii', 'length' => 128, 'not null' => TRUE],
+      'langcode' => ['type' => 'varchar_ascii', 'length' => 12, 'not null' => TRUE],
+      'default_translation' => ['type' => 'int', 'size' => 'tiny', 'not null' => TRUE, 'default' => 0],
+      'label' => ['type' => 'varchar', 'length' => 255, 'not null' => TRUE, 'default' => ''],
+      'replica_id' => ['type' => 'varchar_ascii', 'length' => 64, 'not null' => TRUE],
+      'origin_revision' => ['type' => 'int', 'size' => 'big', 'unsigned' => TRUE, 'not null' => FALSE],
+      'origin_hash' => ['type' => 'char', 'length' => 64, 'not null' => FALSE],
+      'replica_hash' => [
+        'type' => 'char',
+        'length' => 64,
+        'not null' => FALSE,
+        'description' => 'The hash the replica acknowledged for this translation.',
+      ],
+      'status' => ['type' => 'varchar_ascii', 'length' => 32, 'not null' => TRUE],
+      'translation_status' => [
+        'type' => 'varchar_ascii',
+        'length' => 16,
+        'not null' => TRUE,
+        'description' => 'present, missing (not on the replica yet) or never_sent.',
+      ],
+      'item_out_of_sync' => [
+        'type' => 'int',
+        'size' => 'tiny',
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => 'Whether any translation of the item is out of sync on this replica.',
+      ],
+      'not_syncable' => ['type' => 'int', 'size' => 'tiny', 'not null' => TRUE, 'default' => 0],
+      'detached_by' => ['type' => 'varchar', 'length' => 255, 'not null' => FALSE],
+      'detached_at' => ['type' => 'int', 'size' => 'big', 'not null' => FALSE],
+      'last_event' => [
+        'type' => 'int',
+        'size' => 'big',
+        'unsigned' => TRUE,
+        'not null' => FALSE,
+        'description' => 'The latest event log row for the item and replica.',
+      ],
+      'last_attempt' => ['type' => 'int', 'size' => 'big', 'not null' => FALSE],
+      'last_success' => ['type' => 'int', 'size' => 'big', 'not null' => FALSE],
+      'last_error' => ['type' => 'varchar', 'length' => 255, 'not null' => FALSE],
+      'changed' => [
+        'type' => 'int',
+        'size' => 'big',
+        'not null' => FALSE,
+        'description' => 'When the item was last changed on the origin.',
+      ],
+    ],
+    'primary key' => ['id'],
+    'unique keys' => ['row' => ['entity_type', 'uuid', 'replica_id', 'langcode']],
+    'indexes' => [
+      'status' => ['replica_id', 'status'],
+      'bundle' => ['entity_type', 'bundle'],
+      'entity' => ['entity_type', 'entity_id'],
+      'changed' => ['changed'],
+    ],
   ];
   return $schema;
 }

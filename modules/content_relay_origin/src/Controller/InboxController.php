@@ -7,6 +7,7 @@ namespace Drupal\content_relay_origin\Controller;
 use Drupal\content_relay\Crypto\MessageVerifier;
 use Drupal\content_relay\Crypto\VerificationException;
 use Drupal\content_relay_origin\ContractManager;
+use Drupal\content_relay_origin\ItemSyncControl;
 use Drupal\Core\DependencyInjection\ContainerInjectionInterface;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\DependencyInjection\ContainerInterface;
@@ -22,12 +23,15 @@ use Symfony\Component\HttpFoundation\Request;
  * - contract_ack: the replica stored a contract version.
  * - subscription_update: the replica proposes new terms. The answer is the
  *   resulting contract, signed, which the replica then acknowledges.
+ * - detach_notice and attach_notice: the replica detached or reattached an
+ *   item. A reattach queues the item for it again.
  */
 final class InboxController implements ContainerInjectionInterface {
 
   public function __construct(
     private readonly MessageVerifier $verifier,
     private readonly ContractManager $contracts,
+    private readonly ItemSyncControl $control,
     private readonly LoggerInterface $logger,
   ) {}
 
@@ -38,6 +42,7 @@ final class InboxController implements ContainerInjectionInterface {
     return new self(
       $container->get('content_relay.message_verifier'),
       $container->get('content_relay_origin.contract_manager'),
+      $container->get('content_relay_origin.item_sync_control'),
       $container->get('logger.channel.content_relay_origin'),
     );
   }
@@ -77,6 +82,27 @@ final class InboxController implements ContainerInjectionInterface {
         }
         $contract = $this->contracts->propose($message->sender, $terms, NULL, 'replica');
         return new JsonResponse(['result' => 'contract', 'contract' => $this->contracts->sign($contract)->toArray()]);
+
+      case 'detach_notice':
+      case 'attach_notice':
+        $body = $message->body;
+        foreach (['entity_type', 'uuid', 'bundle'] as $key) {
+          if (!is_string($body[$key] ?? NULL) || $body[$key] === '') {
+            return new JsonResponse([
+              'result' => 'malformed',
+              'message' => sprintf('A %s needs %s.', $message->type, $key),
+            ], 400);
+          }
+        }
+        $by = is_string($body['by'] ?? NULL) ? $body['by'] : NULL;
+        if ($message->type === 'detach_notice') {
+          $this->control->replicaDetached($message->sender, $body['entity_type'], $body['uuid'], $body['bundle'], $by, is_int($body['at'] ?? NULL) ? $body['at'] : NULL);
+          return new JsonResponse(['result' => 'recorded']);
+        }
+        return new JsonResponse([
+          'result' => 'recorded',
+          'queued' => $this->control->replicaAttached($message->sender, $body['entity_type'], $body['uuid'], $by),
+        ]);
 
       default:
         return new JsonResponse([

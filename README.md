@@ -14,13 +14,13 @@ or refine, the original specification.
 | Module | Role | Status |
 | --- | --- | --- |
 | `content_relay` | Shared base: event schema, entity serialization, hashing, signing, keys | Phase 1 |
-| `content_relay_origin` | Publishes changes to replicas | Phases 2–3: event log, delivery, hash store, pairing, contracts |
-| `content_relay_replica` | Receives and applies changes | Phases 2–3: endpoint, transactional apply, failures, pairing, contracts |
+| `content_relay_origin` | Publishes changes to replicas | Phases 2–5: event log, delivery, hash store, pairing, contracts, not syncable, push, status report |
+| `content_relay_replica` | Receives and applies changes | Phases 2–5: endpoint, transactional apply, failures, pairing, contracts, detach |
 
 ## Requirements
 
 - Drupal 10.3 or 11, PHP 8.3 or later, with the `sodium` extension.
-- The [Key](https://www.drupal.org/project/key) module.
+- The [Key](https://www.drupal.org/project/key) module, and Views (core).
 - `lcobucci/jwt` 5.5 or later (installed by Composer).
 - A `utf8mb4` database. Hashes cover text byte for byte, and a database that
   cannot store four-byte characters changes the bytes.
@@ -200,6 +200,97 @@ otherwise a fallback set in `content_relay_replica.settings:external_references.
 by default, authors become the anonymous user and other references are left
 out. The copy is still verified against the origin's hash, with the same
 substitutions applied.
+
+## Not syncable items and detaching
+
+Either side can stop updates for one item, independently; each side can only
+undo its own.
+
+**On the origin**, an item is marked *not syncable* on its edit form, on its
+"Not syncable" page (an operation link), with the "Mark not syncable" bulk
+action (shipped for content; add one for other types under Actions), or with
+`drush content-relay:not-syncable`. The flag (`content_relay_not_syncable`)
+applies to every replica or to some. Replicas that already have the item are
+sent a `detach` event (they keep their copy) or a `delete`, per
+`not_syncable.behavior` or the choice made when marking. A not syncable item
+produces no events, is skipped by push and bulk push, and shows as such in
+the report. Marking it syncable again sends an `attach` event and the item.
+
+**On a replica**, a synced item is detached from its operation link, in bulk
+from the report, or with `drush content-relay:detach`. It keeps its sync state
+row, so its UUID stays protected, but events no longer write it: they are
+answered 200 `skipped_detached`. Deletes are ignored too, unless
+`detach.follow_deletes` is on. The origin is told with a signed notice
+(retried by cron if the origin is down; a `skipped_detached` answer corrects
+it as well), stops sending creates and updates to that replica, and shows the
+item as detached by the replica. Reattaching checks for local edits: without
+any, the origin sends its current version; with some, the user accepts the
+origin's version (which then replaces the edits) or keeps theirs and stays
+detached.
+
+## Manual push
+
+Every item in a published bundle has a "Content Relay" tab (on types with a
+page of their own), a "Push now" operation and `drush content-relay:push`. The
+user picks replicas and a processing mode, and may force sending a version
+the replica already has. Delivery runs in the request and the outcome for
+each replica is shown at once: applied, accepted, refused as stale, failed on
+the replica (with its reason), or not pushed because the item is not
+syncable, detached by the replica, or outside its contract. Pushes are
+recorded in the event log with the user who triggered them.
+
+## Status report and bulk push
+
+**Reports › Content Relay status** (`admin/reports/content-relay`) is a View
+over `content_relay_report`: one row per item, translation and replica,
+including items never sent. Statuses: in sync, out of sync, pending, accepted,
+failed, failed on replica, dead-lettered, conflict, not syncable, detached by
+replica, never sent. Filters cover entity type, bundle, status, replica,
+language, "any translation out of sync", missing translations, "default
+translation only" (one row per item), the changed date and label or UUID.
+Every column of the table is available to Views, with a relationship to each
+entity type's own table, so the view can be changed like any other.
+
+- **Push selected** and **Push all matching filters** confirm the count per
+  replica (leaving out not syncable and detached items), can be limited to
+  some languages, and record the pushes through the Batch API; delivery then
+  happens through the queue as usual. `drush content-relay:bulk-push` takes
+  the same filters.
+- **Refresh status** recomputes every row in batches. Cron also rebuilds the
+  report when replicas, contracts or published bundles change.
+- **Download CSV** exports what the filters match, with the view's columns.
+
+The table is kept current by saves, deliveries, flags and notices; it is
+derived data and can always be rebuilt.
+
+On a replica, **Reports › Content Relay synced items** lists what was received
+with its sync status, and detaches or reattaches selected items in bulk.
+
+## Permissions
+
+| Permission | Side | Allows |
+| --- | --- | --- |
+| Push Content Relay items | origin | Push now (manual resync) |
+| Bulk push Content Relay items | origin | Push from the report, refresh it |
+| View the Content Relay status report | origin | The report and its CSV |
+| Mark Content Relay items not syncable | origin | Not syncable flags |
+| Detach and reattach Content Relay items | replica | Detach, reattach, in bulk too |
+| View the Content Relay replica report | replica | The synced items report |
+
+Every push, flag, detach and reattach is logged with the user who did it.
+
+## Drush
+
+| Command | Side |
+| --- | --- |
+| `content-relay:push <type> <id or uuid> [--replica=] [--force] [--mode=]` | origin |
+| `content-relay:bulk-push [--entity-type=] [--bundle=] [--status=] [--replica=] [--langcode=] [--any-out-of-sync] [--dry-run]` | origin |
+| `content-relay:not-syncable <type> <id or uuid> [--replica=] [--behavior=detach\|remove]` | origin |
+| `content-relay:syncable <type> <id or uuid> [--replica=]` | origin |
+| `content-relay:detach <type> <uuid>` | replica |
+| `content-relay:reattach <type> <uuid> [--accept-origin]` | replica |
+
+Each exits non-zero when it could not do what was asked.
 
 ## Pull authentication
 

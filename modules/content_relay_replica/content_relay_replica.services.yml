@@ -51,6 +51,7 @@ services:
       - '@config.factory'
       - '@datetime.time'
       - '@logger.channel.content_relay_replica'
+      - '@content_relay_replica.local_changes'
 
   content_relay_replica.contracts:
     class: Drupal\content_relay_replica\ContractStore
@@ -71,3 +72,35 @@ services:
       - '@config.factory'
       - '@datetime.time'
       - '@logger.channel.content_relay_replica'
+
+  content_relay_replica.local_changes:
+    class: Drupal\content_relay_replica\LocalChanges
+    arguments: ['@content_relay.entity_serializer', '@content_relay.revision_hasher']
+
+  content_relay_replica.origin_client:
+    class: Drupal\content_relay_replica\OriginClient
+    arguments:
+      - '@content_relay_replica.origin'
+      - '@content_relay.message_signer'
+      - '@http_client'
+      - '@state'
+      - '@logger.channel.content_relay_replica'
+
+  content_relay_replica.detacher:
+    class: Drupal\content_relay_replica\ItemDetacher
+    arguments:
+      - '@content_relay_replica.sync_state'
+      - '@content_relay_replica.local_changes'
+      - '@content_relay_replica.origin_client'
+      - '@entity.repository'
+      - '@current_user'
+      - '@datetime.time'
+      - '@logger.channel.content_relay_replica'
+
+  content_relay_replica.entity_ui:
+    class: Drupal\content_relay_replica\EntityUi
+    arguments: ['@content_relay_replica.sync_state', '@current_user']
+
+  content_relay_replica.sync_state_views_data:
+    class: Drupal\content_relay_replica\Report\SyncStateViewsData
+    arguments: ['@content_relay.syncable_entity_types']

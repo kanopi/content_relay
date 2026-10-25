@@ -7,6 +7,9 @@
 
 declare(strict_types=1);
 
+use Drupal\Core\Cache\CacheableMetadata;
+use Drupal\Core\Entity\EntityInterface;
+
 /**
  * Implements hook_cron().
  */
@@ -14,4 +17,13 @@ function content_relay_replica_cron(): void {
   \Drupal::service('content_relay_replica.subscription')->sendPendingProposal();
   \Drupal::service('content_relay_replica.failed_events')->scheduleDueRetries();
   \Drupal::service('content_relay_replica.processed_events')->prune();
+  \Drupal::service('content_relay_replica.origin_client')->sendPending();
+}
+
+/**
+ * Implements hook_entity_operation().
+ */
+function content_relay_replica_entity_operation(EntityInterface $entity, ?CacheableMetadata $cacheability = NULL): array {
+  $cacheability?->addCacheContexts(['user.permissions']);
+  return \Drupal::service('content_relay_replica.entity_ui')->operations($entity);
 }

@@ -234,3 +234,74 @@ Modules that create content from other content on save will collide with
 synced content. Pathauto is the common case: synced path aliases arrive as
 entities, and a replica that also generates aliases for synced nodes gets two.
 Disable generation for synced bundles on replicas.
+
+## 27. The status report reads a table of its own
+
+The report needs one row per item, translation and replica, including items
+never sent, across every entity type, with filters and sorts on every column.
+A query joining the event log, hash store, replica answers and flags at view
+time cannot be expressed as one View over all entity types, and would be
+slow. So `content_relay_report` holds the derived rows: recomputed for an
+item whenever something about it changes (save, delivery outcome, flag,
+notice), and rebuilt in chunks when replicas, contracts or published bundles
+change (cron compares a fingerprint) or on "Refresh status". Views reads it
+like any table, with a relationship to each entity type's own table.
+
+## 28. One row per translation, with a filter for one row per item
+
+The specification asks for an expandable per-language breakdown or a "one
+row per translation" option. The shipped view has one row per translation
+and an exposed "Default translation only" filter that turns it into one row
+per item. An expandable display would need custom JavaScript and does not
+survive a site builder changing the view; the filter does.
+
+## 29. Detaching is per side, and deletes still reach detached items
+
+The origin's flag and the replica's detach are stored separately on both
+sides, so each can only undo its own and an item detached by both is sent
+again only when both have reversed. Deletes of an item the replica detached
+are still sent: whether to follow them is the replica's setting, and the
+origin cannot know it. The origin learns about a replica detach from the
+replica's signed notice and from any `skipped_detached` answer; a notice that
+cannot be delivered is kept and resent by cron, and an applied update clears
+a stale record.
+
+## 30. "Remove" is a delete event with a reason
+
+Marking an item not syncable with the remove behavior records an ordinary
+delete with reason `not_syncable`, the only kind of delete sent while the
+origin still has the item. Every other delete is dropped at send time if the
+entity exists again.
+
+## 31. A manual push is never folded into an earlier event
+
+Queued updates of an item normally go out as one event. A push is exempt: it
+is sent itself, after anything queued before it, so the processing mode and
+force the user chose apply. When the replica already has that revision it
+answers "unchanged" without a new revision.
+
+## 32. Reattaching over local edits forces the next version to apply
+
+A replica normally answers "unchanged" to the revision it already has. After
+the user accepts the origin's version over local edits (or the origin
+reattaches an item edited while detached), the item's status is set to
+`error` so the next event is applied even if the origin's content is the same
+revision. The reattach page lists which translations differ; a field-level
+diff needs the origin's version, which arrives with pulling in phase 10.
+
+## 33. "Refresh status" recomputes locally for now
+
+The specification has it use the replica's batch hash endpoint, which is part
+of phase 10. Until then it recomputes from what the origin knows: what each
+replica acknowledged. Phase 10 adds asking the replicas.
+
+## 34. Views is a dependency of both submodules
+
+Both reports are Views, shipped as configuration, so `views` is a dependency
+rather than an optional extra.
+
+## 35. The push result names the event log entry by number
+
+The event log pages arrive with the remaining admin UI in phase 12. Until
+then the push form shows the entry's number rather than a link.
+
