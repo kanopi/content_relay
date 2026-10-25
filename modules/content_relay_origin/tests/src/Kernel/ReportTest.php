@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Drupal\Tests\content_relay_origin\Kernel;
 
+use Drupal\content_relay\Hash\RevisionHasher;
+use Drupal\content_relay_origin\HashStore;
 use Drupal\content_relay_origin\OriginReconciler;
 use Drupal\content_relay_origin\Outbox;
 use Drupal\content_relay_origin\ReplicaItems;
@@ -77,6 +79,56 @@ final class ReportTest extends OriginTestBase {
     $this->assertSame('1', $row['item_out_of_sync']);
     // Only bundles in the replica's contract.
     $this->assertSame(1, (int) $this->container->get('database')->select(ReportIndex::TABLE)->countQuery()->execute()->fetchField());
+  }
+
+  /**
+   * A hash algorithm change does not put everything out of sync.
+   *
+   * Old hashes stay, backfill adds current ones, and the report compares
+   * revisions where the replica's hashes are from another algorithm.
+   */
+  public function testAlgorithmChange(): void {
+    $this->pairAndAcknowledge();
+    $nodes = [$this->node('article', 'One'), $this->node('article', 'Two'), $this->node('article', 'Behind')];
+    $this->deliver();
+    $database = $this->container->get('database');
+    $store = $this->container->get('content_relay_origin.hash_store');
+    $report = $this->container->get('content_relay_origin.report');
+
+    // Everything so far was hashed by the previous algorithm, here and in
+    // the replica's answers. The replica is behind on one item.
+    $database->update(HashStore::TABLE)->fields(['algorithm' => 0])->execute();
+    $database->update(ReplicaItems::TABLE)
+      ->fields([
+        'algorithm' => 0,
+        'entity_hash' => str_repeat('0', 64),
+        'translation_hashes' => json_encode([$nodes[0]->language()->getId() => str_repeat('0', 64)]),
+      ])
+      ->execute();
+    $database->update(ReplicaItems::TABLE)->fields(['revision' => 0])->condition('uuid', $nodes[2]->uuid())->execute();
+    foreach ($nodes as $node) {
+      $this->assertNull($store->latest('node', $node->uuid()));
+    }
+
+    // Backfill adds current hashes and keeps the old ones.
+    $this->assertSame(3, $this->container->get('content_relay_origin.hash_backfill')->run());
+    foreach ($nodes as $node) {
+      $this->assertSame(RevisionHasher::CURRENT_VERSION, $store->latest('node', $node->uuid())['hashes']->algorithmVersion);
+      $this->assertNotNull($store->forRevision('node', $node->uuid(), (int) $node->getRevisionId(), 0));
+    }
+
+    // The report: in sync by revision, out of sync only where it is behind.
+    foreach ($nodes as $node) {
+      $report->refresh('node', $node->uuid());
+    }
+    $this->assertSame([ReportIndex::IN_SYNC, ReportIndex::IN_SYNC, ReportIndex::OUT_OF_SYNC], array_map(fn (NodeInterface $node) => $this->itemStatus($node), $nodes));
+
+    // Once the replica answers with current hashes, they are compared.
+    $nodes[2]->setTitle('Caught up')->save();
+    $this->deliver();
+    $row = $this->rows($nodes[2])[$this->replica->siteId];
+    $this->assertSame(ReportIndex::IN_SYNC, $row['status']);
+    $this->assertSame($row['origin_hash'], $row['replica_hash']);
   }
 
   /**

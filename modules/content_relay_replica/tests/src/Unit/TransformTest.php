@@ -11,12 +11,16 @@ use Drupal\content_relay_replica\Plugin\ContentRelay\Transform\Concat;
 use Drupal\content_relay_replica\Plugin\ContentRelay\Transform\DateFormat;
 use Drupal\content_relay_replica\Plugin\ContentRelay\Transform\DefaultValue;
 use Drupal\content_relay_replica\Plugin\ContentRelay\Transform\StaticValue;
+use Drupal\content_relay_replica\Plugin\ContentRelay\Transform\TaxonomyLookup;
 use Drupal\content_relay_replica\Plugin\ContentRelay\Transform\TextFormat;
+use Drupal\Core\Entity\EntityStorageInterface;
+use Drupal\Core\Entity\EntityTypeManagerInterface;
+use Drupal\taxonomy\TermInterface;
 use Drupal\Tests\UnitTestCase;
 use PHPUnit\Framework\Attributes\Group;
 
 /**
- * Tests the transforms that need no services.
+ * Tests the transforms.
  *
  * @group content_relay
  */
@@ -103,6 +107,64 @@ final class TransformTest extends UnitTestCase {
     $this->assertSame(['ADA', ['value' => 'LOVELACE']], $plugin->transform(['ada', ['value' => 'lovelace']], $this->context()));
     $this->assertSame([], $plugin->validateConfiguration());
     $this->assertNotEmpty((new Callback(['callable' => 'no_such_function_here'], 'callback', []))->validateConfiguration());
+  }
+
+  /**
+   * Terms are found by UUID, in a vocabulary if one is set.
+   *
+   * A missing term is left out, or refuses the item when so configured.
+   */
+  public function testTaxonomyLookup(): void {
+    $terms = [];
+    foreach (['uuid-science' => [7, 'tags'], 'uuid-art' => [9, 'tags'], 'uuid-red' => [11, 'colors']] as $uuid => [
+      $id,
+      $vid,
+    ]) {
+      $term = $this->createMock(TermInterface::class);
+      $term->method('uuid')->willReturn($uuid);
+      $term->method('id')->willReturn($id);
+      $terms[] = [$term, $vid];
+    }
+    /** @var \ArrayObject<int, array> $queries */
+    $queries = new \ArrayObject();
+    $storage = $this->createMock(EntityStorageInterface::class);
+    $storage->method('loadByProperties')->willReturnCallback(function (array $properties) use ($terms, $queries) {
+      $queries[] = $properties;
+      $found = [];
+      foreach ($terms as [$term, $vid]) {
+        if (in_array($term->uuid(), $properties['uuid'], TRUE) && (!isset($properties['vid']) || $properties['vid'] === $vid)) {
+          $found[$term->id()] = $term;
+        }
+      }
+      return $found;
+    });
+    $manager = $this->createMock(EntityTypeManagerInterface::class);
+    $manager->method('getStorage')->with('taxonomy_term')->willReturn($storage);
+    $lookup = fn (array $configuration) => new TaxonomyLookup($configuration, 'taxonomy_lookup', [], $manager);
+
+    // Reference items and bare UUIDs, in the order given; empty ones dropped.
+    $values = [['target_uuid' => 'uuid-art'], 'uuid-science', ['target_uuid' => ''], NULL, 'uuid-red'];
+    $this->assertSame([['target_id' => 9], ['target_id' => 7], ['target_id' => 11]], $lookup([])->transform($values, $this->context()));
+    $this->assertSame([['uuid' => ['uuid-art', 'uuid-science', 'uuid-red']]], $queries->getArrayCopy());
+
+    // Limited to a vocabulary, a term of another is missing: skipped...
+    $this->assertSame([['target_id' => 9], ['target_id' => 7]], $lookup(['vocabulary' => 'tags'])->transform($values, $this->context()));
+    $this->assertSame('tags', $queries[1]['vid']);
+    $this->assertSame([], $lookup([])->transform(['uuid-gone'], $this->context()));
+    $this->assertSame([], $lookup([])->transform([], $this->context()));
+    $this->assertCount(3, $queries, 'Nothing to look up makes no query.');
+
+    // ...or refused.
+    try {
+      $lookup(['vocabulary' => 'tags', 'missing' => 'reject'])->transform($values, $this->context());
+      $this->fail('A missing term was not refused.');
+    }
+    catch (MappingException $e) {
+      $this->assertSame('Term uuid-red for title is not on this site.', $e->getMessage());
+    }
+
+    $this->assertSame([], $lookup(['missing' => 'reject'])->validateConfiguration());
+    $this->assertNotEmpty($lookup(['missing' => 'ignore'])->validateConfiguration());
   }
 
 }

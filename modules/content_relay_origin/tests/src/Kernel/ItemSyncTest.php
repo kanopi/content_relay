@@ -9,6 +9,7 @@ use Drupal\content_relay_origin\ItemSyncControl;
 use Drupal\content_relay_origin\NotSyncableFlags;
 use Drupal\content_relay_origin\Outbox;
 use Drupal\content_relay_origin\Report\ReportIndex;
+use Drupal\Core\Database\Statement\FetchAs;
 use Drupal\field\Entity\FieldConfig;
 use Drupal\field\Entity\FieldStorageConfig;
 use Drupal\node\Entity\Node;
@@ -216,6 +217,52 @@ final class ItemSyncTest extends OriginTestBase {
     $node->delete();
     $this->deliver();
     $this->assertSame(['create', 'update', 'delete'], $this->operations());
+  }
+
+  /**
+   * One replica detaching changes nothing for another.
+   */
+  public function testDetachOnOneReplicaOnly(): void {
+    $second = new FakeReplica($this->replica->originId);
+    $second->endpoint = 'https://replica-two.example.com/content-relay/v1/events';
+    $this->replica->others['replica-two.example.com'] = $second;
+    $code = $this->container->get('content_relay_origin.pairing_codes')->generate(NULL, 1)['code'];
+    $this->assertSame(200, $this->post('/content-relay/v1/pair', $second->pairingRequest($code))->getStatusCode());
+    $this->assertSame(200, $this->post('/content-relay/v1/messages', $second->message('contract_ack', ['version' => 1]))->getStatusCode());
+    $delivery = $this->container->get('content_relay_origin.delivery');
+    $deliver = function () use ($delivery, $second): void {
+      $delivery->deliver($this->replica->siteId);
+      $delivery->deliver($second->siteId);
+    };
+    $node = $this->synced();
+    $deliver();
+    $this->assertSame(['create'], array_column($second->events, 'operation'));
+
+    // The first replica detaches it.
+    $notice = [
+      'entity_type' => 'node',
+      'uuid' => $node->uuid(),
+      'bundle' => 'article',
+      'by' => 'editor',
+      'at' => 1700000000,
+    ];
+    $this->assertSame(200, $this->post('/content-relay/v1/messages', $this->replica->message('detach_notice', $notice))->getStatusCode());
+
+    $node->setTitle('Changed')->save();
+    $deliver();
+    $this->assertSame(['create'], $this->operations());
+    $this->assertSame(['create', 'update'], array_column($second->events, 'operation'));
+    $this->assertSame('Changed', end($second->events)['snapshot']['shared']['title'][0]['value']);
+
+    $rows = $this->container->get('database')->select(ReportIndex::TABLE, 'r')
+      ->fields('r', ['replica_id', 'status', 'detached_by'])
+      ->condition('uuid', $node->uuid())
+      ->execute()
+      ->fetchAllAssoc('replica_id', FetchAs::Associative);
+    $this->assertSame(ReportIndex::DETACHED_BY_REPLICA, $rows[$this->replica->siteId]['status']);
+    $this->assertSame('editor', $rows[$this->replica->siteId]['detached_by']);
+    $this->assertSame(ReportIndex::IN_SYNC, $rows[$second->siteId]['status']);
+    $this->assertNull($rows[$second->siteId]['detached_by']);
   }
 
   /**

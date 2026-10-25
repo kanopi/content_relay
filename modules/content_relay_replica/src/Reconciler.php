@@ -440,8 +440,11 @@ class Reconciler {
       // waiting for something are left alone by settle().
       return TRUE;
     }
+    // Hashes from another algorithm cannot be compared, which after an
+    // upgrade is every item: the revision says whether this site has the
+    // origin's current version.
     if ((int) ($item['hash']['algorithm'] ?? 0) !== (int) $state['hash_algorithm']) {
-      return TRUE;
+      return (int) ($item['revision'] ?? -1) !== (int) $state['source_revision'];
     }
     // Translations kept from this site, detached here or in a language it
     // does not have are not compared.

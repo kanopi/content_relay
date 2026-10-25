@@ -206,6 +206,68 @@ final class PortableValuesTest extends KernelTestBase {
   }
 
   /**
+   * Translated menu links and aliases resolve per language to local IDs.
+   *
+   * A menu link's target is shared by its translations in core; its title
+   * and the target's aliases are per language.
+   */
+  public function testTranslatedMenuLinksAndAliases(): void {
+    $this->container->get('content_translation.manager')->setEnabled('menu_link_content', 'menu_link_content', TRUE);
+    $this->container->get('content_translation.manager')->setEnabled('node', 'article', TRUE);
+    $this->container->get('entity_field.manager')->clearCachedFieldDefinitions();
+    $target = $this->article('About us');
+    $target->addTranslation('fr', ['title' => 'À propos de nous'])->save();
+    $link = MenuLinkContent::create([
+      'title' => 'About',
+      'menu_name' => 'main',
+      'langcode' => 'en',
+      'link' => ['uri' => 'entity:node/' . $target->id()],
+    ]);
+    $link->addTranslation('fr', ['title' => 'À propos']);
+    $link->save();
+    $aliases = [
+      PathAlias::create(['path' => '/node/' . $target->id(), 'alias' => '/about', 'langcode' => 'en']),
+      PathAlias::create(['path' => '/node/' . $target->id(), 'alias' => '/a-propos', 'langcode' => 'fr']),
+    ];
+    foreach ($aliases as $alias) {
+      $alias->save();
+    }
+
+    $normalize = fn ($entity) => json_decode(json_encode($this->serializer()->normalize($entity)), TRUE);
+    $snapshots = array_map($normalize, [$target, ...$aliases, $link]);
+    $this->assertSame(['en', 'fr'], array_keys($snapshots[3]['translations']));
+    foreach ([$link, ...$aliases, $target] as $entity) {
+      $entity->delete();
+    }
+    $this->container->get('content_relay.uuid_resolver')->reset();
+
+    // Rebuilt here under another ID.
+    $this->article('Already here');
+    $copies = [];
+    foreach ($snapshots as $snapshot) {
+      $copy = $this->serializer()->denormalize($snapshot);
+      $copy->save();
+      $copies[] = $copy;
+    }
+    $target_here = $copies[0];
+    $this->assertNotEquals($target->id(), $target_here->id());
+
+    $link_here = $copies[3];
+    foreach (['en' => 'About', 'fr' => 'À propos'] as $langcode => $title) {
+      $translation = $link_here->getTranslation($langcode);
+      $this->assertSame([$title, 'entity:node/' . $target_here->id()], [
+        $translation->getTitle(),
+        $translation->get('link')->uri,
+      ]);
+    }
+    $this->assertSame('À propos de nous', $target_here->getTranslation('fr')->label());
+    $alias_manager = $this->container->get('path_alias.manager');
+    $alias_manager->cacheClear();
+    $this->assertSame('/about', $alias_manager->getAliasByPath('/node/' . $target_here->id(), 'en'));
+    $this->assertSame('/a-propos', $alias_manager->getAliasByPath('/node/' . $target_here->id(), 'fr'));
+  }
+
+  /**
    * Users sync without credentials, activity or roles, and keep local ones.
    */
   public function testUsers(): void {

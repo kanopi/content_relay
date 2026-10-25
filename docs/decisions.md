@@ -634,3 +634,33 @@ Like the status report, the event log is a Views listing of the outbox
 table, so sites can add columns and filters. Replay stays a confirmation
 form behind its own permission.
 
+
+## 81. A changed default language is applied
+
+When the origin changes an item's language, the replica changes its copy's,
+as long as it receives the new language. Drupal only lets an item change to
+a language it has no translation in. If the copy has one, from the origin
+or made here, the replica removes it in a revision of its own and then
+applies the origin's version, so there is one extra revision. A translation
+made here is first kept in a revision, and the item flagged as a conflict,
+as decision 57 describes for any edit made here. When the new default language
+is filtered out, decision 68 still applies: the copy keeps its own default.
+
+## 82. Hashes from another algorithm are compared by revision
+
+After a hash algorithm upgrade, stored hashes on either side may be from the
+previous version, and hashes from different versions cannot be compared.
+Both the origin's status report and the replica's reconciliation then
+compare revisions: an item at the origin's current revision is in sync and
+is not fetched again. Backfill adds current-version hashes on the origin and
+keeps the old ones.
+
+## 83. References need only exist, not be visible to whoever applies
+
+Core's reference validation asks the field's selection handler, which only
+offers what the current user may see. Events are applied by whoever runs
+cron or the webhook, typically anonymous, so a reference to an unpublished
+term or node would be refused. The replica accepts such a reference when
+the target exists and is of a bundle the field accepts; who may reference
+what was decided on the origin. A missing target, or one of another bundle,
+is still refused.

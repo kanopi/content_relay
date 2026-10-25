@@ -70,7 +70,7 @@ marks a class name used in both submodules.
 ## Conflicts and replica-only content
 
 - **27.** Local edit then origin update: conflict flagged per configuration, edit kept in history. Covered: `ConflictTest::testOverwriteKeepsTheEditInHistory`, `ConflictTest::testRejectSetting`, `ConflictTest::testConflictEventCanReject`, `ConflictTest::testKeepLocalRestoresTheEdit`, `ModerationTest::testDraftConflict` (decisions 57, 59, 74).
-- **28.** Manual pull on an edited item shows a diff and needs confirmation. Partial: `ConflictTest::testPullNeedsConfirmation` checks the diff and that only accepting replaces the edit, at service level; the pull form is not exercised.
+- **28.** Manual pull on an edited item shows a diff and needs confirmation. Covered: `ReplicaItemUiTest::testPullForm` (an unedited item pulls straight away; an edited one shows the diff and changes nothing until "Accept origin version" or "Keep local and detach"; without the resolve permission the choice is hidden) and `ConflictTest::testPullNeedsConfirmation` (service).
 - **29.** Local-only fields are never overwritten and make no conflict. Covered: `ConflictTest::testLocalOnlyFields`, `GenericNormalizerTest::testPreservedFieldsAreKept`.
 - **30.** Replica-only content is never touched by sync or reconciliation. Covered: `ApplyTest::testUuidCollisionIsRefused`, `ReconcileTest::testDeletedOnOrigin`.
 - **31.** An event for a UUID with no sync state is rejected and logged. Covered: `ApplyTest::testUuidCollisionIsRefused`. It is a 422 `uuid_collision` recorded in the failed events table, not only logged (decision 14).
@@ -120,7 +120,7 @@ marks a class name used in both submodules.
 
 - **61.** Each permission gates its action. Covered: `OriginAdminTest::testPermissions`, `OriginItemUiTest::testPushForm`, `OriginItemUiTest::testReportAndBulkPush`, `OriginItemUiTest::testEventLogAndReplay`, `ReplicaAdminTest::testPermissions`, `ReplicaItemUiTest::testPermission`, `ReplicaItemUiTest::testPullFile`, `ReplicaItemUiTest::testFailures`.
 - **62.** Manual push, bulk push and replay are logged with the user. Covered: `triggered_by` for manual push (`ManualPushTest::testPushSendsNow`, `OriginItemUiTest::testPushForm`), bulk push (`ReportTest::testBulkPush`) and replay (`OriginItemUiTest::testEventLogAndReplay`).
-- **63.** Drush commands work and exit non-zero on failure. Partial: most commands run in `OriginItemUiTest::testDrush`, `OriginItemUiTest::testMoreDrush`, `ReplicaAdminTest::testDrush`, `ReplicaItemUiTest::testDrush`, `ReplicaItemUiTest::testPullFile` and `ReplicaItemUiTest::testFailures` (including `failures`, `retry`, `dismiss`, `pair`, `status`, `languages`, `replay`, `replicas`, `pairing-code`, `backfill-hashes`); `check-schema`, `fill-gaps`, `generate-key`, `keys`, `move-language`, `pull`, `reapply-mapping`, `retire-key`, `rotate-key`, both `validate` commands and the replica's `reconcile` are exercised through their services only.
+- **63.** Drush commands work and exit non-zero on failure. Covered: every command runs through Drush, with its failure exit code: `OriginItemUiTest::testDrush`, `OriginItemUiTest::testMoreDrush` (including `validate`) and `OriginItemUiTest::testOtherEntityTypes` on the origin; `ReplicaAdminTest::testDrush`, `ReplicaItemUiTest::testDrush`, `ReplicaItemUiTest::testMoreDrush` (`pull`, `validate`, `reconcile`, `fill-gaps`, `check-schema`, `reapply-mapping`, `move-language`), `ReplicaItemUiTest::testPullFile`, `ReplicaItemUiTest::testFailures` and `ReplicaItemUiTest::testKeyDrush` (`keys`, `generate-key`, `rotate-key`, `retire-key`) on the replica.
 
 ## Performance
 
@@ -130,7 +130,7 @@ marks a class name used in both submodules.
 
 ## Entity type coverage
 
-- **67.** Each core entity type creates, updates and deletes correctly. Partial: `AllEntityTypesTest::testEveryTypeRoundTrips` rebuilds every listed type (term, media, file, paragraph, block content, menu link, path alias, user, comment, and more) with an identical hash (decision 22); update and delete through the replica are tested for nodes (`ApplyTest::testCreateUpdateDelete`), terms and media (`MediaTest::testUpdateAndDelete`) and file updates (`FileSyncTest::testFileArrives`), not for the other types.
+- **67.** Each core entity type creates, updates and deletes correctly. Covered: `AllEntityTypesApplyTest::testEveryTypeCreatesUpdatesAndDeletes` (replica) discovers every syncable type and bundle (over 30, including term, media, file, block content, menu link, path alias, user, comment and shortcut) and applies a create, an update to new sample values and a delete as origin events, checking the copy's hash each time; a type whose fields always fail validation is refused for that reason. Composite types (paragraphs) travel inside their parent: `EmbeddedEntitiesTest`, `ParagraphRollbackTest`. `AllEntityTypesTest::testEveryTypeRoundTrips` checks the snapshot round trip (decision 22).
 - **68.** A custom entity type from a test module syncs with the generic normalizer. Covered: `NormalizerDiscoveryTest::testGenericNormalizerForCustomType`, `AllEntityTypesTest::testEveryTypeRoundTrips`, `ApplyTest::testNonRevisionableStaleness`.
 - **69.** A non-revisionable type syncs and stale updates are rejected. Covered: `ApplyTest::testNonRevisionableStaleness`. Staleness uses the version counter and changed time, not the hash (decision 3).
 - **70.** Menu link hierarchy and path aliases resolve by UUID. Covered: `PortableValuesTest::testMenuHierarchy`, `PortableValuesTest::testPathAlias`.
@@ -150,7 +150,7 @@ marks a class name used in both submodules.
 
 - **79.** "Push now" sends the current revision and shows the result inline. Covered: `ManualPushTest::testPushSendsNow`, `ManualPushTest::testOutcomes`, `OriginItemUiTest::testPushForm`.
 - **80.** In-sync push reports in sync unless forced; forced makes no duplicate revision. Covered: `ManualPushTest::testInSyncUnlessForced`, `ApplyTest::testOutOfOrderIsStale` (same revision answered "unchanged") (decision 31).
-- **81.** Push is an entity operation and a Drush command for every syncable type. Partial: only nodes, in `OriginItemUiTest::testNotSyncable` (operation link) and `OriginItemUiTest::testDrush`.
+- **81.** Push is an entity operation and a Drush command for every syncable type. Covered: `OriginItemUiTest::testOtherEntityTypes` checks the push, not syncable and validate pages exist for every syncable type, and pushes a term (tab and vocabulary operation), a content block (block library operation) and a path alias (a type without a page of its own) from the form, and a term and a block with Drush; nodes in `OriginItemUiTest::testNotSyncable` and `OriginItemUiTest::testDrush`.
 - **82.** Users without the push permission cannot see or use it. Covered: `OriginItemUiTest::testPushForm`.
 
 ## Revision hashing
@@ -160,15 +160,15 @@ marks a class name used in both submodules.
 - **85.** The hash is identical on both sites after an as-is apply. Covered: `ApplyTest::testCreateUpdateDelete`, `GenericNormalizerTest::testRoundTripRecreatesTheEntity`, `AllEntityTypesTest::testEveryTypeRoundTrips`.
 - **86.** A payload altered after hashing is rejected with 400. Covered: `ApplyTest::testHashMismatchIsRefused`, `RevisionHasherTest::testMatches`.
 - **87.** Translations, paragraphs and file content change the hash; a file path does not. Covered: `RevisionHasherTest::testTranslationHashesAreIndependent`, `RevisionHasherTest::testEmbeddedEntitiesCountPerLanguage`, `EmbeddedEntitiesTest::testTranslatedParagraphs`, `FileNormalizerTest::testFileEntity`, `FileNormalizerTest::testFileFieldCarriesChecksum` (decision 37).
-- **88.** Algorithm version change: old hashes stay valid, backfill updates them, no mass out-of-sync. Partial: `RevisionHasherTest::testVersionsAreNotComparable` and `RevisionHasherTest::testMatches` cover version separation; the report's fallback to revisions and a backfill with `--all` across versions are untested.
-- **89.** The backfill Drush command hashes existing content in batches. Partial: `ReadEndpointTest::testBackfill` (service) and `OriginItemUiTest::testMoreDrush` (command exits 0); chunking past one batch of 50 is not asserted.
+- **88.** Algorithm version change: old hashes stay valid, backfill updates them, no mass out-of-sync. Covered: `ReportTest::testAlgorithmChange` (origin: backfill adds current hashes and keeps the old ones; the report compares revisions, so only an item the replica is behind on is out of sync) and `ReconcileTest::testAlgorithmChange` (replica: only items whose revision differs are fetched) (decision 82); `RevisionHasherTest::testVersionsAreNotComparable` and `RevisionHasherTest::testMatches` cover version separation.
+- **89.** The backfill Drush command hashes existing content in batches. Covered: `ReadEndpointTest::testBackfillInChunks` (123 items over two published types, in chunks of 50, string IDs included; an item already hashed is skipped; `--all` recomputes everything), `ReadEndpointTest::testBackfill`, and the command in `OriginItemUiTest::testMoreDrush`.
 - **90.** "Validate" detects a replica copy edited directly in the database. Covered: `ReconcileTest::testValidateFindsDatabaseEdit` changes the title with SQL queries and clears the entity cache; `ReconcileTest::testValidate`, `ProcessingTest::testHashRequest` and `ValidationTest::testResults` cover edits through the entity API.
 
 ## As-is and mapped import
 
 - **91.** As-is is refused when field types, names or cardinality differ, with a readable report. Covered: `SchemaTest::testCompatibility`, `MappingUiTest::testAsIsRefusedWhenItDoesNotFit`.
 - **92.** `article` maps to `news_item` and the data lands correctly. Covered: `MappingTest::testMappedImport` (decision 53).
-- **93.** Text format, default value, taxonomy lookup, date and concatenation transforms work, with unit tests. Partial: unit tests in `TransformTest` cover text format, default, static, date, concatenation and callback; taxonomy lookup is covered only by the kernel test `MappingTest::testMappedImport`.
+- **93.** Text format, default value, taxonomy lookup, date and concatenation transforms work, with unit tests. Covered: unit tests in `TransformTest` for every transform, including `TransformTest::testTaxonomyLookup` (items and bare UUIDs, vocabulary limit, skip or refuse missing terms, no query for nothing); in use in `MappingTest::testMappedImport`.
 - **94.** An unmapped required field without a default rejects the item clearly. Covered: `MappingTest::testUnmappedRequiredField`.
 - **95.** Mapping preview shows a real origin item without saving. Covered: `MappingUiTest::testMappingForm`.
 - **96.** A new origin field: items flagged for drift, known fields sync, admin alerted. Covered: `MappingTest::testSchemaDrift`, `SchemaTest::testWatcher`.
@@ -186,12 +186,12 @@ marks a class name used in both submodules.
 - **105.** "Push all matching filters" covers every page via Batch API with a summary. Covered: `ReportViewTest::testAllMatchingAndCsv`, `OriginItemUiTest::testReportAndBulkPush`.
 - **106.** After bulk push is processed, the same filter returns zero out of sync. Covered: `MultilingualTest::testMissingTranslationAndLanguagePush` (origin) runs the filter again after the push is delivered; `ReportTest::testBulkPush` shows the pushed row in sync.
 - **107.** CSV export matches the filtered report. Covered: `ReportViewTest::testAllMatchingAndCsv`, `OriginItemUiTest::testReportAndBulkPush`.
-- **108.** A site builder can customize the view without breaking bulk actions. Partial: adding a column is tested in `OriginItemUiTest::testReportAndBulkPush`; changing a filter is not.
+- **108.** A site builder can customize the view without breaking bulk actions. Covered: `OriginItemUiTest::testCustomizedFilters` fixes the bundle filter and adds an exposed label filter, and "Push all matching filters", a selection and the CSV follow them; adding a column in `OriginItemUiTest::testReportAndBulkPush`.
 
 ## Replica-side detach
 
 - **109.** Updates to a detached item return `skipped_detached`, unchanged, not retried. Covered: `DetachTest::testDetachedItemIsNotUpdated`, `ItemSyncTest::testSkippedDetachedAnswer`.
-- **110.** The origin report shows the detach for that replica only; others keep receiving. Partial: `ItemSyncTest::testSkippedDetachedAnswer` and `ItemSyncTest::testNoticesThroughInbox` check the report row, with one replica only.
+- **110.** The origin report shows the detach for that replica only; others keep receiving. Covered: `ItemSyncTest::testDetachOnOneReplicaOnly` with two replicas; `ItemSyncTest::testSkippedDetachedAnswer` and `ItemSyncTest::testNoticesThroughInbox` for the report row.
 - **111.** Bulk push and "push all matching filters" skip detached items. Covered: `ReportTest::testBulkPush` (both use the same plan).
 - **112.** Deleting a detached item: ignored or followed per setting. Covered: `DetachTest::testDeletesOfDetachedItems`, `ItemSyncTest::testSkippedDetachedAnswer` (deletes are still sent, decision 29).
 - **113.** Reconciliation leaves detached items alone. Covered: `ReconcileTest::testDeletedOnOrigin`, `ReconcileTest::testUpdatedOnOrigin`.
@@ -219,10 +219,10 @@ marks a class name used in both submodules.
 - **129.** An unknown incoming language is skipped or rejected, and flagged. Covered: `MultilingualTest::testUnknownLanguage` (replica), `TranslationNormalizerTest::testUnknownLanguageIsSkipped`.
 - **130.** As-is check fails on a missing language or differing translatability. Covered: `SchemaTest::testCompatibility`.
 - **131.** Mapped translatable source to untranslatable target uses the configured language. Covered: `MappingTest::testUntranslatableTarget`, with the origin's default language and with a named one.
-- **132.** A default language change is applied; if filtered out, the replica keeps its default and flags. Partial: the filtered-out case in `MultilingualTest::testDefaultLanguageFilteredOut` (origin and replica) (decision 68); changing the default of an item the replica already has is not tested.
+- **132.** A default language change is applied; if filtered out, the replica keeps its default and flags. Covered: `MultilingualTest::testDefaultLanguageChange` (replica: into a new language in one revision; into a language the copy has, with that translation removed in a revision first; into a language translated only here, as a conflict with the local text kept) (decision 81); the filtered-out case in `MultilingualTest::testDefaultLanguageFilteredOut` (origin and replica) (decision 68).
 - **133.** Language-neutral items pass a language filter. Covered: `MultilingualTest::testLanguageNeutral` (origin, `zxx`) (decision 75).
 - **134.** Per-translation moderation states are kept. Covered: `ModerationTest::testStatesPerTranslation`, `PortableValuesTest::testModerationState` (decision 72).
-- **135.** Translated path aliases and menu links resolve to the right translation. Partial: a French alias in `PortableValuesTest::testPathAlias`; translated menu links are not tested.
+- **135.** Translated path aliases and menu links resolve to the right translation. Covered: `PortableValuesTest::testTranslatedMenuLinksAndAliases` (each translation's title, the shared link target and each language's alias rebuilt under a new local ID) and `PortableValuesTest::testPathAlias`.
 - **136.** Paragraph translations inside a translated node sync. Covered: `EmbeddedEntitiesTest::testTranslatedParagraphs` (symmetric translations).
 - **137.** Term and media translations sync and translated nodes reference them correctly. Covered: `MediaTest::testTranslatedTermAndMedia`.
 - **138.** A replica-local translation is kept, unhashed, and the item in sync. Covered: `MultilingualTest::testLocalTranslationsAreKept` (replica).
@@ -271,7 +271,7 @@ marks a class name used in both submodules.
 - **172.** An inline CKEditor image syncs and points at the replica's copy. Covered: `FileNormalizerTest::testLinksInText`, `FileNormalizerTest::testRoundTripThroughLocalUrls`, `FileSyncTest::testContentWaitsForFiles` (decision 38).
 - **173.** A `<drupal-media>` embed syncs the media item and file first. Covered: `MediaEmbedTest::testEmbeddedMediaIsSentFirst`.
 - **174.** A plain link to a public PDF syncs it and rewrites the link. Covered: `FileNormalizerTest::testLinksInText`, `FileSyncTest::testContentWaitsForFiles`.
-- **175.** A private file link syncs and respects private access on the replica. Partial: `FileNormalizerTest::testLinksInText` turns `/system/files/...` into a token; access on the replica is not tested.
+- **175.** A private file link syncs and respects private access on the replica. Covered: `ReplicaItemUiTest::testPrivateFiles` (the file lands in private storage; downloads are refused while nothing uses it, allowed with a published article and refused once it is unpublished, except to users who may see unpublished content); `FileNormalizerTest::testLinksInText` turns `/system/files/...` into a token.
 - **176.** An image style URL resolves to the original file. Covered: `FileNormalizerTest::testLinksInText`, `FileNormalizerTest::testRoundTripThroughLocalUrls` (decision 38).
 - **177.** Own-domain absolute URLs are linked files; external links are left alone. Covered: `FileNormalizerTest::testLinksInText`.
 - **178.** A missing linked file is reported unresolved and the item still syncs. Covered: `FileTest::testUnresolvedLink`, `FileNormalizerTest::testLinksInText`.
@@ -286,7 +286,7 @@ marks a class name used in both submodules.
 ## Save failures on the replica
 
 - **186.** A validation failure saves nothing, reports field violations, origin gets 422. Covered: `ApplyTest::testValidationFailureKeepsPreviousVersion`, `DeliveryTest::testFinalResponses`.
-- **187.** An exception during save rolls back everything, including translations and paragraphs. Partial: `ApplyTest::testExceptionRollsBackEverything` (node revision and sync state) and `MultilingualTest::testFailedSaveKeepsTranslations` (replica; every translation); paragraphs are not in a failing item.
+- **187.** An exception during save rolls back everything, including translations and paragraphs. Covered: `ApplyTest::testExceptionRollsBackEverything` (node revision and sync state), `MultilingualTest::testFailedSaveKeepsTranslations` (replica; every translation) and `ParagraphRollbackTest::testFailedSaveKeepsParagraphs` (changed, nested and added paragraphs, written before the failure, rolled back).
 - **188.** A failed create is listed by UUID and label. Covered: `ApplyTest::testFailedCreateIsListed` (failed events store; no UI listing exists).
 - **189.** A simulated deadlock is retried locally and succeeds. Covered: `ApplyTest::testTransientFailureIsRetriedLocally`.
 - **190.** A transient failure past the retry limit becomes permanent. Covered: `ApplyTest::testTransientFailureGivesUp`.
@@ -360,21 +360,4 @@ Why manual: needs a realistic data volume, and timing on CI hardware is unreliab
 
 ## Gaps
 
-Missing parts of partly covered scenarios, all automatable:
-
-- **28.** The pull form showing the diff and asking for confirmation.
-- **63.** The 10 Drush commands not yet run, and the replica's `reconcile`.
-- **67.** Update and delete through the replica for the other core entity types.
-- **81.** Push operation and Drush push for a non-node entity type.
-- **88.** Report and backfill across a hash algorithm version change.
-- **89.** Backfill over more than one batch of 50.
-- **93.** A unit test for the taxonomy lookup transform.
-- **108.** A site builder changing a filter, with bulk push still working.
-- **110.** A second replica that keeps receiving while one has detached.
-- **132.** A default language change on an item the replica already has.
-  Today the replica keeps its old default (with its old text), adds the
-  new default as a translation and notes `default_language_kept`, while
-  reporting the item in sync. How to apply the change is an open question.
-- **135.** Translated menu links.
-- **175.** Private file access on the replica.
-- **187.** Rollback of paragraphs.
+None: what is not covered in full is a manual procedure above.

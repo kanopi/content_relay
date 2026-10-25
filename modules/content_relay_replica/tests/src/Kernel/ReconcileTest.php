@@ -110,6 +110,47 @@ final class ReconcileTest extends ReplicaTestBase {
   }
 
   /**
+   * After a hash algorithm change, only items whose revision differs pull.
+   */
+  public function testAlgorithmChange(): void {
+    $same = $this->synced('Same revision');
+    $behind = $this->synced('Behind');
+    $updated = $this->retitle($behind, 'Caught up');
+    $this->serveItem($updated, 2);
+    $this->onOrigin([[$same, 1], [$updated, 2]]);
+    // The origin lists hashes from a newer algorithm, which do not compare
+    // with the ones stored here.
+    $this->updateFakeOrigin(function (array &$config): void {
+      foreach ($config['hashes']['node:article'] as &$entry) {
+        $entry['hash'] = [
+          'algorithm' => 2,
+          'entity' => str_repeat('f', 64),
+          'translations' => ['und' => str_repeat('f', 64)],
+        ];
+      }
+    });
+
+    // Served too, so that pulling it again would go unnoticed but for the
+    // requests made.
+    $this->serveItem($same, 1);
+    $this->updateFakeOrigin(function (array &$config): void {
+      $config['requests'] = [];
+    });
+
+    $run = $this->reconciler->run('manual');
+    $this->assertSame(1, $run['counts']['pulled'], json_encode($run));
+    $this->assertSame(1, $run['counts']['in_sync'], json_encode($run));
+    $paths = array_column($this->container->get('state')->get(FakeOrigin::STATE)['requests'], 'path');
+    $this->assertNotEmpty(array_filter($paths, fn (string $path) => str_contains($path, $behind['uuid'])));
+    $this->assertSame([], array_filter($paths, fn (string $path) => str_contains($path, $same['uuid'])), 'An item at the origin\'s revision is not fetched again.');
+    $this->assertCount(1, $this->revisions($this->local($same['uuid'])));
+    $this->assertSame('Caught up', $this->local($behind['uuid'])->label());
+    foreach ([$same, $behind] as $snapshot) {
+      $this->assertSame(SyncStatus::SYNCED, $this->state($snapshot['uuid'])['status']);
+    }
+  }
+
+  /**
    * Lost updates are pulled; detached items are not.
    */
   public function testUpdatedOnOrigin(): void {

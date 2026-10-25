@@ -38,6 +38,7 @@ use Drupal\Core\Entity\EntityRepositoryInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Entity\Plugin\Validation\Constraint\EntityChangedConstraint;
 use Drupal\Core\Entity\Plugin\Validation\Constraint\ReferenceAccessConstraint;
+use Drupal\Core\Entity\Plugin\Validation\Constraint\ValidReferenceConstraint;
 use Drupal\Core\Entity\RevisionLogInterface;
 use Drupal\Core\Lock\LockBackendInterface;
 use Drupal\file\FileInterface;
@@ -510,6 +511,9 @@ class SyncApplier {
         }
       }
       else {
+        if ($entity !== NULL) {
+          $entity = $this->makeRoomForDefault($entity, $prepared['local'], $event);
+        }
         $target = $this->serializer->denormalize($prepared['local'], $context, $entity);
       }
 
@@ -742,22 +746,29 @@ class SyncApplier {
     $violations = [];
     foreach (array_keys($entity->getTranslationLanguages()) as $langcode) {
       foreach ($entity->getTranslation($langcode)->validate() as $violation) {
+        $constraint = $violation->getConstraint();
         // "Modified by another user" compares changed times. Sync keeps the
         // origin's changed time, and decides staleness by revision itself.
-        if ($violation->getConstraint() instanceof EntityChangedConstraint) {
+        if ($constraint instanceof EntityChangedConstraint) {
           continue;
         }
         // "You do not have access to the referenced entity" is about the
         // user applying the event, typically anonymous for a webhook. Who may
         // see the target was decided on the origin; here it only matters that
         // the target exists, which ValidReference still checks.
-        if ($violation->getConstraint() instanceof ReferenceAccessConstraint) {
+        if ($constraint instanceof ReferenceAccessConstraint) {
+          continue;
+        }
+        // ValidReference's "cannot be referenced" is the selection handler's
+        // verdict, which also depends on that user: unpublished content, for
+        // one, cannot be referenced by anonymous. It stands only if the
+        // target is missing or of a bundle the field does not accept.
+        if ($constraint instanceof ValidReferenceConstraint && $violation->getMessageTemplate() === $constraint->message && $this->targetExists($entity, (string) $violation->getPropertyPath(), $violation->getInvalidValue())) {
           continue;
         }
         // Moderation: who may move content between states, and along which
         // transitions, was decided on the origin. A state this site's
         // workflow does not have is still a problem.
-        $constraint = $violation->getConstraint();
         if ($constraint !== NULL && is_a($constraint, 'Drupal\content_moderation\Plugin\Validation\Constraint\ModerationStateConstraint') && $violation->getMessageTemplate() !== $constraint->invalidStateMessage) {
           continue;
         }
@@ -771,6 +782,64 @@ class SyncApplier {
       }
     }
     return array_values($violations);
+  }
+
+  /**
+   * Whether a referenced target exists here, of a bundle the field accepts.
+   *
+   * @param \Drupal\Core\Entity\ContentEntityInterface $entity
+   *   The entity holding the reference.
+   * @param string $path
+   *   The violation's property path, such as "field_tags.0.target_id".
+   * @param mixed $target_id
+   *   The target's ID.
+   */
+  protected function targetExists(ContentEntityInterface $entity, string $path, mixed $target_id): bool {
+    $definition = $entity->getFieldDefinition(explode('.', $path)[0]);
+    if ($definition === NULL || !is_scalar($target_id)) {
+      return FALSE;
+    }
+    $target = $this->entityTypeManager->getStorage((string) $definition->getSetting('target_type'))->load($target_id);
+    if ($target === NULL) {
+      return FALSE;
+    }
+    $bundles = $definition->getSetting('handler_settings')['target_bundles'] ?? NULL;
+    return empty($bundles) || isset($bundles[$target->bundle()]);
+  }
+
+  /**
+   * Makes way for the origin's new default language.
+   *
+   * Drupal changes an item's language only to one it has no translation in.
+   * When the copy has one in the origin's new default language, that
+   * translation is removed in a revision of its own; the snapshot then brings
+   * it back as the default. A translation edited here stays in the revision
+   * before, and the item is flagged as a conflict.
+   *
+   * @param \Drupal\Core\Entity\ContentEntityInterface $entity
+   *   The local copy.
+   * @param array $snapshot
+   *   The snapshot, in this site's langcodes.
+   * @param \Drupal\content_relay\Event\SyncEvent $event
+   *   The event.
+   *
+   * @return \Drupal\Core\Entity\ContentEntityInterface
+   *   The copy to apply the snapshot to.
+   */
+  protected function makeRoomForDefault(ContentEntityInterface $entity, array $snapshot, SyncEvent $event): ContentEntityInterface {
+    $default = $snapshot['default_langcode'];
+    if ($entity->getUntranslated()->language()->getId() === $default || !isset($snapshot['translations'][$default]) || !$entity->hasTranslation($default)) {
+      return $entity;
+    }
+    $entity->removeTranslation($default);
+    $this->prepareRevision($entity, $event);
+    if ($entity instanceof RevisionLogInterface) {
+      $entity->setRevisionLogMessage(sprintf('Removed the %s translation, which becomes the default with origin %s revision %d (event %s)', $default, $this->origin->getLabel(), $event->sourceRevision, $event->eventId));
+    }
+    $entity->save();
+    $saved = $this->entityTypeManager->getStorage($entity->getEntityTypeId())->loadUnchanged($entity->id());
+    assert($saved instanceof ContentEntityInterface);
+    return LatestRevision::of($saved, $this->entityTypeManager);
   }
 
   /**

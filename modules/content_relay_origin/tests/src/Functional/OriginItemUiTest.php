@@ -4,11 +4,17 @@ declare(strict_types=1);
 
 namespace Drupal\Tests\content_relay_origin\Functional;
 
+use Drupal\block_content\Entity\BlockContent;
+use Drupal\block_content\Entity\BlockContentType;
 use Drupal\content_relay_origin\NotSyncableFlags;
 use Drupal\content_relay_origin\Outbox;
 use Drupal\content_relay_origin\Replica;
+use Drupal\content_relay_origin\Routing\ItemRoutes;
 use Drupal\content_relay_test\FakeReplicaEndpoint;
 use Drupal\node\NodeInterface;
+use Drupal\path_alias\Entity\PathAlias;
+use Drupal\taxonomy\Entity\Term;
+use Drupal\taxonomy\Entity\Vocabulary;
 use Drupal\Tests\BrowserTestBase;
 use Drupal\Tests\content_relay\Traits\FileKeyTrait;
 use Drupal\views\Entity\View;
@@ -33,7 +39,16 @@ final class OriginItemUiTest extends BrowserTestBase {
   /**
    * {@inheritdoc}
    */
-  protected static $modules = ['block', 'content_relay_origin', 'content_relay_test', 'node', 'views'];
+  protected static $modules = [
+    'block',
+    'block_content',
+    'content_relay_origin',
+    'content_relay_test',
+    'node',
+    'path',
+    'taxonomy',
+    'views',
+  ];
 
   /**
    * {@inheritdoc}
@@ -252,6 +267,78 @@ final class OriginItemUiTest extends BrowserTestBase {
   }
 
   /**
+   * A site builder changes the report's filters; bulk push follows them.
+   */
+  public function testCustomizedFilters(): void {
+    foreach (['Alpha one', 'Alpha two', 'Beta one'] as $title) {
+      $this->drupalCreateNode(['type' => 'article', 'title' => $title]);
+    }
+    $this->drupalCreateNode(['type' => 'page', 'title' => 'Alpha page']);
+
+    // The bundle filter is fixed to articles, and the label gets an exposed
+    // "contains" filter of its own.
+    $view = View::load('content_relay_origin_report');
+    $display = &$view->getDisplay('default');
+    $filters = &$display['display_options']['filters'];
+    $filters['bundle']['exposed'] = FALSE;
+    $filters['bundle']['value'] = ['article' => 'article'];
+    $filters['label'] = [
+      'id' => 'label',
+      'table' => 'content_relay_report',
+      'field' => 'label',
+      'plugin_id' => 'string',
+      'operator' => 'contains',
+      'value' => '',
+      'exposed' => TRUE,
+      'expose' => [
+        'operator_id' => 'label_op',
+        'label' => 'Label contains',
+        'identifier' => 'label_contains',
+        'operator' => 'label_op',
+        'required' => FALSE,
+        'multiple' => FALSE,
+        'remember' => FALSE,
+      ],
+    ];
+    unset($filters);
+    $view->save();
+
+    $this->drupalLogin($this->drupalCreateUser(['view content relay status report', 'bulk push content relay items']));
+    $this->drupalGet('admin/reports/content-relay');
+    $this->assertSession()->fieldNotExists('bundle');
+    $this->assertSession()->pageTextNotContains('Alpha page');
+    $this->assertSession()->pageTextContains('Beta one');
+
+    $this->drupalGet('admin/reports/content-relay', ['query' => ['label_contains' => 'Alpha']]);
+    $this->assertSession()->pageTextContains('Alpha two');
+    $this->assertSession()->pageTextNotContains('Beta one');
+    $this->assertSession()->pageTextNotContains('Alpha page');
+    $this->clickLink('Push all matching filters');
+    $this->submitForm([], 'Push');
+    $this->assertSession()->pageTextContains('Mirror: 2 queued.');
+    $pushed = $this->container->get('database')->select(Outbox::TABLE, 'o')
+      ->fields('o', ['entity_uuid'])
+      ->condition('reason', Outbox::REASON_BULK)
+      ->execute()
+      ->fetchCol();
+    $titles = array_map(fn (string $uuid) => $this->container->get('entity.repository')->loadEntityByUuid('node', $uuid)->label(), $pushed);
+    sort($titles);
+    $this->assertSame(['Alpha one', 'Alpha two'], $titles);
+
+    // A selection still works, as does the CSV, with the same filters.
+    $this->drupalGet('admin/reports/content-relay', ['query' => ['label_contains' => 'Beta']]);
+    $this->submitForm(['content_relay_bulk_push[0]' => TRUE], 'Push selected');
+    $this->submitForm([], 'Push');
+    $this->assertSession()->pageTextContains('Mirror: 1 queued.');
+    $this->drupalGet('admin/reports/content-relay', ['query' => ['label_contains' => 'Alpha']]);
+    $this->clickLink('Download CSV');
+    $csv = $this->getSession()->getPage()->getContent();
+    $this->assertStringContainsString('Alpha one', $csv);
+    $this->assertStringNotContainsString('Beta one', $csv);
+    $this->assertStringNotContainsString('Alpha page', $csv);
+  }
+
+  /**
    * Drush commands, with exit codes.
    */
   public function testDrush(): void {
@@ -270,6 +357,90 @@ final class OriginItemUiTest extends BrowserTestBase {
     $this->drupalCreateNode(['type' => 'page', 'title' => 'Drushed page']);
     $this->drush('content-relay:bulk-push', [], ['bundle' => 'page', 'dry-run' => NULL]);
     $this->assertStringContainsString(self::REPLICA . ': 1 to push', $this->getOutput());
+  }
+
+  /**
+   * Push for other entity types: tab, operation link, form and Drush.
+   */
+  public function testOtherEntityTypes(): void {
+    Vocabulary::create(['vid' => 'tags', 'name' => 'Tags'])->save();
+    BlockContentType::create(['id' => 'basic', 'label' => 'Basic'])->save();
+    $bundles = [
+      'node' => ['article', 'page'],
+      'taxonomy_term' => ['tags'],
+      'block_content' => ['basic'],
+      'path_alias' => ['path_alias'],
+    ];
+    $this->config('content_relay_origin.settings')->set('bundles', $bundles)->save();
+    $contracts = $this->container->get('content_relay_origin.contract_manager');
+    $contracts->propose(self::REPLICA, ['bundles' => $bundles], NULL, 'replica');
+    $contracts->acknowledge(self::REPLICA, 2);
+
+    // Every syncable type has the item pages.
+    $routes = $this->container->get('router.route_provider');
+    $types = array_keys($this->container->get('content_relay.syncable_entity_types')->getEntityTypes());
+    $this->assertContains('block_content', $types);
+    foreach ($types as $entity_type_id) {
+      foreach (['push' => 'push', 'not_syncable' => 'not-syncable', 'validate' => 'validate'] as $page => $path) {
+        $this->assertStringEndsWith("/content-relay/$path", $routes->getRouteByName(ItemRoutes::name($entity_type_id, $page))->getPath());
+      }
+    }
+
+    $term = Term::create(['vid' => 'tags', 'name' => 'Pushed term']);
+    $term->save();
+    $block = BlockContent::create(['type' => 'basic', 'info' => 'Pushed block']);
+    $block->save();
+    $alias = PathAlias::create(['path' => '/taxonomy/term/' . $term->id(), 'alias' => '/pushed']);
+    $alias->save();
+    $this->drupalLogin($this->drupalCreateUser([
+      'access content',
+      'access taxonomy overview',
+      'administer taxonomy',
+      'access block library',
+      'administer block content',
+      'administer url aliases',
+      'push content relay items',
+    ]));
+
+    // A term: the tab on its page, and the operation on its vocabulary.
+    $this->drupalGet('admin/structure/taxonomy/manage/tags/overview');
+    $this->assertSession()->linkByHrefExists("taxonomy/term/{$term->id()}/content-relay/push");
+    $this->drupalGet($term->toUrl());
+    $this->clickLink('Content Relay');
+    $this->assertSession()->addressEquals("taxonomy/term/{$term->id()}/content-relay/push");
+    $this->submitForm(['force' => TRUE], 'Push now');
+    $this->assertSession()->pageTextContains('Applied');
+    $events = $this->received();
+    $this->assertSame(['taxonomy_term', $term->uuid()], [end($events)['entity_type'], end($events)['entity_uuid']]);
+
+    // A block, from the block library.
+    $push = "admin/content/block/{$block->id()}/content-relay/push";
+    $this->drupalGet('admin/content/block');
+    $this->assertSession()->linkByHrefExists($push);
+    $this->drupalGet($push);
+    $this->submitForm(['force' => TRUE], 'Push now');
+    $this->assertSession()->pageTextContains('Applied');
+    $events = $this->received();
+    $this->assertSame(['block_content', $block->uuid()], [end($events)['entity_type'], end($events)['entity_uuid']]);
+
+    // A path alias, which has no page of its own.
+    $push = "admin/content/content-relay/item/path_alias/{$alias->id()}/content-relay/push";
+    $this->drupalGet('admin/config/search/path');
+    $this->assertSession()->linkByHrefExists($push);
+    $this->drupalGet($push);
+    $this->submitForm(['force' => TRUE], 'Push now');
+    $this->assertSession()->pageTextContains('Applied');
+    $events = $this->received();
+    $this->assertSame(['path_alias', $alias->uuid()], [end($events)['entity_type'], end($events)['entity_uuid']]);
+
+    // Drush, by ID and by UUID.
+    $this->drush('content-relay:push', ['taxonomy_term', (string) $term->id()], ['force' => NULL]);
+    $this->assertStringContainsString('Applied', $this->getOutput());
+    $this->drush('content-relay:push', ['block_content', $block->uuid()], ['force' => NULL]);
+    $this->assertStringContainsString('Applied', $this->getOutput());
+    $events = $this->received();
+    $this->assertSame(['taxonomy_term', 'block_content'], array_column(array_slice($events, -2), 'entity_type'));
+    $this->drush('content-relay:push', ['taxonomy_term', '999999'], [], NULL, NULL, 1);
   }
 
   /**
@@ -355,6 +526,16 @@ final class OriginItemUiTest extends BrowserTestBase {
     $this->drush('content-relay:replay', ['999999'], [], NULL, NULL, 1);
     $this->drush('content-relay:backfill-hashes');
     $this->drush('content-relay:reconcile');
+
+    // Validate: a replica that cannot answer fails the command, an item kept
+    // from every replica does not.
+    $checked = $this->drupalCreateNode(['type' => 'article', 'title' => 'Checked']);
+    $this->drush('content-relay:validate', ['node', (string) $checked->id()], [], NULL, NULL, 1);
+    $this->assertStringContainsString('Mirror (' . self::REPLICA . '): Could not be asked', $this->getOutput());
+    $this->drush('content-relay:not-syncable', ['node', $checked->uuid()]);
+    $this->drush('content-relay:validate', ['node', $checked->uuid()]);
+    $this->assertStringContainsString('Mirror (' . self::REPLICA . '): Not syncable', $this->getOutput());
+    $this->drush('content-relay:validate', ['node', '999999'], [], NULL, NULL, 1);
   }
 
 }

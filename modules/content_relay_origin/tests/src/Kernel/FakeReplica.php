@@ -129,6 +129,18 @@ final class FakeReplica {
    */
   public array $hashAnswers = [];
 
+  /**
+   * The events endpoint it pairs with.
+   */
+  public string $endpoint = self::ENDPOINT;
+
+  /**
+   * Other fake replicas, which answer requests to their own hosts.
+   *
+   * @var array<string, self>
+   */
+  public array $others = [];
+
   public function __construct(
     public string $originId,
   ) {
@@ -147,7 +159,7 @@ final class FakeReplica {
       'timestamp' => time(),
       'site_id' => $this->siteId,
       'label' => 'Fake replica',
-      'webhook_url' => self::ENDPOINT,
+      'webhook_url' => $this->endpoint,
       'signing_keys' => [
         $this->key->id() => ['public_key' => base64_encode($this->key->publicKey), 'status' => 'primary'],
       ],
@@ -219,6 +231,10 @@ final class FakeReplica {
    * The Guzzle handler.
    */
   public function __invoke(RequestInterface $request, array $options) {
+    $other = $this->others[$request->getUri()->getHost()] ?? NULL;
+    if ($other !== NULL) {
+      return $other($request, $options);
+    }
     if ($this->down) {
       return Create::rejectionFor(new ConnectException('Replica is down', $request));
     }

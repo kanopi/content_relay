@@ -12,6 +12,7 @@ use Drupal\content_relay_replica\SyncStatus;
 use Drupal\language\Entity\ConfigurableLanguage;
 use Drupal\language\Entity\ContentLanguageSettings;
 use Drupal\node\Entity\Node;
+use Drupal\node\NodeInterface;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
 
@@ -121,6 +122,61 @@ final class MultilingualTest extends ReplicaTestBase {
     $this->assertSame(SyncStatus::SYNCED, $state['status'], (string) $state['last_error']);
     $this->assertSame('en', $state['source_default_langcode']);
     $this->assertSame('zh-hans', $state['notes']['default_language_kept']);
+  }
+
+  /**
+   * The origin changing an item's language changes the copy's.
+   */
+  public function testDefaultLanguageChange(): void {
+    $snapshot = $this->translated(['en' => 'Hello', 'fr' => 'Bonjour']);
+    $this->apply($this->event($snapshot, Operation::Create, 1));
+    $revisions = fn () => (int) $this->container->get('database')->query('SELECT COUNT(*) FROM {node_revision} WHERE nid = :nid', [':nid' => $this->local($snapshot['uuid'])->id()])->fetchField();
+    $this->assertSame(1, $revisions());
+
+    // English becomes German: the default translation changes language, in
+    // one revision, and nothing of the English is left.
+    $german = $this->translated(['de' => 'Hallo', 'fr' => 'Bonjour'], NULL, $snapshot['uuid']);
+    $result = $this->apply($this->event($german, Operation::Update, 2));
+    $this->assertSame(ApplyResult::APPLIED, $result->result, (string) $result->message);
+    $this->assertSame('de', $this->local($snapshot['uuid'])->getUntranslated()->language()->getId());
+    $this->assertSame(['de' => 'Hallo', 'fr' => 'Bonjour'], $this->titles($snapshot['uuid']));
+    $this->assertSame(2, $revisions());
+    $state = $this->state($snapshot['uuid']);
+    $this->assertSame(SyncStatus::SYNCED, $state['status'], (string) $state['last_error']);
+    $this->assertSame('de', $state['source_default_langcode']);
+    $this->assertArrayNotHasKey('default_language_kept', $state['notes']);
+    $this->assertSame(['de', 'fr'], array_keys($state['source_translation_hashes']));
+
+    // Into a language the copy has a translation in: that translation goes
+    // in a revision of its own, then comes back as the default.
+    $french = $this->translated(['fr' => 'Bonjour encore', 'de' => 'Hallo'], NULL, $snapshot['uuid']);
+    $result = $this->apply($this->event($french, Operation::Update, 3));
+    $this->assertSame(ApplyResult::APPLIED, $result->result, (string) $result->message);
+    $node = $this->local($snapshot['uuid']);
+    $this->assertSame('fr', $node->getUntranslated()->language()->getId());
+    $this->assertSame(['de' => 'Hallo', 'fr' => 'Bonjour encore'], $this->titles($snapshot['uuid']));
+    $this->assertSame(4, $revisions());
+    $logs = $this->container->get('database')->query('SELECT revision_log FROM {node_revision} WHERE nid = :nid ORDER BY vid', [':nid' => $node->id()])->fetchCol();
+    $this->assertStringStartsWith('Removed the fr translation, which becomes the default with origin', $logs[2]);
+    $this->assertStringStartsWith('Synced from origin', $logs[3]);
+    $state = $this->state($snapshot['uuid']);
+    $this->assertSame(SyncStatus::SYNCED, $state['status'], (string) $state['last_error']);
+    $this->assertSame([], $state['local_translations']);
+
+    // Into a language translated only here: a conflict, the local text kept
+    // in the revision before.
+    $this->local($snapshot['uuid'])->addTranslation('zh-hans', ['title' => '你好 这里'])->save();
+    $chinese = $this->translated(['zh-hans' => '你好', 'fr' => 'Bonjour encore', 'de' => 'Hallo'], NULL, $snapshot['uuid']);
+    $result = $this->apply($this->event($chinese, Operation::Update, 4));
+    $this->assertSame(ApplyResult::APPLIED, $result->result, (string) $result->message);
+    $node = $this->local($snapshot['uuid']);
+    $this->assertSame('zh-hans', $node->getUntranslated()->language()->getId());
+    $this->assertSame(['de' => 'Hallo', 'fr' => 'Bonjour encore', 'zh-hans' => '你好'], $this->titles($snapshot['uuid']));
+    $state = $this->state($snapshot['uuid']);
+    $this->assertSame(SyncStatus::CONFLICT, $state['status']);
+    $kept = $this->container->get('entity_type.manager')->getStorage('node')->loadRevision($state['conflict_revision']);
+    $this->assertInstanceOf(NodeInterface::class, $kept);
+    $this->assertSame('你好 这里', $kept->getTranslation('zh-hans')->label());
   }
 
   /**

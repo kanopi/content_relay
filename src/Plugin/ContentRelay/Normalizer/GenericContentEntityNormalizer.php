@@ -222,6 +222,13 @@ class GenericContentEntityNormalizer extends PluginBase implements EntityNormali
     }
 
     $default = $snapshot['default_langcode'];
+    $langcode_key = $entity_type->getKey('langcode');
+    // The sender changed the item's language: so does the copy, when it
+    // receives that language. Drupal allows this only into a language the
+    // item has no translation in; a receiver makes room first.
+    if ($langcode_key && !$entity->isNew() && $entity->getUntranslated()->language()->getId() !== $default && isset($snapshot['translations'][$default]) && !$entity->hasTranslation($default)) {
+      $entity->getUntranslated()->set($langcode_key, $default);
+    }
     if ($entity->getUntranslated()->language()->getId() !== $default) {
       $context->defaultLanguageKept = $entity->getUntranslated()->language()->getId();
       $context->warnings[] = sprintf('Default language is "%s" here and "%s" in the snapshot; the local default was kept.', $entity->getUntranslated()->language()->getId(), $default);

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Drupal\Tests\content_relay_origin\Kernel;
 
 use Drupal\content_relay_origin\Outbox;
+use Drupal\entity_test\Entity\EntityTestStringId;
 use Lcobucci\JWT\Encoding\ChainedFormatter;
 use Lcobucci\JWT\Encoding\JoseEncoder;
 use Lcobucci\JWT\Signer\Eddsa;
@@ -187,6 +188,48 @@ final class ReadEndpointTest extends OriginTestBase {
     $this->assertSame((int) $node->getRevisionId(), $latest['revision']);
     // Nothing left to do.
     $this->assertSame(0, $this->container->get('content_relay_origin.hash_backfill')->run());
+  }
+
+  /**
+   * Backfill goes through every published type in chunks of 50.
+   */
+  public function testBackfillInChunks(): void {
+    $this->enableModules(['entity_test']);
+    $this->installEntitySchema('entity_test_string_id');
+    $this->pairAndAcknowledge();
+    $this->config('content_relay_origin.settings')->set('bundles', [
+      'node' => ['article'],
+      'entity_test_string_id' => ['entity_test_string_id'],
+    ])->save();
+    $store = $this->container->get('content_relay_origin.hash_store');
+    $items = [];
+    for ($i = 1; $i <= 120; $i++) {
+      $items[] = $this->node('article', "Item $i");
+    }
+    // String IDs, which sort and page as strings.
+    foreach (['alpha', 'beta', 'gamma'] as $id) {
+      $entity = EntityTestStringId::create(['id' => $id, 'name' => $id]);
+      $entity->save();
+      $items[] = $entity;
+    }
+    foreach ($items as $item) {
+      $store->forget($item->getEntityTypeId(), $item->uuid());
+    }
+    // One already has its hash, and is left alone.
+    $store->record($items[60]);
+
+    $progress = [];
+    $backfill = $this->container->get('content_relay_origin.hash_backfill');
+    $count = $backfill->run(FALSE, function (string $entity_type_id, string $bundle, int $done) use (&$progress): void {
+      $progress[] = "$entity_type_id:$done";
+    });
+    $this->assertSame(122, $count);
+    $this->assertSame(['node:50', 'node:99', 'node:119', 'entity_test_string_id:122'], $progress);
+    foreach ($items as $item) {
+      $this->assertNotNull($store->latest($item->getEntityTypeId(), $item->uuid()), $item->label());
+    }
+    $this->assertSame(0, $backfill->run());
+    $this->assertSame(123, $backfill->run(TRUE));
   }
 
   /**

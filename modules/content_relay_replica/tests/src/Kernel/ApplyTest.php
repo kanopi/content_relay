@@ -12,8 +12,10 @@ use Drupal\content_relay_replica\Apply\ApplyResult;
 use Drupal\content_relay_replica\FailedEventStore;
 use Drupal\content_relay_replica\SyncStatus;
 use Drupal\entity_test\Entity\EntityTestMul;
+use Drupal\field\Entity\FieldConfig;
 use Drupal\node\Entity\Node;
 use Drupal\taxonomy\Entity\Term;
+use Drupal\taxonomy\Entity\Vocabulary;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
 
@@ -282,6 +284,32 @@ final class ApplyTest extends ReplicaTestBase {
       SyncStatus::SYNCED,
       $this->container->get('content_relay_replica.sync_state')->get('node', $snapshot['uuid'])['status'],
     );
+  }
+
+  /**
+   * References to content the applying user may not see still apply.
+   *
+   * Who may reference what was decided on the origin; here a target only has
+   * to exist, and be of a bundle the field accepts.
+   */
+  public function testReferenceToUnpublishedContent(): void {
+    Vocabulary::create(['vid' => 'colors', 'name' => 'Colors'])->save();
+    $field = FieldConfig::loadByName('node', 'article', 'field_tags');
+    $settings = $field->getSettings();
+    $settings['handler_settings']['target_bundles'] = ['tags' => 'tags'];
+    $field->set('settings', $settings)->save();
+    $hidden = Term::create(['vid' => 'tags', 'name' => 'Hidden', 'status' => 0]);
+    $hidden->save();
+    $this->assertFalse($hidden->access('view'), 'The user applying the event cannot see it.');
+    $result = $this->apply($this->event($this->originArticle('Tagged', ['field_tags' => [$hidden]]), Operation::Create, 1));
+    $this->assertSame(ApplyResult::APPLIED, $result->result, (string) $result->message);
+
+    // A term from a vocabulary the field does not accept is still refused.
+    $red = Term::create(['vid' => 'colors', 'name' => 'Red']);
+    $red->save();
+    $result = $this->apply($this->event($this->originArticle('Colored', ['field_tags' => [$red]]), Operation::Create, 1));
+    $this->assertSame([422, 'validation_failed'], [$result->httpStatus, $result->code]);
+    $this->assertSame('field_tags', $result->details['violations'][0]['field']);
   }
 
   /**
