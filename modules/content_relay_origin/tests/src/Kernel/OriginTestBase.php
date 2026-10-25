@@ -13,6 +13,7 @@ use Drupal\content_relay_origin\Outbox;
 use Drupal\content_relay_origin\PairingCodes;
 use Drupal\content_relay_origin\ReplicaItems;
 use Drupal\content_relay_origin\ReplicaRegistry;
+use Drupal\content_relay_origin\TranslationBlocks;
 use Drupal\content_relay_origin\Report\ReportIndex;
 use Drupal\key\Entity\Key;
 use Drupal\KernelTests\KernelTestBase;
@@ -79,6 +80,7 @@ abstract class OriginTestBase extends KernelTestBase {
       ReplicaItems::TABLE,
       NotSyncableFlags::TABLE,
       ReportIndex::TABLE,
+      TranslationBlocks::TABLE,
     ]);
     $this->installConfig(['content_relay', 'content_relay_origin', 'node', 'filter']);
     content_relay_install(FALSE);

@@ -18,6 +18,18 @@ class SyncStateStore {
 
   public const TABLE = 'content_relay_sync_state';
 
+  /**
+   * Columns holding JSON, decoded on read and encoded on save.
+   */
+  protected const JSON = [
+    'source_translation_hashes',
+    'local_translation_hashes',
+    'detached_translations',
+    'withheld_translations',
+    'local_translations',
+    'notes',
+  ];
+
   public function __construct(
     protected Connection $database,
     protected TimeInterface $time,
@@ -36,8 +48,9 @@ class SyncStateStore {
     if (!$row) {
       return NULL;
     }
-    $row['source_translation_hashes'] = json_decode($row['source_translation_hashes'], TRUE) ?: [];
-    $row['local_translation_hashes'] = json_decode((string) $row['local_translation_hashes'], TRUE) ?: [];
+    foreach (self::JSON as $column) {
+      $row[$column] = json_decode((string) $row[$column], TRUE) ?: [];
+    }
     return $row;
   }
 
@@ -49,10 +62,10 @@ class SyncStateStore {
    * @param string $uuid
    *   UUID.
    * @param array $fields
-   *   Column values. The translation hash columns may be arrays.
+   *   Column values. The JSON columns may be arrays.
    */
   public function save(string $entity_type_id, string $uuid, array $fields): void {
-    foreach (['source_translation_hashes', 'local_translation_hashes'] as $column) {
+    foreach (self::JSON as $column) {
       if (isset($fields[$column]) && is_array($fields[$column])) {
         $fields[$column] = json_encode($fields[$column], \JSON_THROW_ON_ERROR);
       }

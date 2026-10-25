@@ -50,17 +50,56 @@ content_relay_replica.settings:
             sequence:
               type: string
               label: 'Field name'
+    languages:
+      type: mapping
+      label: 'Languages'
+      mapping:
+        map:
+          type: sequence
+          label: 'Origin langcodes kept under another code here'
+          sequence:
+            type: mapping
+            label: 'Language code mapping'
+            mapping:
+              origin:
+                type: string
+                label: 'Langcode on the origin'
+              local:
+                type: string
+                label: 'Langcode here'
+        unknown:
+          type: string
+          label: 'A received language this site does not have: skip that translation, or reject the item'
+          constraints:
+            Choice:
+              - skip
+              - reject
+        removed:
+          type: string
+          label: 'Translations in a language the origin removed, or this site stopped receiving: keep as local translations, or delete'
+          constraints:
+            Choice:
+              - keep
+              - delete
     conflicts:
       type: mapping
       label: 'Items edited here when the origin sends an update'
       mapping:
         on_event:
           type: string
-          label: 'Save the origin version as a new revision and flag for review (overwrite), or keep the local copy and mark a conflict (reject)'
+          label: 'Save the origin version as a new revision and flag for review (overwrite), save it as a draft under Content Moderation (draft), or keep the local copy and mark a conflict (reject)'
           constraints:
             Choice:
               - overwrite
+              - draft
               - reject
+    moderation:
+      type: mapping
+      label: 'Content Moderation'
+      mapping:
+        target_state:
+          type: string
+          label: 'Moderation state for synced content; empty for the origin''s state'
     reconcile:
       type: mapping
       label: 'Reconciliation'

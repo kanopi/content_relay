@@ -174,6 +174,12 @@ class DeliveryService {
         $this->outbox->update($id, ['status' => EventStatus::SKIPPED, 'result_code' => $blocked]);
         return TRUE;
       }
+      /** @var \Drupal\Core\Entity\EntityInterface|null $entity */
+      $entity = $this->entityRepository->loadEntityByUuid($row['entity_type'], $row['entity_uuid']);
+      if ($entity instanceof ContentEntityInterface && $this->eventBuilder->hasNoLanguagesFor($entity, $contract)) {
+        $this->outbox->update($id, ['status' => EventStatus::SKIPPED, 'result_code' => ReportIndex::NO_LANGUAGES]);
+        return TRUE;
+      }
     }
     $visited[$row['entity_type'] . ':' . $row['entity_uuid']] = TRUE;
     try {

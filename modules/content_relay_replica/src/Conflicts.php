@@ -9,6 +9,7 @@ use Drupal\content_relay\Serialization\DenormalizationContext;
 use Drupal\content_relay\Serialization\EntitySerializer;
 use Drupal\content_relay\Serialization\NormalizationContext;
 use Drupal\content_relay_replica\Apply\ApplyResult;
+use Drupal\content_relay_replica\Apply\SyncApplier;
 use Drupal\content_relay_replica\Entity\ContentRelayMapping;
 use Drupal\content_relay_replica\Mapping\MappedImporter;
 use Drupal\Core\Entity\ContentEntityInterface;
@@ -46,6 +47,7 @@ class Conflicts {
     protected AccountInterface $currentUser,
     protected TimeInterface $time,
     protected LoggerInterface $logger,
+    protected LanguageMap $languageMap,
   ) {}
 
   /**
@@ -106,7 +108,8 @@ class Conflicts {
       '@type' => $entity_type_id,
       '@uuid' => $uuid,
     ]);
-    if ($state['conflict_revision'] !== NULL) {
+    // A draft is published by applying the origin's version properly.
+    if ($state['conflict_revision'] !== NULL && ($state['notes']['conflict_mode'] ?? NULL) !== SyncApplier::CONFLICT_DRAFT) {
       $synced = $state['local_hash'] !== NULL && $state['local_hash'] === $state['expected_hash'];
       $this->syncState->save($entity_type_id, $uuid, [
         'conflict_revision' => NULL,
@@ -121,34 +124,72 @@ class Conflicts {
   }
 
   /**
-   * Keeps the local version and detaches the item.
+   * Keeps the local version and detaches the item, or one translation.
    *
    * When the origin's version was saved over the edit, the edit is restored
-   * as a new revision first.
+   * as a new revision first: the whole item, or only that translation.
+   *
+   * @param string $entity_type_id
+   *   The origin entity type.
+   * @param string $uuid
+   *   The UUID.
+   * @param string|null $langcode
+   *   Only this translation (origin langcode); the rest takes the origin's
+   *   version and keeps syncing.
    */
-  public function keepLocal(string $entity_type_id, string $uuid): void {
+  public function keepLocal(string $entity_type_id, string $uuid, ?string $langcode = NULL): void {
     [$state, $entity] = $this->item($entity_type_id, $uuid);
-    if ($state['conflict_revision'] !== NULL && ($edit = $this->revision($entity, (int) $state['conflict_revision'])) !== NULL) {
-      $edit->setNewRevision(TRUE);
-      $edit->isDefaultRevision(TRUE);
-      if ($edit instanceof RevisionLogInterface) {
-        $edit->setRevisionLogMessage(sprintf('Restored the local edit from revision %d over the origin\'s version.', $state['conflict_revision']));
-        $edit->setRevisionUserId((int) $this->currentUser->id());
-        $edit->setRevisionCreationTime($this->time->getCurrentTime());
+    $edit = $state['conflict_revision'] === NULL ? NULL : $this->revision($entity, (int) $state['conflict_revision']);
+    if ($edit !== NULL) {
+      $restored = $langcode === NULL ? $edit : $this->restoreTranslation($entity, $edit, $this->languageMap->toLocal($langcode));
+      $restored->setNewRevision(TRUE);
+      $restored->isDefaultRevision(TRUE);
+      if ($restored instanceof RevisionLogInterface) {
+        $restored->setRevisionLogMessage(sprintf('Restored the local edit%s from revision %d over the origin\'s version.', $langcode === NULL ? '' : ' to ' . $langcode, $state['conflict_revision']));
+        $restored->setRevisionUserId((int) $this->currentUser->id());
+        $restored->setRevisionCreationTime($this->time->getCurrentTime());
       }
-      $edit->save();
+      $restored->save();
     }
     $this->syncState->save($entity_type_id, $uuid, [
       'conflict_revision' => NULL,
       'conflict_at' => NULL,
       'last_synced' => (int) $state['last_synced'],
     ]);
-    $this->logger->notice('@user kept the local version of @type @uuid, which is now detached.', [
+    $this->logger->notice('@user kept the local version of @what @type @uuid, which is now detached.', [
       '@user' => $this->currentUser->getAccountName(),
+      '@what' => $langcode === NULL ? 'all of' : 'the ' . $langcode . ' translation of',
       '@type' => $entity_type_id,
       '@uuid' => $uuid,
     ]);
-    $this->detacher->detach($entity_type_id, $uuid);
+    if ($langcode === NULL) {
+      $this->detacher->detach($entity_type_id, $uuid);
+      return;
+    }
+    $this->detacher->detachTranslation($entity_type_id, $uuid, $langcode);
+    // The rest of the item takes the origin's version, applied afresh so its
+    // hashes leave the detached translation out.
+    try {
+      $this->puller->pull($entity_type_id, $uuid, TRUE, TRUE);
+    }
+    catch (SubscriptionException $e) {
+      $this->syncState->setStatus($entity_type_id, $uuid, SyncStatus::CONFLICT, sprintf('The %s translation is kept and detached; the origin\'s version of the rest could not be fetched: %s', $langcode, $e->getMessage()));
+    }
+  }
+
+  /**
+   * The current copy with one translation's values taken from a revision.
+   */
+  protected function restoreTranslation(ContentEntityInterface $current, ContentEntityInterface $edit, string $langcode): ContentEntityInterface {
+    if (!$edit->hasTranslation($langcode)) {
+      return $current;
+    }
+    $source = $edit->getTranslation($langcode);
+    $target = $current->hasTranslation($langcode) ? $current->getTranslation($langcode) : $current->addTranslation($langcode);
+    foreach ($source->getTranslatableFields(FALSE) as $name => $items) {
+      $target->set($name, $items->getValue());
+    }
+    return $target->getUntranslated();
   }
 
   /**

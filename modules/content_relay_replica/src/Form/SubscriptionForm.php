@@ -8,7 +8,9 @@ use Drupal\content_relay\Contract\ContractRenderer;
 use Drupal\content_relay\Contract\SubscriptionContract;
 use Drupal\content_relay\Serialization\SyncableEntityTypes;
 use Drupal\content_relay_replica\ContractStore;
+use Drupal\content_relay_replica\LanguageSubscription;
 use Drupal\content_relay_replica\Mapping\MappingRepository;
+use Drupal\content_relay_replica\Schema\SchemaWatcher;
 use Drupal\content_relay_replica\OriginClient;
 use Drupal\content_relay_replica\Schema\CompatibilityChecker;
 use Drupal\content_relay_replica\SubscriptionException;
@@ -35,6 +37,8 @@ final class SubscriptionForm extends FormBase {
     protected OriginClient $originClient,
     protected CompatibilityChecker $checker,
     protected MappingRepository $mappings,
+    protected LanguageSubscription $languages,
+    protected SchemaWatcher $schemaWatcher,
   ) {}
 
   /**
@@ -51,6 +55,8 @@ final class SubscriptionForm extends FormBase {
       $container->get('content_relay_replica.origin_client'),
       $container->get('content_relay_replica.compatibility_checker'),
       $container->get('content_relay_replica.mappings'),
+      $container->get('content_relay_replica.language_subscription'),
+      $container->get('content_relay_replica.schema_watcher'),
     );
   }
 
@@ -88,6 +94,39 @@ final class SubscriptionForm extends FormBase {
     }
 
     $terms = $this->subscription->getReplicaTerms();
+    $may_change_languages = $this->currentUser()->hasPermission('change content relay languages');
+    $pending = $this->languages->pending();
+    if ($pending !== [] && $may_change_languages) {
+      $form['pending_languages'] = [
+        '#type' => 'details',
+        '#title' => $this->t('Languages the origin added'),
+        '#open' => TRUE,
+        '#description' => $this->t('Nothing in these languages is received until you add them. Ignored languages are not offered again.'),
+      ];
+      foreach ($pending as $langcode => $name) {
+        $form['pending_languages'][$langcode] = [
+          '#type' => 'container',
+          '#attributes' => ['class' => ['container-inline']],
+          'name' => ['#markup' => $this->t('@name (@langcode)', ['@name' => $name, '@langcode' => $langcode]) . ' '],
+          'add' => [
+            '#type' => 'submit',
+            '#value' => $this->t('Add to my languages'),
+            '#name' => 'add_' . $langcode,
+            '#language' => $langcode,
+            '#submit' => ['::decideLanguage'],
+            '#limit_validation_errors' => [],
+          ],
+          'ignore' => [
+            '#type' => 'submit',
+            '#value' => $this->t('Ignore'),
+            '#name' => 'ignore_' . $langcode,
+            '#language' => $langcode,
+            '#submit' => ['::decideLanguage'],
+            '#limit_validation_errors' => [],
+          ],
+        ];
+      }
+    }
     $form['terms'] = [
       '#type' => 'details',
       '#title' => $this->t('Change the subscription'),
@@ -103,12 +142,9 @@ final class SubscriptionForm extends FormBase {
         ];
       }
     }
-    $languages = [];
-    foreach ($this->languageManager->getLanguages() as $langcode => $language) {
-      $languages[$langcode] = $language->getName();
-    }
     $form['terms']['language_mode'] = [
       '#type' => 'radios',
+      '#access' => $may_change_languages,
       '#title' => $this->t('Languages'),
       '#options' => [
         SubscriptionContract::LANGUAGES_ALL => $this->t('All languages, including any the origin adds later'),
@@ -118,9 +154,21 @@ final class SubscriptionForm extends FormBase {
     ];
     $form['terms']['languages'] = [
       '#type' => 'checkboxes',
-      '#options' => $languages,
+      '#access' => $may_change_languages,
+      '#options' => $this->languageOptions(),
+      '#description' => $this->t("The origin's languages, as of its last schema check, and this site's own."),
       '#default_value' => $terms['languages']['selected'] ?? [],
       '#states' => ['visible' => [':input[name="terms[language_mode]"]' => ['value' => SubscriptionContract::LANGUAGES_SELECTED]]],
+    ];
+    $form['terms']['removed_languages'] = [
+      '#type' => 'radios',
+      '#access' => $may_change_languages,
+      '#title' => $this->t('Translations in languages you stop receiving'),
+      '#options' => [
+        'keep' => $this->t('Keep them as local translations, left alone by sync'),
+        'delete' => $this->t('Delete them'),
+      ],
+      '#default_value' => $this->configFactory()->get('content_relay_replica.settings')->get('languages.removed') ?? 'keep',
     ];
     $form['terms']['processing'] = [
       '#type' => 'select',
@@ -221,16 +269,19 @@ final class SubscriptionForm extends FormBase {
       }
     }
     ksort($terms['bundles']);
-    $previous_mode = $terms['languages']['mode'] ?? SubscriptionContract::LANGUAGES_ALL;
-    $selected = array_values(array_filter($values['languages'] ?? []));
-    // Switching from all to selected starts from what is received now, so
-    // nothing is dropped by accident.
-    if ($previous_mode === SubscriptionContract::LANGUAGES_ALL && $values['language_mode'] === SubscriptionContract::LANGUAGES_SELECTED && $selected === []) {
-      $selected = array_keys($this->languageManager->getLanguages());
+    if ($this->currentUser()->hasPermission('change content relay languages')) {
+      $previous_mode = $terms['languages']['mode'] ?? SubscriptionContract::LANGUAGES_ALL;
+      $selected = array_values(array_filter($values['languages'] ?? []));
+      // Switching from all to selected starts from what is received now, so
+      // nothing is dropped by accident.
+      if ($previous_mode === SubscriptionContract::LANGUAGES_ALL && $values['language_mode'] === SubscriptionContract::LANGUAGES_SELECTED && $selected === []) {
+        $selected = array_keys($this->languageOptions());
+      }
+      sort($selected);
+      $terms['languages']['mode'] = $values['language_mode'];
+      $terms['languages']['selected'] = $values['language_mode'] === SubscriptionContract::LANGUAGES_SELECTED ? $selected : [];
+      $this->languages->setRemovalMode((string) ($values['removed_languages'] ?? 'keep'));
     }
-    sort($selected);
-    $terms['languages']['mode'] = $values['language_mode'];
-    $terms['languages']['selected'] = $values['language_mode'] === SubscriptionContract::LANGUAGES_SELECTED ? $selected : [];
     $terms['processing']['default'] = $values['processing'];
     $terms['delivery']['max_events_per_minute'] = $values['max_events_per_minute'] === '' || $values['max_events_per_minute'] === NULL ? NULL : (int) $values['max_events_per_minute'];
     $terms['delivery']['paused'] = (bool) $values['paused'];
@@ -244,6 +295,41 @@ final class SubscriptionForm extends FormBase {
     else {
       $this->messenger()->addWarning($this->t('The origin could not be reached. The change will be retried; the current contract stays in force until it is confirmed.'));
     }
+  }
+
+  /**
+   * Adds or ignores a language the origin added.
+   */
+  public function decideLanguage(array &$form, FormStateInterface $form_state): void {
+    $button = $form_state->getTriggeringElement();
+    $langcode = (string) ($button['#language'] ?? '');
+    $add = str_starts_with((string) ($button['#name'] ?? ''), 'add_');
+    if ($langcode === '' || !$this->currentUser()->hasPermission('change content relay languages')) {
+      return;
+    }
+    $terms = $this->languages->decide($this->subscription->getReplicaTerms(), $langcode, $add);
+    $contract = $this->subscription->propose($terms, (int) $this->currentUser()->id());
+    $this->messenger()->addStatus($add
+      ? $this->t('%langcode is added. @confirmed', [
+        '%langcode' => $langcode,
+        '@confirmed' => $contract ? $this->t('Existing translations in it will be pulled.') : $this->t('The change will reach the origin when it can be reached.'),
+      ])
+      : $this->t('%langcode is ignored and will not be offered again.', ['%langcode' => $langcode]));
+  }
+
+  /**
+   * Languages to choose from: the origin's and this site's.
+   *
+   * @return array<string, string>
+   *   Names by langcode.
+   */
+  protected function languageOptions(): array {
+    $options = $this->schemaWatcher->originLanguages();
+    foreach ($this->languageManager->getLanguages() as $langcode => $language) {
+      $options[$langcode] ??= $language->getName();
+    }
+    ksort($options);
+    return $options;
   }
 
 }

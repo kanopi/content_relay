@@ -112,12 +112,21 @@ final class TranslationNormalizerTest extends KernelTestBase {
   }
 
   /**
-   * A receiver that filters languages gets only those, plus the default.
+   * A receiver that filters languages gets only those, not even the default.
    */
   public function testLanguageFilter(): void {
-    $snapshot = $this->serializer->normalize($this->createPage(), new NormalizationContext(['zh-hans']));
-    $this->assertSame(['en', 'zh-hans'], array_keys($snapshot['translations']));
+    $node = $this->createPage();
+    $snapshot = $this->serializer->normalize($node, new NormalizationContext(['zh-hans']));
+    $this->assertSame(['zh-hans'], array_keys($snapshot['translations']));
+    // The default is still named, so the receiver knows it is not its own.
+    $this->assertSame('en', $snapshot['default_langcode']);
     $this->assertStringNotContainsString('Bonjour', json_encode($snapshot));
+    $this->assertStringNotContainsString('Hello', json_encode($snapshot['translations']));
+
+    // A per-translation hash does not depend on what else was sent.
+    $full = $this->hasher->hash($this->serializer->normalize($node));
+    $filtered = $this->hasher->hash($snapshot);
+    $this->assertSame($full->translations['zh-hans'], $filtered->translations['zh-hans']);
   }
 
   /**

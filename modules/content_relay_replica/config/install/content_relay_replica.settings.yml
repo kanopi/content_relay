@@ -8,8 +8,14 @@ external_references:
   fallbacks:
     user: '0'
 local_only: []
+languages:
+  map: []
+  unknown: skip
+  removed: keep
 conflicts:
   on_event: overwrite
+moderation:
+  target_state: ''
 reconcile:
   interval: 86400
   max_items: 100

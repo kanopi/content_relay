@@ -76,10 +76,9 @@ assigned identifier to keep in step during pairing or rotation.
 
 ## 8. The default translation is always in a snapshot
 
-A snapshot cannot exist without its default translation, so it is included
-even when the receiver's language filter excludes it. Whether to send an item
-whose only wanted language is not its default is decided by the sender before
-building the snapshot (phase 11).
+Superseded by decision 68: a replica that does not receive the default
+language does not get that translation either. Embedded entities still
+always carry theirs.
 
 ## 9. Signatures are domain-separated
 
@@ -222,11 +221,7 @@ Sites that want real authors subscribe to users.
 
 ## 25. Pending drafts are not synced yet
 
-Snapshots are built from the default revision, the one that is live. A draft
-saved on top of published content (a forward revision) is not sent until it
-is published, and moderation state is synced for the translations of the
-default revision. Sending forward revisions, so a replica can show the same
-drafts, belongs with the multilingual and moderation work in phase 11.
+Superseded by decision 72: the latest revision is sent, drafts included.
 
 ## 26. Things a replica must not generate itself
 
@@ -542,4 +537,66 @@ The origin cannot see a replica's local edits or deletions, only what the
 replica acknowledged. So its reconciliation re-sends what the report already
 shows as missing or out of date (out of sync, never sent, failed,
 dead-lettered); the replica's reconciliation covers the rest.
+
+## 68. A filtered-out default translation is left out
+
+A replica that does not receive an item's default language never sees that
+translation, as the specification's payload test requires. The snapshot
+still names the default langcode. The replica keeps its own default (the
+first language it receives, for a new item) and flags the item. Hashes stay
+comparable because a translation's hash does not depend on which other
+translations were sent, and the replica hashes its copy with the origin's
+default langcode.
+
+## 69. Replicas hash in the origin's terms
+
+Before hashing its copy, a replica maps its langcodes back to the origin's
+and uses the origin's default langcode, and leaves out what sync does not
+own: local translations, translations detached here or withheld by the
+origin, skipped languages and local-only fields. So hashes compare equal
+whenever the content the origin sent is unchanged.
+
+## 70. One translation can be kept from sync, by either side
+
+The origin marks a translation not syncable; the replica detaches one. Both
+are recorded on the origin as translation blocks. Events leave blocked
+translations out and name them as withheld, so the replica leaves its copy
+alone instead of taking their absence for a deletion. Each side lifts only
+its own block.
+
+## 71. Removed languages become local translations, queued
+
+Translations in a language a replica stops receiving, or the origin
+removes, are kept as local translations by default, or deleted if chosen.
+Either is done by a queue, a chunk of items at a time, so a large site does
+not change in one request. Adding a language starts a backfill run of
+reconciliation; items it queues show as "pending backfill".
+
+## 72. The latest revision is sent, drafts included
+
+With Content Moderation, the latest revision can be a draft on top of the
+live one. The origin sends it and the replica applies it on its own latest
+revision; whether the result is live follows the moderation state, by
+Content Moderation's own rule, which sync applies itself because moderation
+does not decide it for saves marked as syncing. Transition access and
+transition validity are not checked on the replica: the origin decided
+them. A state the replica's workflow lacks is still refused.
+
+## 73. A target moderation state is this site's own
+
+A replica can put all synced content in one moderation state. Moderation
+state, and the published flag it sets, then count as local-only fields, so
+the copy stays in sync by its content.
+
+## 74. Conflicts can be saved as drafts
+
+With conflicts.on_event set to draft and Content Moderation enabled, the
+origin's version over local edits is saved as a draft, leaving the edit
+live, and the item is flagged. Accepting publishes the origin's version by
+applying it again. Without moderation, draft means overwrite.
+
+## 75. Language-neutral content passes every language filter
+
+Items in "not specified" or "not applicable" are sent to replicas whatever
+languages they receive, and are never reported as "no languages".
 

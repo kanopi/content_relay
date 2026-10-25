@@ -7,6 +7,7 @@ namespace Drupal\content_relay_replica;
 use Drupal\content_relay\Hash\RevisionHasher;
 use Drupal\content_relay\Hash\RevisionHashes;
 use Drupal\content_relay\Serialization\EntitySerializer;
+use Drupal\content_relay\Serialization\LatestRevision;
 use Drupal\content_relay\Serialization\NormalizationContext;
 use Drupal\content_relay_replica\Entity\ContentRelayMapping;
 use Drupal\content_relay_replica\File\FileSync;
@@ -36,32 +37,48 @@ class LocalChanges {
     protected ConfigFactoryInterface $configFactory,
     protected EntityRepositoryInterface $entityRepository,
     protected EntityTypeManagerInterface $entityTypeManager,
+    protected LanguageMap $languageMap,
   ) {}
 
   /**
-   * Hashes a local copy.
+   * Hashes a local copy, in the origin's terms.
+   *
+   * Only the translations received from the origin count; local ones, and
+   * translations detached here, are left out. Langcodes are mapped back to
+   * the origin's, and the default language is the origin's, which this site
+   * may not receive; so the hashes compare equal with the origin's.
    *
    * @param \Drupal\Core\Entity\ContentEntityInterface $entity
    *   The copy.
    * @param string[]|null $langcodes
-   *   The origin langcodes it receives, or NULL for all its translations, as
+   *   The origin langcodes received, or NULL for all its translations, as
    *   for a mapped copy, which is hashed whole in its own structure.
    * @param int $algorithm
    *   The hash algorithm version.
+   * @param string|null $origin_default
+   *   The item's default langcode on the origin, if known.
    */
-  public function hash(ContentEntityInterface $entity, ?array $langcodes, int $algorithm = RevisionHasher::CURRENT_VERSION): RevisionHashes {
-    $context = new NormalizationContext($langcodes);
+  public function hash(ContentEntityInterface $entity, ?array $langcodes, int $algorithm = RevisionHasher::CURRENT_VERSION, ?string $origin_default = NULL): RevisionHashes {
+    $context = new NormalizationContext($langcodes === NULL ? NULL : array_map(fn (string $langcode) => $this->languageMap->toLocal($langcode), $langcodes));
     $context->fileUrlResolver = $this->originUrlResolver();
     $local_only = $this->localOnly->forBundle($entity->getEntityTypeId(), $entity->bundle());
-    return $this->hasher->hash($this->serializer->normalize($entity, $context), $local_only, $algorithm);
+    $snapshot = $this->serializer->normalize($entity, $context);
+    if ($langcodes !== NULL) {
+      $snapshot = $this->languageMap->snapshotToOrigin($snapshot);
+      if ($origin_default !== NULL && $origin_default !== '') {
+        $snapshot['default_langcode'] = $origin_default;
+      }
+    }
+    return $this->hasher->hash($snapshot, $local_only, $algorithm);
   }
 
   /**
    * Hashes a local copy as its sync state says it was hashed when applied.
    */
   public function hashFor(ContentEntityInterface $entity, array $state): RevisionHashes {
-    $langcodes = ($state['import_mode'] ?? 'as_is') === 'mapped' ? NULL : array_map('strval', array_keys($state['source_translation_hashes']));
-    return $this->hash($entity, $langcodes, (int) $state['hash_algorithm']);
+    // Translations detached here are not compared.
+    $langcodes = ($state['import_mode'] ?? 'as_is') === 'mapped' ? NULL : array_values(array_diff(array_map('strval', array_keys($state['source_translation_hashes'])), $state['detached_translations'] ?? []));
+    return $this->hash($entity, $langcodes, (int) $state['hash_algorithm'], $state['source_default_langcode'] ?? NULL);
   }
 
   /**
@@ -134,7 +151,7 @@ class LocalChanges {
     }
     /** @var \Drupal\Core\Entity\EntityInterface|null $entity */
     $entity = $this->entityRepository->loadEntityByUuid($entity_type_id, $uuid);
-    return $entity instanceof ContentEntityInterface ? $entity : NULL;
+    return $entity instanceof ContentEntityInterface ? LatestRevision::of($entity, $this->entityTypeManager) : NULL;
   }
 
   /**

@@ -8,6 +8,7 @@
 declare(strict_types=1);
 
 use Drupal\Core\Cache\CacheableMetadata;
+use Drupal\Core\Entity\ContentEntityInterface;
 use Drupal\Core\Entity\EntityInterface;
 
 /**
@@ -32,6 +33,30 @@ function content_relay_replica_cron(): void {
   if ($interval > 0 && \Drupal::time()->getRequestTime() - (int) $state->get('content_relay_replica.files_verified', 0) >= $interval) {
     $files->verifyAll();
     $state->set('content_relay_replica.files_verified', \Drupal::time()->getRequestTime());
+  }
+}
+
+/**
+ * Implements hook_entity_translation_insert().
+ */
+function content_relay_replica_entity_translation_insert(EntityInterface $translation): void {
+  _content_relay_replica_translations_changed($translation);
+}
+
+/**
+ * Implements hook_entity_translation_delete().
+ */
+function content_relay_replica_entity_translation_delete(EntityInterface $translation): void {
+  _content_relay_replica_translations_changed($translation);
+}
+
+/**
+ * Keeps the local translations of a synced item listed, after a change here.
+ */
+function _content_relay_replica_translations_changed(EntityInterface $translation): void {
+  // Sync records them itself when it applies.
+  if ($translation instanceof ContentEntityInterface && !$translation->isSyncing() && $translation->uuid() !== NULL) {
+    \Drupal::service('content_relay_replica.language_subscription')->refreshLocalTranslations($translation->getEntityTypeId(), (string) $translation->uuid());
   }
 }
 

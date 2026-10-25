@@ -12,13 +12,17 @@ use Drupal\content_relay\Event\Hook\ContentRelayEvents;
 use Drupal\content_relay\Event\Operation;
 use Drupal\content_relay\Event\SyncEvent;
 use Drupal\content_relay\Hash\RevisionHasher;
+use Drupal\content_relay\Plugin\ContentRelay\Normalizer\GenericContentEntityNormalizer;
 use Drupal\content_relay\Serialization\DenormalizationContext;
 use Drupal\content_relay\Serialization\EntitySerializer;
+use Drupal\content_relay\Serialization\LatestRevision;
 use Drupal\content_relay_replica\ContractStore;
 use Drupal\content_relay_replica\Entity\ContentRelayMapping;
 use Drupal\content_relay_replica\FailedEventStore;
 use Drupal\content_relay_replica\File\FileSync;
 use Drupal\content_relay_replica\LocalChanges;
+use Drupal\content_relay_replica\LanguageMap;
+use Drupal\content_relay_replica\Moderation;
 use Drupal\content_relay_replica\LocalOnlyFields;
 use Drupal\content_relay_replica\Mapping\MappedImporter;
 use Drupal\content_relay_replica\Mapping\MappingException;
@@ -84,10 +88,12 @@ class SyncApplier {
    * Conflict resolutions.
    *
    * Overwrite saves the origin's version over local edits and flags the item
-   * for review; reject keeps the local copy and refuses the event; accept
-   * saves the origin's version because a user chose it.
+   * for review; draft does the same as a draft under Content Moderation,
+   * leaving the edited version live; reject keeps the local copy and refuses
+   * the event; accept saves the origin's version because a user chose it.
    */
   public const CONFLICT_OVERWRITE = 'overwrite';
+  public const CONFLICT_DRAFT = 'draft';
   public const CONFLICT_REJECT = 'reject';
   public const CONFLICT_ACCEPT = 'accept';
 
@@ -113,6 +119,8 @@ class SyncApplier {
     protected MappingRepository $mappings,
     protected MappedImporter $mappedImporter,
     protected LocalOnlyFields $localOnly,
+    protected LanguageMap $languageMap,
+    protected Moderation $moderation,
   ) {}
 
   /**
@@ -195,7 +203,8 @@ class SyncApplier {
     // same.
     /** @var \Drupal\Core\Entity\EntityInterface|null $entity */
     $entity = $this->entityRepository->loadEntityByUuid($mapping?->getTargetEntityType() ?? $event->entityType, $event->entityUuid);
-    $entity = $entity instanceof ContentEntityInterface ? $entity : NULL;
+    // Drafts included: sync works on the latest revision.
+    $entity = $entity instanceof ContentEntityInterface ? LatestRevision::of($entity, $this->entityTypeManager) : NULL;
 
     if ($event->operation === Operation::Detach || $event->operation === Operation::Attach) {
       return $this->applyDetachment($event, $state, $entity);
@@ -228,16 +237,94 @@ class SyncApplier {
       return $this->applyDelete($event, $source_site, $entity, $state);
     }
 
+    $prepared = $this->prepare($event, $state);
+    if ($prepared instanceof ApplyResult) {
+      return $prepared;
+    }
+    if (is_string($prepared)) {
+      return $this->fail($event, $source_site, FailedEventStore::PERMANENT, 'language_missing', $prepared);
+    }
+
     $conflict = NULL;
     $edited = $state === NULL || $entity === NULL ? NULL : $this->localChanges->editedTranslations($entity, $state);
+    // A translation made here in a language the origin now sends too.
+    $collisions = $state === NULL || $entity === NULL ? [] : array_values(array_filter(
+      $prepared['applied'],
+      fn (string $langcode) => !isset($state['source_translation_hashes'][$langcode]) && $entity->hasTranslation($this->languageMap->toLocal($langcode)),
+    ));
+    if ($collisions !== []) {
+      $edited = array_values(array_unique([...($edited ?? []), ...$collisions]));
+    }
     if ($edited !== NULL && $on_conflict !== self::CONFLICT_ACCEPT) {
       $resolution = $this->conflictResolution($event, $entity, $edited, $on_conflict);
       if ($resolution === self::CONFLICT_REJECT) {
         return $this->rejectConflict($event, $state, $edited);
       }
-      $conflict = ['revision' => (int) $entity->getRevisionId(), 'edited' => $edited];
+      $conflict = ['revision' => (int) $entity->getRevisionId(), 'edited' => $edited, 'mode' => $resolution];
     }
-    return $this->applySnapshot($event, $source_site, $entity, $mapping, $state, $conflict, $on_conflict === self::CONFLICT_ACCEPT);
+    return $this->applySnapshot($event, $source_site, $entity, $mapping, $prepared, $state, $conflict, $on_conflict === self::CONFLICT_ACCEPT);
+  }
+
+  /**
+   * Works out which translations of an event this site applies, and how.
+   *
+   * Translations detached here are left out; the rest are mapped to this
+   * site's langcodes. A language this site does not have is skipped, or the
+   * item rejected, as configured.
+   *
+   * @return array{origin: array, local: array, applied: string[], skipped: string[], managed: string[], altered: bool}|\Drupal\content_relay_replica\Apply\ApplyResult|string
+   *   The snapshot as applied, in the origin's and in this site's langcodes;
+   *   the origin langcodes applied and skipped; the local langcodes sync owns
+   *   (any other translation is local and left alone); and whether the
+   *   snapshot differs from the one the origin hashed. Or an answer when
+   *   nothing is left to apply, or a reason to reject the item.
+   */
+  protected function prepare(SyncEvent $event, ?array $state): array|ApplyResult|string {
+    assert($event->snapshot !== NULL);
+    $origin = $event->snapshot;
+    $detached = $state['detached_translations'] ?? [];
+    $skipped = [];
+    $altered = FALSE;
+    foreach (array_keys($origin['translations']) as $langcode) {
+      $langcode = (string) $langcode;
+      if (in_array($langcode, $detached, TRUE)) {
+        unset($origin['translations'][$langcode], $origin['metadata']['translations'][$langcode]);
+        $altered = TRUE;
+      }
+      elseif (!$this->languageMap->exists($this->languageMap->toLocal($langcode))) {
+        $skipped[] = $langcode;
+        unset($origin['translations'][$langcode], $origin['metadata']['translations'][$langcode]);
+        $altered = TRUE;
+      }
+    }
+    if ($skipped !== [] && ($this->configFactory->get('content_relay_replica.settings')->get('languages.unknown') ?? 'skip') === 'reject') {
+      return sprintf('Languages this site does not have, and no mapping for: %s.', implode(', ', $skipped));
+    }
+    if ($origin['translations'] === []) {
+      return $skipped !== []
+        ? sprintf('Every translation is in a language this site does not have: %s.', implode(', ', $skipped))
+        : $this->answer($event, new ApplyResult(200, ApplyResult::SKIPPED_DETACHED, 'translations_detached', 'Every translation sent is detached on this replica.'));
+    }
+    $applied = array_map('strval', array_keys($origin['translations']));
+
+    // Sync owns what it applies, and what it applied before unless the
+    // origin now withholds it, it was detached here, or this site no longer
+    // receives the language: those stay as they are.
+    $languages = $this->contracts->accepts($event->contractVersion)?->languagesFor($event->entityType, $event->bundle);
+    $managed = [];
+    foreach (array_unique([...$applied, ...array_map('strval', array_keys($state['source_translation_hashes'] ?? []))]) as $langcode) {
+      if (!in_array($langcode, $event->withheldLangcodes, TRUE) && !in_array($langcode, $detached, TRUE) && GenericContentEntityNormalizer::wanted($langcode, $languages)) {
+        $managed[] = $this->languageMap->toLocal($langcode);
+      }
+    }
+    return [
+      'origin' => $origin,
+      'local' => $this->languageMap->snapshotToLocal($origin),
+      'applied' => $applied,
+      'skipped' => $skipped,
+      'managed' => $managed,
+      'altered' => $altered,
+    ];
   }
 
   /**
@@ -253,16 +340,28 @@ class SyncApplier {
    *   The caller's choice, or NULL for the setting.
    *
    * @return string
-   *   CONFLICT_OVERWRITE or CONFLICT_REJECT.
+   *   CONFLICT_OVERWRITE, CONFLICT_DRAFT or CONFLICT_REJECT.
    */
   protected function conflictResolution(SyncEvent $event, ContentEntityInterface $entity, array $edited, ?string $on_conflict): string {
     $resolution = $on_conflict ?? $this->configFactory->get('content_relay_replica.settings')->get('conflicts.on_event') ?? self::CONFLICT_OVERWRITE;
-    $hook = new ConflictEvent($event, $entity, $edited, $resolution === self::CONFLICT_REJECT ? self::CONFLICT_REJECT : self::CONFLICT_OVERWRITE);
+    // A draft needs a moderation workflow; without one it is an overwrite.
+    if ($resolution === self::CONFLICT_DRAFT && !$this->moderation->isModerated($entity)) {
+      $resolution = self::CONFLICT_OVERWRITE;
+    }
+    $hook = new ConflictEvent($event, $entity, $edited, in_array($resolution, [
+      self::CONFLICT_REJECT,
+      self::CONFLICT_DRAFT,
+    ], TRUE) ? $resolution : self::CONFLICT_OVERWRITE);
     $this->eventDispatcher->dispatch($hook, ContentRelayEvents::CONFLICT);
     // Without revisions, overwriting would lose the edit for good.
-    return $hook->resolution === self::CONFLICT_OVERWRITE && $entity->getEntityType()->isRevisionable()
-      ? self::CONFLICT_OVERWRITE
-      : self::CONFLICT_REJECT;
+    if (!$entity->getEntityType()->isRevisionable()) {
+      return self::CONFLICT_REJECT;
+    }
+    return match ($hook->resolution) {
+      self::CONFLICT_DRAFT => $this->moderation->isModerated($entity) ? self::CONFLICT_DRAFT : self::CONFLICT_OVERWRITE,
+      self::CONFLICT_OVERWRITE => self::CONFLICT_OVERWRITE,
+      default => self::CONFLICT_REJECT,
+    };
   }
 
   /**
@@ -383,22 +482,25 @@ class SyncApplier {
    *   The local copy, if there is one.
    * @param \Drupal\content_relay_replica\Entity\ContentRelayMapping|null $mapping
    *   The mapping, for a mapped import.
+   * @param array $prepared
+   *   What to apply; see prepare().
    * @param array|null $state
    *   The item's sync state, if it has one.
-   * @param array{revision: int, edited: string[]}|null $conflict
-   *   When saving over local edits: the revision that holds them.
+   * @param array{revision: int, edited: string[], mode: string}|null $conflict
+   *   When saving over local edits: the revision that holds them, and how
+   *   (CONFLICT_OVERWRITE or CONFLICT_DRAFT).
    * @param bool $accepted
    *   TRUE when a user chose the origin's version over local edits, which
    *   clears any conflict.
    */
-  protected function applySnapshot(SyncEvent $event, string $source_site, ?ContentEntityInterface $entity, ?ContentRelayMapping $mapping = NULL, ?array $state = NULL, ?array $conflict = NULL, bool $accepted = FALSE): ApplyResult {
+  protected function applySnapshot(SyncEvent $event, string $source_site, ?ContentEntityInterface $entity, ?ContentRelayMapping $mapping, array $prepared, ?array $state = NULL, ?array $conflict = NULL, bool $accepted = FALSE): ApplyResult {
     assert($event->snapshot !== NULL && $event->hashes !== NULL);
     $transaction = $this->database->startTransaction();
     try {
-      $context = $this->denormalizationContext($event, $mapping === NULL ? $this->localOnly->forBundle($event->entityType, $event->bundle) : []);
+      $context = $this->denormalizationContext($event, $mapping === NULL ? $this->localOnly->forBundle($event->entityType, $event->bundle) : [], $prepared['managed']);
       if ($mapping !== NULL) {
         try {
-          $target = $this->mappedImporter->build($event->snapshot, $mapping, $entity, $context);
+          $target = $this->mappedImporter->build($prepared['local'], $mapping, $entity, $context);
         }
         catch (MappingException $e) {
           $transaction->rollBack();
@@ -406,7 +508,7 @@ class SyncApplier {
         }
       }
       else {
-        $target = $this->serializer->denormalize($event->snapshot, $context, $entity);
+        $target = $this->serializer->denormalize($prepared['local'], $context, $entity);
       }
 
       if ($context->missingReferences !== []) {
@@ -420,6 +522,11 @@ class SyncApplier {
         return $this->fail($event, $source_site, FailedEventStore::PERMANENT, 'validation_failed', sprintf('%d value(s) failed validation on the replica.', count($violations)), NULL, $violations);
       }
 
+      // Moderation: this site's target state, or a draft over local edits.
+      $state_here = ($conflict['mode'] ?? NULL) === self::CONFLICT_DRAFT ? $this->moderation->draftState($target) : $this->moderation->targetState();
+      if ($state_here !== NULL) {
+        $this->moderation->setState($target, $state_here);
+      }
       $this->prepareRevision($target, $event);
       $this->eventDispatcher->dispatch(new ApplyEvent($event, $target), ContentRelayEvents::PRE_APPLY);
       $target->save();
@@ -440,17 +547,18 @@ class SyncApplier {
       // Hash what is actually stored, not what is in memory.
       $saved = $this->entityTypeManager->getStorage($target->getEntityTypeId())->loadUnchanged($target->id());
       assert($saved instanceof ContentEntityInterface);
+      $saved = LatestRevision::of($saved, $this->entityTypeManager);
       // A mapped copy has this site's structure: its hash is its own, kept to
       // notice local edits, and cannot be compared with the origin's.
-      $local = $this->localChanges->hash($saved, $mapping === NULL ? $event->langcodes : NULL, $event->hashes->algorithmVersion);
+      $local = $this->localChanges->hash($saved, $mapping === NULL ? $prepared['applied'] : NULL, $event->hashes->algorithmVersion, $event->defaultLangcode);
       // What the copy should hash to: the origin's snapshot, with the
       // references this site resolved by its own policy swapped the same way
       // and without the fields this site keeps for itself.
       $local_only = $mapping === NULL ? $this->localOnly->forBundle($saved->getEntityTypeId(), $saved->bundle()) : [];
       $expected = match (TRUE) {
         $mapping !== NULL => $local,
-        $context->substitutions === [] && $local_only === [] => $event->hashes,
-        default => $this->hasher->hash($context->applySubstitutions($event->snapshot), $local_only, $event->hashes->algorithmVersion),
+        $context->substitutions === [] && $local_only === [] && !$prepared['altered'] => $event->hashes,
+        default => $this->hasher->hash($this->languageMap->snapshotToOrigin($context->applySubstitutions($prepared['local'])), $local_only, $event->hashes->algorithmVersion),
       };
 
       $status = SyncStatus::SYNCED;
@@ -477,9 +585,12 @@ class SyncApplier {
       // Saved over local edits: flagged until someone reviews it, through
       // later updates too.
       $conflict_revision = $accepted ? NULL : ($conflict['revision'] ?? ($state['conflict_revision'] ?? NULL));
-      if ($conflict_revision !== NULL && $status === SyncStatus::SYNCED) {
+      // A draft over local edits differs from the origin in its state.
+      if ($conflict_revision !== NULL && in_array($status, [SyncStatus::SYNCED, SyncStatus::ERROR], TRUE)) {
         $status = SyncStatus::CONFLICT;
-        $error = sprintf('Edited here before the origin\'s revision %d arrived, which was saved over the edit. The edit is kept in revision %d; review it.', $event->sourceRevision, $conflict_revision);
+        $error = ($conflict['mode'] ?? NULL) === self::CONFLICT_DRAFT
+          ? sprintf('Edited here before the origin\'s revision %d arrived, which was saved as a draft. The edit, revision %d, stays live; review it.', $event->sourceRevision, $conflict_revision)
+          : sprintf('Edited here before the origin\'s revision %d arrived, which was saved over the edit. The edit is kept in revision %d; review it.', $event->sourceRevision, $conflict_revision);
       }
       $this->syncState->save($event->entityType, $event->entityUuid, [
         'bundle' => $event->bundle,
@@ -488,7 +599,20 @@ class SyncApplier {
         'source_changed' => $event->sourceChanged,
         'hash_algorithm' => $event->hashes->algorithmVersion,
         'source_hash' => $event->hashes->entity,
-        'source_translation_hashes' => $event->hashes->translations,
+        // What was received: translations skipped or detached here are not.
+        // Detached translations keep the hash they had, for reattaching.
+        'source_translation_hashes' => array_intersect_key($event->hashes->translations, array_flip($prepared['applied'])) + array_intersect_key($state['source_translation_hashes'] ?? [], array_flip($state['detached_translations'] ?? [])),
+        'source_default_langcode' => $event->defaultLangcode,
+        'withheld_translations' => $event->withheldLangcodes,
+        'local_translations' => array_values(array_diff(array_map('strval', array_keys($saved->getTranslationLanguages())), $prepared['managed'], array_map(fn ($langcode) => $this->languageMap->toLocal($langcode), [
+          ...$event->withheldLangcodes,
+          ...($state['detached_translations'] ?? []),
+        ]))),
+        'notes' => array_filter([
+          'skipped_languages' => $prepared['skipped'],
+          'default_language_kept' => $context->defaultLanguageKept,
+          'conflict_mode' => $conflict_revision === NULL ? NULL : ($conflict['mode'] ?? $state['notes']['conflict_mode'] ?? self::CONFLICT_OVERWRITE),
+        ]),
         'local_hash' => $local->entity,
         'local_translation_hashes' => $local->translations,
         'expected_hash' => $expected->entity,
@@ -501,6 +625,13 @@ class SyncApplier {
         'last_error' => $error,
         'last_event_id' => $event->eventId,
       ]);
+      if ($prepared['skipped'] !== []) {
+        $this->logger->warning('@type @uuid: translations in languages this site does not have were skipped: @langcodes.', [
+          '@type' => $event->entityType,
+          '@uuid' => $event->entityUuid,
+          '@langcodes' => implode(', ', $prepared['skipped']),
+        ]);
+      }
       if ($conflict !== NULL) {
         $this->logger->warning('@type @uuid was edited here; saved the origin\'s revision @revision over it. The edit is kept in local revision @local.', [
           '@type' => $event->entityType,
@@ -574,8 +705,10 @@ class SyncApplier {
    *   The event.
    * @param string[] $local_only
    *   Fields of the item never written by sync.
+   * @param string[]|null $managed
+   *   Local langcodes of the translations sync owns, or NULL for all.
    */
-  protected function denormalizationContext(SyncEvent $event, array $local_only = []): DenormalizationContext {
+  protected function denormalizationContext(SyncEvent $event, array $local_only = [], ?array $managed = NULL): DenormalizationContext {
     $external = [];
     foreach ($event->externalReferences as $reference) {
       $external[$reference['entity_type'] . ':' . $reference['uuid']] = TRUE;
@@ -592,7 +725,7 @@ class SyncApplier {
       }
       return $this->entityTypeManager->getStorage($entity_type_id)->load($id) ? $id : NULL;
     };
-    $context = new DenormalizationContext(preserveFields: $local_only, external: $external, externalFallback: $fallback);
+    $context = new DenormalizationContext(preserveFields: $local_only, managedLangcodes: $managed, external: $external, externalFallback: $fallback);
     $context->fileUrl = $this->files->urlCallback();
     return $context;
   }
@@ -619,6 +752,13 @@ class SyncApplier {
         if ($violation->getConstraint() instanceof ReferenceAccessConstraint) {
           continue;
         }
+        // Moderation: who may move content between states, and along which
+        // transitions, was decided on the origin. A state this site's
+        // workflow does not have is still a problem.
+        $constraint = $violation->getConstraint();
+        if ($constraint !== NULL && is_a($constraint, 'Drupal\content_moderation\Plugin\Validation\Constraint\ModerationStateConstraint') && $violation->getMessageTemplate() !== $constraint->invalidStateMessage) {
+          continue;
+        }
         $field = explode('.', (string) $violation->getPropertyPath())[0];
         $message = strip_tags((string) $violation->getMessage());
         $violations[$field . '|' . $langcode . '|' . $message] = [
@@ -642,6 +782,9 @@ class SyncApplier {
     }
     if (!$entity->isNew()) {
       $entity->setNewRevision(TRUE);
+      // Built on the latest revision, which may be a draft: the new one is
+      // live unless its moderation state says otherwise.
+      $entity->isDefaultRevision($this->moderation->isDefaultRevision($entity) ?? TRUE);
     }
     if ($entity instanceof RevisionLogInterface) {
       $entity->setRevisionLogMessage(sprintf('Synced from origin %s revision %d (event %s)', $this->origin->getLabel(), $event->sourceRevision, $event->eventId));

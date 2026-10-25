@@ -6,6 +6,9 @@ change content relay subscription:
   title: 'Change the Content Relay subscription'
   description: 'Choose which content and languages this site receives, and pause delivery.'
   restrict access: true
+change content relay languages:
+  title: 'Change the languages received through Content Relay'
+  description: 'Choose which languages this site receives, and add or ignore languages the origin adds.'
 detach content relay items:
   title: 'Detach and reattach Content Relay items'
   description: 'Stop or resume applying origin updates to individual items.'

@@ -20,7 +20,9 @@ namespace Drupal\content_relay\Serialization;
  *   // Untranslatable fields, once.
  *   'shared' => ['field_tags' => [['target_type' => 'taxonomy_term', 'target_uuid' => '…']]],
  *   // Translatable fields, per langcode. Every translation has a key, even
- *   // one with no translatable values.
+ *   // one with no translatable values. The default translation is left out
+ *   // when the receiver does not get its language; default_langcode still
+ *   // names it.
  *   'translations' => ['en' => ['title' => [['value' => 'Hello']]], 'fr' => […]],
  *   // Synced but not hashed: changed timestamps, file paths and the like.
  *   'metadata' => ['shared' => […], 'translations' => ['en' => ['changed' => […]]]],
@@ -70,9 +72,6 @@ final class Snapshot {
     if (!isset($snapshot['translations']) || !is_array($snapshot['translations']) || $snapshot['translations'] === []) {
       throw new \InvalidArgumentException('A snapshot needs at least one translation.');
     }
-    if (!array_key_exists($snapshot['default_langcode'], $snapshot['translations'])) {
-      throw new \InvalidArgumentException('A snapshot must include its default translation.');
-    }
     self::assertFields($snapshot['shared']);
     foreach ($snapshot['translations'] as $langcode => $fields) {
       if (!is_string($langcode) || !is_array($fields)) {
@@ -83,7 +82,7 @@ final class Snapshot {
   }
 
   /**
-   * Langcodes in a snapshot, default first, the rest sorted.
+   * Langcodes in a snapshot, default first when it is there, the rest sorted.
    *
    * @return string[]
    *   The langcodes.
@@ -91,7 +90,7 @@ final class Snapshot {
   public static function langcodes(array $snapshot): array {
     $others = array_diff(array_map('strval', array_keys($snapshot['translations'])), [$snapshot['default_langcode']]);
     sort($others);
-    return [$snapshot['default_langcode'], ...$others];
+    return isset($snapshot['translations'][$snapshot['default_langcode']]) ? [$snapshot['default_langcode'], ...$others] : $others;
   }
 
   /**

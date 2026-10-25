@@ -39,6 +39,7 @@ class ItemSyncControl {
     protected ConfigFactoryInterface $configFactory,
     protected AccountInterface $currentUser,
     protected LoggerInterface $logger,
+    protected TranslationBlocks $translationBlocks,
   ) {}
 
   /**
@@ -163,6 +164,104 @@ class ItemSyncControl {
       ]);
     }
     $this->report->refresh($entity_type_id, $uuid);
+  }
+
+  /**
+   * Marks one translation not syncable, or syncable again.
+   *
+   * Replicas keep what they have of the translation: they are sent the item
+   * without it, naming it as withheld. Marking it syncable sends it again.
+   *
+   * @param \Drupal\Core\Entity\ContentEntityInterface $entity
+   *   The item.
+   * @param string $langcode
+   *   The translation.
+   * @param bool $syncable
+   *   FALSE to stop sending it, TRUE to send it again.
+   * @param string[]|null $replica_ids
+   *   Only for these replicas; NULL for all (NotSyncableFlags::ALL).
+   *
+   * @return string[]
+   *   The replicas sent the item again.
+   */
+  public function setTranslationSyncable(ContentEntityInterface $entity, string $langcode, bool $syncable, ?array $replica_ids = NULL): array {
+    if (!$entity->hasTranslation($langcode)) {
+      throw new \InvalidArgumentException(sprintf('The item has no "%s" translation.', $langcode));
+    }
+    $entity_type_id = $entity->getEntityTypeId();
+    $uuid = (string) $entity->uuid();
+    foreach ($replica_ids ?? [NotSyncableFlags::ALL] as $replica_id) {
+      $syncable
+        ? $this->translationBlocks->clear($entity_type_id, $uuid, $langcode, $replica_id, TranslationBlocks::ORIGIN)
+        : $this->translationBlocks->set($entity_type_id, $uuid, $langcode, $replica_id, TranslationBlocks::ORIGIN, $this->currentUser->getAccountName());
+    }
+    $this->logger->notice('@user marked the @langcode translation of @type @uuid @state for @replicas.', [
+      '@user' => $this->currentUser->getAccountName(),
+      '@langcode' => $langcode,
+      '@type' => $entity_type_id,
+      '@uuid' => $uuid,
+      '@state' => $syncable ? 'syncable' : 'not syncable',
+      '@replicas' => $replica_ids === NULL ? 'all replicas' : implode(', ', $replica_ids),
+    ]);
+    return $this->resend($entity_type_id, $uuid, $entity->bundle(), $replica_ids);
+  }
+
+  /**
+   * Records that a replica detached or reattached one translation.
+   *
+   * @return bool
+   *   TRUE if the item was queued for the replica again, after a reattach.
+   */
+  public function replicaTranslationDetached(string $replica_id, string $entity_type_id, string $uuid, string $bundle, string $langcode, bool $detached, ?string $by = NULL): bool {
+    $detached
+      ? $this->translationBlocks->set($entity_type_id, $uuid, $langcode, $replica_id, TranslationBlocks::REPLICA, $by)
+      : $this->translationBlocks->clear($entity_type_id, $uuid, $langcode, $replica_id, TranslationBlocks::REPLICA);
+    $this->logger->notice('Replica @replica @action the @langcode translation of @type @uuid (by @by).', [
+      '@replica' => $replica_id,
+      '@action' => $detached ? 'detached' : 'reattached',
+      '@langcode' => $langcode,
+      '@type' => $entity_type_id,
+      '@uuid' => $uuid,
+      '@by' => $by ?? 'unknown',
+    ]);
+    $queued = $detached ? [] : $this->resend($entity_type_id, $uuid, $bundle, [$replica_id]);
+    $this->report->refresh($entity_type_id, $uuid);
+    return $queued !== [];
+  }
+
+  /**
+   * Queues an item's current version for replicas that have it.
+   *
+   * @param string $entity_type_id
+   *   Entity type.
+   * @param string $uuid
+   *   UUID.
+   * @param string $bundle
+   *   Bundle.
+   * @param string[]|null $replica_ids
+   *   Replicas, or NULL (or NotSyncableFlags::ALL among them) for every one.
+   *
+   * @return string[]
+   *   The replicas it was queued for.
+   */
+  protected function resend(string $entity_type_id, string $uuid, string $bundle, ?array $replica_ids): array {
+    $latest = $this->hashStore->latest($entity_type_id, $uuid);
+    if ($latest === NULL) {
+      return [];
+    }
+    $targets = [];
+    foreach ($this->registry->getAll() as $replica) {
+      $wanted = $replica_ids === NULL || in_array(NotSyncableFlags::ALL, $replica_ids, TRUE) || in_array($replica->id, $replica_ids, TRUE);
+      if ($wanted && $replica->receivesEvents() && $this->items->isKnown($replica->id, $entity_type_id, $uuid) && $this->blockReason($replica->id, $entity_type_id, $uuid, $bundle) === NULL) {
+        $targets[] = $replica->id;
+      }
+    }
+    if ($targets !== []) {
+      $this->outbox->enqueue(Operation::Update, $entity_type_id, $bundle, $uuid, $latest['revision'], $targets, (int) $this->currentUser->id(), reason: Outbox::REASON_ATTACH);
+      $this->scheduler->schedule($targets);
+    }
+    $this->report->refresh($entity_type_id, $uuid);
+    return $targets;
   }
 
   /**

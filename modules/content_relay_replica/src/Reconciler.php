@@ -9,6 +9,7 @@ use Drupal\Component\Uuid\UuidInterface;
 use Drupal\content_relay\Contract\SubscriptionContract;
 use Drupal\content_relay\Event\Operation;
 use Drupal\content_relay\Event\SyncEvent;
+use Drupal\content_relay\Plugin\ContentRelay\Normalizer\GenericContentEntityNormalizer;
 use Drupal\content_relay_replica\Apply\ApplyResult;
 use Drupal\content_relay_replica\Apply\SyncApplier;
 use Drupal\Core\Config\ConfigFactoryInterface;
@@ -142,7 +143,7 @@ class Reconciler {
     return (int) $this->database->insert(self::TABLE)->fields([
       'started' => $this->time->getCurrentTime(),
       'trigger' => $trigger,
-      'uid' => $trigger === 'cron' ? NULL : (int) $this->currentUser->id(),
+      'uid' => in_array($trigger, ['cron', 'backfill'], TRUE) ? NULL : (int) $this->currentUser->id(),
       'status' => 'running',
       'counts' => '{}',
       'messages' => '[]',
@@ -154,6 +155,7 @@ class Reconciler {
         'contract_version' => $contract->version(),
         'acted' => 0,
         'wait_until' => 0,
+        'backfill' => $trigger === 'backfill',
       ]),
     ])->execute();
   }
@@ -192,7 +194,7 @@ class Reconciler {
           $counts['contract_mismatch'] = 1;
           $cursor['mismatch_noted'] = TRUE;
         }
-        $this->compare($run_id, $entity_type_id, $bundle, $page['items'], $counts, $messages, $acted);
+        $this->compare($run_id, $entity_type_id, $bundle, $page['items'], $counts, $messages, $acted, !empty($cursor['backfill']));
         if ($page['next'] === NULL) {
           $cursor['phase'] = 'delete';
         }
@@ -258,15 +260,18 @@ class Reconciler {
       ->fetchField();
     if ($run_id === FALSE) {
       $last = (int) $this->state->get('content_relay_replica.reconciled', 0);
-      if ($interval <= 0 || $this->time->getCurrentTime() - $last < $interval) {
+      // A backfill for languages just added does not wait for the interval.
+      $backfill = (bool) $this->state->get(LanguageSubscription::BACKFILL, FALSE);
+      if (!$backfill && ($interval <= 0 || $this->time->getCurrentTime() - $last < $interval)) {
         return;
       }
       try {
-        $run_id = $this->start('cron');
+        $run_id = $this->start($backfill ? 'backfill' : 'cron');
       }
       catch (SubscriptionException) {
         return;
       }
+      $this->state->delete(LanguageSubscription::BACKFILL);
       $this->state->set('content_relay_replica.reconciled', $this->time->getCurrentTime());
     }
     $until = microtime(TRUE) + $budget;
@@ -383,19 +388,26 @@ class Reconciler {
    *   Problems, added to.
    * @param int $acted
    *   Items the run acted on so far, updated.
+   * @param bool $backfill
+   *   Whether the run is a backfill.
    */
-  protected function compare(int $run_id, string $entity_type_id, string $bundle, array $items, array &$counts, array &$messages, int &$acted): void {
+  protected function compare(int $run_id, string $entity_type_id, string $bundle, array $items, array &$counts, array &$messages, int &$acted, bool $backfill = FALSE): void {
     $contract = $this->contracts->getCurrent();
     $found = [];
     foreach ($items as $item) {
       $found[] = $item['uuid'];
       $counts['checked'] = ($counts['checked'] ?? 0) + 1;
+      if ($item['no_languages'] ?? FALSE) {
+        // Not sent to this site; what it has stays as it is.
+        $counts['no_languages'] = ($counts['no_languages'] ?? 0) + 1;
+        continue;
+      }
       $state = $this->syncState->get($entity_type_id, $item['uuid']);
       if ($state !== NULL && $state['detached_at'] === NULL && !$item['not_syncable'] && $state['origin_detached_at'] === NULL && !$this->drifted($state, $item, $contract, $bundle)) {
         $counts['in_sync'] = ($counts['in_sync'] ?? 0) + 1;
         continue;
       }
-      $this->act($entity_type_id, $bundle, $item['uuid'], $item['not_syncable'] ? 'not_syncable' : 'exists', $counts, $messages, $acted, $run_id);
+      $this->act($entity_type_id, $bundle, $item['uuid'], $item['not_syncable'] ? 'not_syncable' : 'exists', $counts, $messages, $acted, $run_id, $backfill);
     }
     $this->syncState->markReconciled($entity_type_id, $found, $run_id);
   }
@@ -431,11 +443,18 @@ class Reconciler {
     if ((int) ($item['hash']['algorithm'] ?? 0) !== (int) $state['hash_algorithm']) {
       return TRUE;
     }
-    $origin = is_array($item['hash']['translations'] ?? NULL) ? $item['hash']['translations'] : [];
-    $local = $state['source_translation_hashes'];
+    // Translations kept from this site, detached here or in a language it
+    // does not have are not compared.
+    $ignored = array_flip([
+      ...($item['withheld'] ?? []),
+      ...$state['detached_translations'],
+      ...($state['notes']['skipped_languages'] ?? []),
+    ]);
+    $origin = array_diff_key(is_array($item['hash']['translations'] ?? NULL) ? $item['hash']['translations'] : [], $ignored);
+    $local = array_diff_key($state['source_translation_hashes'], $ignored);
     $languages = $contract?->languagesFor($state['entity_type'], $bundle);
     foreach ($origin as $langcode => $hash) {
-      $received = $languages === NULL || in_array((string) $langcode, $languages, TRUE);
+      $received = GenericContentEntityNormalizer::wanted((string) $langcode, $languages);
       if ($received && (!isset($local[$langcode]) || !hash_equals((string) $local[$langcode], (string) $hash))) {
         return TRUE;
       }
@@ -551,8 +570,10 @@ class Reconciler {
    *   Items acted on so far, updated.
    * @param int|null $run_id
    *   The run, if any, for the queue worker to report to.
+   * @param bool $backfill
+   *   Whether the run is a backfill for languages just added.
    */
-  protected function act(string $entity_type_id, string $bundle, string $uuid, string $current, array &$counts, array &$messages, int &$acted, ?int $run_id = NULL): void {
+  protected function act(string $entity_type_id, string $bundle, string $uuid, string $current, array &$counts, array &$messages, int &$acted, ?int $run_id = NULL, bool $backfill = FALSE): void {
     $item = [
       'entity_type' => $entity_type_id,
       'bundle' => $bundle,
@@ -573,6 +594,15 @@ class Reconciler {
     }
     $this->queueFactory->get(self::QUEUE)->createItem($item);
     $counts['queued'] = ($counts['queued'] ?? 0) + 1;
+    // A backfill shows what is still to come in the report.
+    if ($backfill && $current === 'exists') {
+      $this->database->update(SyncStateStore::TABLE)
+        ->fields(['status' => SyncStatus::PENDING_BACKFILL])
+        ->condition('entity_type', $entity_type_id)
+        ->condition('uuid', $uuid)
+        ->condition('status', SyncStatus::SYNCED)
+        ->execute();
+    }
   }
 
   /**

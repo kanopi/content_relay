@@ -102,8 +102,15 @@ final class SchemaTest extends ReplicaTestBase {
     $this->assertContains('Field "field_extra" (string) is missing here.', $result['problems']);
     $this->assertContains('Field "title" is text on the origin and string here.', $result['problems']);
     $this->assertContains('Field "field_tags" holds one value on the origin and unlimited values here.', $result['problems']);
-    $this->assertCount(3, $result['problems']);
-    $this->assertCount(2, $result['warnings']);
+    $this->assertContains('Field "status" is not translatable on the origin and translatable here.', $result['problems']);
+    $this->assertCount(4, $result['problems']);
+    $this->assertCount(1, $result['warnings']);
+
+    // Every received language must exist here, after mapping.
+    $this->assertSame(['Language "fr" is received but does not exist here; add it or map it to one that does.'], $checker->check('node', 'article', $this->article(), [
+      'en',
+      'fr',
+    ])['problems']);
 
     $this->assertSame(['This site has no node bundle "press_release".'], $checker->check('node', 'press_release', $origin)['problems']);
   }

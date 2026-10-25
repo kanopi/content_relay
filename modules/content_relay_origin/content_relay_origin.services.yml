@@ -50,6 +50,7 @@ services:
       - '@content_relay_origin.not_syncable'
       - '@content_relay_origin.report'
       - '@content_relay_origin.replica_items'
+      - '@content_relay_origin.translation_blocks'
 
   content_relay_origin.event_builder:
     class: Drupal\content_relay_origin\EventBuilder
@@ -66,6 +67,7 @@ services:
       - '@content_relay.file_checksums'
       - '@file_url_generator'
       - '@content_relay_origin.file_keys'
+      - '@content_relay_origin.translation_blocks'
 
   content_relay_origin.delivery:
     class: Drupal\content_relay_origin\DeliveryService
@@ -157,6 +159,7 @@ services:
       - '@config.factory'
       - '@current_user'
       - '@logger.channel.content_relay_origin'
+      - '@content_relay_origin.translation_blocks'
 
   content_relay_origin.manual_push:
     class: Drupal\content_relay_origin\ManualPush
@@ -197,6 +200,7 @@ services:
       - '@content_relay_origin.contract_manager'
       - '@content_relay_origin.sync_scope'
       - '@datetime.time'
+      - '@content_relay_origin.translation_blocks'
 
   content_relay_origin.report_rebuild:
     class: Drupal\content_relay_origin\Report\ReportRebuild
@@ -314,3 +318,16 @@ services:
       - '@state'
       - '@datetime.time'
       - '@logger.channel.content_relay_origin'
+
+  content_relay_origin.language_notices:
+    class: Drupal\content_relay_origin\LanguageNotices
+    arguments:
+      - '@content_relay_origin.replica_registry'
+      - '@content_relay.message_signer'
+      - '@http_client'
+      - '@state'
+      - '@logger.channel.content_relay_origin'
+
+  content_relay_origin.translation_blocks:
+    class: Drupal\content_relay_origin\TranslationBlocks
+    arguments: ['@database', '@datetime.time']

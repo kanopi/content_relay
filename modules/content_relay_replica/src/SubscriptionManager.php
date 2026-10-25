@@ -67,6 +67,7 @@ class SubscriptionManager {
     protected TimeInterface $time,
     protected LoggerInterface $logger,
     protected OriginPolicy $policy,
+    protected LanguageSubscription $languages,
   ) {}
 
   /**
@@ -295,6 +296,7 @@ class SubscriptionManager {
     }
     if ($this->contracts->save($contract, $uid)) {
       $this->applyBundleChanges($previous, $contract);
+      $this->languages->contractChanged($previous, $contract);
       $this->takeOriginKeys($contract);
       if ($previous !== NULL && $previous->encryption() !== $contract->encryption()) {
         if ($contract->encryption() !== 'none') {

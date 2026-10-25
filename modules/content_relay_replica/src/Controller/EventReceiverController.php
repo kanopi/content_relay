@@ -11,6 +11,7 @@ use Drupal\content_relay\Event\SyncEvent;
 use Drupal\content_relay\Exception\InvalidEventException;
 use Drupal\content_relay_replica\Apply\SyncApplier;
 use Drupal\content_relay\Crypto\MessageSigner;
+use Drupal\content_relay_replica\LanguageSubscription;
 use Drupal\content_relay_replica\OriginPeer;
 use Drupal\content_relay_replica\ProcessedEvents;
 use Drupal\content_relay_replica\Processing\ProcessingPolicy;
@@ -53,6 +54,7 @@ final class EventReceiverController implements ContainerInjectionInterface {
     private readonly MessageSigner $signer,
     private readonly ConfigFactoryInterface $configFactory,
     private readonly ProcessedEvents $processed,
+    private readonly LanguageSubscription $languages,
   ) {}
 
   /**
@@ -72,6 +74,7 @@ final class EventReceiverController implements ContainerInjectionInterface {
       $container->get('content_relay.message_signer'),
       $container->get('config.factory'),
       $container->get('content_relay_replica.processed_events'),
+      $container->get('content_relay_replica.language_subscription'),
     );
   }
 
@@ -107,6 +110,10 @@ final class EventReceiverController implements ContainerInjectionInterface {
       catch (SubscriptionException $e) {
         return $this->refuse(400, 'invalid_contract', $e->getMessage());
       }
+    }
+    if ($message->type === 'language_notice') {
+      $this->languages->receiveNotice(is_array($message->body['changes'] ?? NULL) ? $message->body['changes'] : []);
+      return new JsonResponse(['result' => 'acknowledged']);
     }
     if ($message->type === 'status_request') {
       return $this->status($message->sender, $message->body['event_ids'] ?? NULL);

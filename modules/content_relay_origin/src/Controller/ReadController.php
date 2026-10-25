@@ -6,6 +6,7 @@ namespace Drupal\content_relay_origin\Controller;
 
 use Drupal\Component\Uuid\UuidInterface;
 use Drupal\content_relay\Contract\SubscriptionContract;
+use Drupal\content_relay\Plugin\ContentRelay\Normalizer\GenericContentEntityNormalizer;
 use Drupal\content_relay\Schema\SchemaDescriber;
 use Drupal\content_relay_origin\ContractManager;
 use Drupal\content_relay_origin\EventBuilder;
@@ -14,12 +15,14 @@ use Drupal\content_relay_origin\NotSyncableFlags;
 use Drupal\content_relay_origin\Outbox;
 use Drupal\content_relay_origin\ReplicaRequests;
 use Drupal\content_relay_origin\SyncScope;
+use Drupal\content_relay_origin\TranslationBlocks;
 use Drupal\Core\DependencyInjection\ContainerInjectionInterface;
 use Drupal\Core\Entity\ContentEntityInterface;
 use Drupal\Core\Entity\ContentEntityTypeInterface;
 use Drupal\Core\Entity\EntityChangedInterface;
 use Drupal\Core\Entity\EntityRepositoryInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
+use Drupal\Core\Language\LanguageManagerInterface;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
@@ -34,7 +37,7 @@ use Symfony\Component\HttpFoundation\Request;
  * encrypted. It only reads. Both endpoints authenticate the replica's JWT.
  *
  * - GET /content-relay/v1/schema: the synced fields of every bundle the
- *   replica may subscribe to.
+ *   replica may subscribe to, and this site's languages.
  * - GET /content-relay/v1/items/{entity_type}/{uuid}: the item as an event
  *   built under the replica's contract, when the replica may have it.
  * - GET /content-relay/v1/hashes?entity_type=&bundle=&after=&limit=: the
@@ -59,6 +62,8 @@ final class ReadController implements ContainerInjectionInterface {
     private readonly UuidInterface $uuid,
     private readonly HashStore $hashStore,
     private readonly Outbox $outbox,
+    private readonly LanguageManagerInterface $languageManager,
+    private readonly TranslationBlocks $translationBlocks,
   ) {}
 
   /**
@@ -87,6 +92,8 @@ final class ReadController implements ContainerInjectionInterface {
       $container->get('uuid'),
       $container->get('content_relay_origin.hash_store'),
       $container->get('content_relay_origin.outbox'),
+      $container->get('language_manager'),
+      $container->get('content_relay_origin.translation_blocks'),
     );
   }
 
@@ -104,7 +111,14 @@ final class ReadController implements ContainerInjectionInterface {
     foreach ($published as $entity_type_id => $list) {
       $bundles[$entity_type_id] = $allowed === NULL ? $list : array_values(array_intersect($list, $allowed[$entity_type_id] ?? []));
     }
-    return $this->requests->answer($replica_id, 'schema', ['bundles' => $this->describer->describeMany(array_filter($bundles))]);
+    $languages = [];
+    foreach ($this->languageManager->getLanguages() as $langcode => $language) {
+      $languages[$langcode] = $language->getName();
+    }
+    return $this->requests->answer($replica_id, 'schema', [
+      'bundles' => $this->describer->describeMany(array_filter($bundles)),
+      'languages' => $languages,
+    ]);
   }
 
   /**
@@ -124,7 +138,8 @@ final class ReadController implements ContainerInjectionInterface {
     $entity = $this->entityTypeManager->hasDefinition($entity_type) ? $this->entityRepository->loadEntityByUuid($entity_type, $uuid) : NULL;
     // The same answer whether it does not exist or may not be had.
     if ($contract === NULL || !$entity instanceof ContentEntityInterface || !$this->scope->canSend($entity)
-      || !$contract->allowsBundle($entity_type, $entity->bundle()) || $this->flags->isBlocked($entity_type, $uuid, $replica_id)) {
+      || !$contract->allowsBundle($entity_type, $entity->bundle()) || $this->flags->isBlocked($entity_type, $uuid, $replica_id)
+      || $this->eventBuilder->hasNoLanguagesFor($entity, $contract)) {
       return ReplicaRequests::refuse(404, 'not_found', 'No such item for this replica.');
     }
     // Not part of the stream: a pulled item has no place in the sequence.
@@ -190,7 +205,9 @@ final class ReadController implements ContainerInjectionInterface {
     $uuids = array_map(fn (array $row) => (string) $row[$uuid_key], $rows);
     $this->requests->consume($replica_id, count($uuids));
     $hashes = $this->hashStore->latestMany($entity_type_id, $uuids);
+    $languages = $contract->languagesFor($entity_type_id, $bundle);
     $blocked = $this->flags->blockedAmong($entity_type_id, $uuids, $replica_id);
+    $withheld = $this->translationBlocks->withheldAmong($entity_type_id, $uuids, $replica_id);
 
     $items = [];
     foreach ($rows as $row) {
@@ -210,6 +227,9 @@ final class ReadController implements ContainerInjectionInterface {
         'changed' => $changed && $row['changed_max'] !== NULL ? (int) $row['changed_max'] : NULL,
         'hash' => $hashes[$uuid]['hashes']->toArray(),
         'not_syncable' => isset($blocked[$uuid]),
+        'withheld' => $withheld[$uuid] ?? [],
+        // None of its translations is in a language the replica gets.
+        'no_languages' => array_filter(array_keys($hashes[$uuid]['hashes']->translations), fn ($langcode) => GenericContentEntityNormalizer::wanted((string) $langcode, $languages)) === [],
       ];
     }
     return $this->requests->answer($replica_id, 'hashes', [
@@ -271,7 +291,7 @@ final class ReadController implements ContainerInjectionInterface {
     if (!$entity instanceof ContentEntityInterface) {
       return 'gone';
     }
-    if ($contract === NULL || !$this->scope->canSend($entity) || !$contract->allowsBundle($entity_type_id, $entity->bundle())) {
+    if ($contract === NULL || !$this->scope->canSend($entity) || !$contract->allowsBundle($entity_type_id, $entity->bundle()) || $this->eventBuilder->hasNoLanguagesFor($entity, $contract)) {
       return 'not_in_contract';
     }
     return $this->flags->isBlocked($entity_type_id, $uuid, $replica_id) ? 'not_syncable' : 'exists';

@@ -68,7 +68,9 @@ final class ReadEndpointTest extends OriginTestBase {
    */
   public function testSchema(): void {
     $this->pairAndAcknowledge();
-    $bundles = $this->answer($this->read('/content-relay/v1/schema'), 'schema')['bundles'];
+    $schema = $this->answer($this->read('/content-relay/v1/schema'), 'schema');
+    $this->assertArrayHasKey('en', $schema['languages']);
+    $bundles = $schema['bundles'];
     $this->assertSame(['article', 'page'], array_keys($bundles['node']));
     $this->assertSame('string', $bundles['node']['article']['fields']['title']['type']);
     $this->assertArrayNotHasKey('nid', $bundles['node']['article']['fields']);

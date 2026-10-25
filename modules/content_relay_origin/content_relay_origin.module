@@ -10,6 +10,7 @@ declare(strict_types=1);
 use Drupal\Core\Cache\CacheableMetadata;
 use Drupal\Core\Entity\EntityInterface;
 use Drupal\Core\Form\FormStateInterface;
+use Drupal\language\ConfigurableLanguageInterface;
 
 /**
  * Implements hook_entity_insert().
@@ -43,6 +44,25 @@ function content_relay_origin_cron(): void {
   \Drupal::service('content_relay_origin.outbox')->prune();
   \Drupal::service('content_relay_origin.report_rebuild')->rebuildIfChanged();
   \Drupal::service('content_relay_origin.reconciler')->cron();
+  \Drupal::service('content_relay_origin.language_notices')->sendPending();
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_insert() for configurable_language.
+ */
+function content_relay_origin_configurable_language_insert(ConfigurableLanguageInterface $language): void {
+  if (!$language->isLocked() && !$language->isSyncing()) {
+    \Drupal::service('content_relay_origin.language_notices')->notify('added', $language->getId(), $language->getName());
+  }
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_delete() for configurable_language.
+ */
+function content_relay_origin_configurable_language_delete(ConfigurableLanguageInterface $language): void {
+  if (!$language->isLocked() && !$language->isSyncing()) {
+    \Drupal::service('content_relay_origin.language_notices')->notify('removed', $language->getId(), $language->getName());
+  }
 }
 
 /**

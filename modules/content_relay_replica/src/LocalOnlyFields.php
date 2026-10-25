@@ -42,6 +42,15 @@ class LocalOnlyFields {
       assert($mapping instanceof ContentRelayMapping);
       $fields = [...$fields, ...$mapping->getLocalOnlyFields()];
     }
+    // With a target state of its own, moderation state is this site's, and
+    // so is the published flag it sets.
+    if ((string) ($this->configFactory->get('content_relay_replica.settings')->get('moderation.target_state') ?? '') !== '') {
+      $fields[] = 'moderation_state';
+      $published = $this->entityTypeManager->getDefinition($entity_type_id, FALSE)?->getKey('published');
+      if (is_string($published) && $published !== '') {
+        $fields[] = $published;
+      }
+    }
     $fields = array_values(array_unique($fields));
     sort($fields);
     return $fields;

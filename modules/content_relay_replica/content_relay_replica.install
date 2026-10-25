@@ -119,6 +119,32 @@ function content_relay_replica_schema(): array {
         'not null' => FALSE,
         'description' => 'When local edits were found to conflict with the origin; NULL when there is no conflict.',
       ],
+      'source_default_langcode' => [
+        'type' => 'varchar_ascii',
+        'length' => 12,
+        'not null' => FALSE,
+        'description' => 'The default language on the origin, which may not be received here.',
+      ],
+      'detached_translations' => [
+        'type' => 'text',
+        'not null' => FALSE,
+        'description' => 'JSON: origin langcodes of translations detached here.',
+      ],
+      'withheld_translations' => [
+        'type' => 'text',
+        'not null' => FALSE,
+        'description' => 'JSON: origin langcodes of translations the origin keeps from this site.',
+      ],
+      'local_translations' => [
+        'type' => 'text',
+        'not null' => FALSE,
+        'description' => 'JSON: langcodes of translations made here that sync leaves alone.',
+      ],
+      'notes' => [
+        'type' => 'text',
+        'not null' => FALSE,
+        'description' => 'JSON: things to know about the item, such as languages skipped or a default language kept.',
+      ],
       'last_reconciled' => [
         'type' => 'int',
         'unsigned' => TRUE,

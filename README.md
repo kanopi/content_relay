@@ -310,11 +310,13 @@ that is a conflict.
   - `reject`: the local copy stays and the origin is answered `409 conflict`,
     which it shows as a conflict and does not retry.
 
+  - `draft`: with Content Moderation, the origin's version is saved as a
+    draft, leaving the edited version live, and the item is flagged.
+
   Entity types without revisions cannot keep the edit, so they always
-  reject. Saving as a draft under Content Moderation comes with moderation
-  support.
+  reject.
 - Subscribers to `content_relay.conflict` (`ConflictEvent`) are told first,
-  and can switch between overwrite and reject.
+  and can switch between overwrite, draft and reject.
 
 The "Resolve conflict" page (the item's pull page) shows what differs, field
 by field and per language, and offers **Accept origin version** or **Keep
@@ -376,6 +378,49 @@ changed behind sync's back is marked as an error.
 On the origin, `drush content-relay:backfill-hashes` stores hashes for
 content saved before the module kept them; the hash listing also computes
 missing ones on demand.
+
+## Languages
+
+Translations travel with their item, as one entity with one UUID.
+
+- **What a replica receives** is set in its contract: every language
+  (including any the origin adds later) or selected ones, site-wide or per
+  bundle. The origin filters before signing, so other languages are never in
+  what the replica is sent, not even the item's default language; the
+  replica then keeps its own default and flags the item. An item with no
+  translation in the replica's languages is not sent, and the origin's
+  report shows it as "No languages for this replica". Language-neutral items
+  always pass.
+- **Language codes** can be mapped (`languages.map` in the replica settings,
+  such as `zh-hans` to `zh-cn`). Hashes always use the origin's codes. After
+  changing a mapping, `drush content-relay:move-language <from> <to>` moves
+  existing translations, a chunk at a time on cron. A received language this
+  site does not have is skipped and flagged, or the item rejected
+  (`languages.unknown`).
+- **Local translations**, made on the replica in a language the origin does
+  not send, are never changed or deleted by sync and are not hashed. If the
+  origin later sends that language, it is a conflict for that translation:
+  accept the origin's, or keep the local one, which detaches that translation.
+- **New languages on the origin** are announced to replicas. One receiving
+  every language gets them at once; one receiving selected languages shows
+  them as pending, to add or ignore (on the subscription page, or
+  `drush content-relay:languages --add=` / `--ignore=`).
+- **Removed languages**, by the origin or by changing the subscription, leave
+  their translations here as local translations, or delete them if chosen.
+  **Added languages** start a backfill run of reconciliation; items waiting
+  for it show as "Pending backfill".
+- **One translation** can be kept from sync: marked not syncable on the
+  origin (`drush content-relay:not-syncable … --langcode=`) or detached on
+  the replica (`drush content-relay:detach … --langcode=`). The rest of the
+  item keeps syncing.
+- **Content Moderation**: the latest revision is sent, drafts included, with
+  each translation's state; the replica's moderation decides what is live,
+  as on the origin. `moderation.target_state` puts synced content in a state
+  of this site's choosing instead. `conflicts.on_event: draft` saves the
+  origin's version over local edits as a draft, leaving the edit live.
+
+Changing the languages received needs the "Change the languages received
+through Content Relay" permission.
 
 ## As it is, or mapped
 
@@ -587,6 +632,7 @@ with its sync status, and detaches or reattaches selected items in bulk.
 | Detach and reattach Content Relay items | replica | Detach, reattach, in bulk too |
 | Pull Content Relay items and files | replica | Pull latest, pull by UUID, pull files |
 | Resolve Content Relay conflicts | replica | Accept origin version, keep local and detach |
+| Change the languages received through Content Relay | replica | Language selection, pending languages |
 | Run Content Relay reconciliation | replica | Run reconciliation, see past runs (restricted) |
 | Administer Content Relay mappings | replica | Mappings, re-applying them (restricted: the callback transform calls PHP functions) |
 | View the Content Relay replica report | replica | The synced items report |
@@ -599,16 +645,18 @@ Every push, flag, detach and reattach is logged with the user who did it.
 | --- | --- |
 | `content-relay:push <type> <id or uuid> [--replica=] [--force] [--mode=]` | origin |
 | `content-relay:bulk-push [--entity-type=] [--bundle=] [--status=] [--replica=] [--langcode=] [--any-out-of-sync] [--dry-run]` | origin |
-| `content-relay:not-syncable <type> <id or uuid> [--replica=] [--behavior=detach\|remove]` | origin |
-| `content-relay:syncable <type> <id or uuid> [--replica=]` | origin |
-| `content-relay:detach <type> <uuid>` | replica |
-| `content-relay:reattach <type> <uuid> [--accept-origin]` | replica |
+| `content-relay:not-syncable <type> <id or uuid> [--replica=] [--behavior=detach\|remove] [--langcode=]` | origin |
+| `content-relay:syncable <type> <id or uuid> [--replica=] [--langcode=]` | origin |
+| `content-relay:detach <type> <uuid> [--langcode=]` | replica |
+| `content-relay:reattach <type> <uuid> [--accept-origin] [--langcode=]` | replica |
 | `content-relay:pull-file <uuid>` | replica |
 | `content-relay:pull-missing-files [<type> <uuid>] [--all]` | replica |
 | `content-relay:check-schema` | replica |
 | `content-relay:reapply-mapping <mapping>` | replica |
 | `content-relay:pull <type> <uuid> [--accept-origin]` | replica |
 | `content-relay:reconcile` | replica |
+| `content-relay:languages [--add=] [--ignore=]` | replica |
+| `content-relay:move-language <from> <to>` | replica |
 | `content-relay:fill-gaps` | replica |
 | `content-relay:validate <type> <uuid>` | replica |
 | `content-relay:backfill-hashes [--all]` | origin |

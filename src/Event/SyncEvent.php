@@ -86,6 +86,11 @@ final class SyncEvent {
    *   References the origin could not resolve, such as links in text to
    *   files that do not exist there: each with field, entity_type and id.
    *   For information; they are left in the content as they are.
+   * @param string[] $withheldLangcodes
+   *   Translations the item has that are kept from this replica, by the
+   *   origin or because the replica detached them. Their absence from the
+   *   snapshot does not mean they were deleted: the replica leaves its copies
+   *   of them alone.
    */
   public function __construct(
     public readonly string $eventId,
@@ -109,6 +114,7 @@ final class SyncEvent {
     public readonly ?int $previousSequence = NULL,
     public readonly array $externalReferences = [],
     public readonly array $unresolved = [],
+    public readonly array $withheldLangcodes = [],
   ) {
     $this->validate();
   }
@@ -137,6 +143,7 @@ final class SyncEvent {
       'dependencies' => $this->dependencies,
       'external_references' => $this->externalReferences,
       'unresolved' => $this->unresolved,
+      'withheld_langcodes' => $this->withheldLangcodes,
       'files' => $this->files,
       'process' => $this->process?->value,
       'snapshot' => $this->snapshot,
@@ -202,6 +209,7 @@ final class SyncEvent {
       dependencies: $require('dependencies', 'array'),
       externalReferences: $require('external_references', 'array'),
       unresolved: is_array($data['unresolved'] ?? NULL) ? $data['unresolved'] : [],
+      withheldLangcodes: is_array($data['withheld_langcodes'] ?? NULL) ? array_values(array_map('strval', $data['withheld_langcodes'])) : [],
       files: $require('files', 'array'),
       process: $process === NULL ? NULL : (ProcessingMode::tryFrom($process) ?? throw new InvalidEventException('Unknown processing mode.')),
     );

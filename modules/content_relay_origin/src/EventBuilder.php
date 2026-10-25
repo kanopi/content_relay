@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Drupal\content_relay_origin;
 
+use Drupal\content_relay\Plugin\ContentRelay\Normalizer\GenericContentEntityNormalizer;
 use Drupal\Component\Datetime\TimeInterface;
 use Drupal\content_relay\Contract\SubscriptionContract;
 use Drupal\content_relay\Event\Operation;
@@ -15,6 +16,7 @@ use Drupal\content_relay_origin\File\FileKeys;
 use Drupal\content_relay_origin\File\FileLinks;
 use Drupal\content_relay\Hash\RevisionHasher;
 use Drupal\content_relay\Serialization\EntitySerializer;
+use Drupal\content_relay\Serialization\LatestRevision;
 use Drupal\content_relay\Serialization\NormalizationContext;
 use Drupal\Core\Entity\ContentEntityInterface;
 use Drupal\Core\Entity\EntityChangedInterface;
@@ -41,7 +43,44 @@ class EventBuilder {
     protected FileChecksums $checksums,
     protected FileUrlGeneratorInterface $fileUrlGenerator,
     protected FileKeys $fileKeys,
+    protected TranslationBlocks $translationBlocks,
   ) {}
+
+  /**
+   * Whether an item has no translation in the languages a replica gets.
+   *
+   * Such an item is not sent to the replica at all. Language-neutral items
+   * always have one.
+   */
+  public function hasNoLanguagesFor(ContentEntityInterface $entity, SubscriptionContract $contract): bool {
+    return $this->languages($entity, $contract, $contract->replicaId())[0] === [];
+  }
+
+  /**
+   * The translations of an item a replica gets, and those kept from it.
+   *
+   * @return array{0: string[], 1: string[]}
+   *   Langcodes sent, and langcodes withheld (blocked for this replica by
+   *   either side), both among the languages the replica gets.
+   */
+  public function languages(ContentEntityInterface $entity, SubscriptionContract $contract, string $replica_id): array {
+    $filter = $contract->languagesFor($entity->getEntityTypeId(), $entity->bundle());
+    $blocked = $this->translationBlocks->forReplica($entity->getEntityTypeId(), (string) $entity->uuid(), $replica_id);
+    $sent = $withheld = [];
+    foreach (array_keys($entity->getTranslationLanguages()) as $langcode) {
+      $langcode = (string) $langcode;
+      if (!GenericContentEntityNormalizer::wanted($langcode, $filter)) {
+        continue;
+      }
+      if (isset($blocked[$langcode])) {
+        $withheld[] = $langcode;
+      }
+      else {
+        $sent[] = $langcode;
+      }
+    }
+    return [$sent, $withheld];
+  }
 
   /**
    * Builds the event for a row, or NULL when there is nothing to send.
@@ -62,7 +101,8 @@ class EventBuilder {
     $operation = Operation::from($row['operation']);
     /** @var \Drupal\Core\Entity\EntityInterface|null $entity */
     $entity = $this->entityRepository->loadEntityByUuid($row['entity_type'], $row['entity_uuid']);
-    $entity = $entity instanceof ContentEntityInterface ? $entity : NULL;
+    // The latest revision, drafts included.
+    $entity = $entity instanceof ContentEntityInterface ? LatestRevision::of($entity, $this->entityTypeManager) : NULL;
 
     $process = $row['process'] === NULL ? NULL : ProcessingMode::tryFrom($row['process']);
     if (!$operation->carriesSnapshot()) {
@@ -93,7 +133,8 @@ class EventBuilder {
     if ($entity === NULL) {
       return NULL;
     }
-    $context = new NormalizationContext($contract->languagesFor($entity->getEntityTypeId(), $entity->bundle()));
+    [$langcodes, $withheld] = $this->languages($entity, $contract, $row['replica_id']);
+    $context = new NormalizationContext($withheld === [] ? $contract->languagesFor($entity->getEntityTypeId(), $entity->bundle()) : $langcodes);
     $snapshot = $this->serializer->normalize($entity, $context);
     $hashes = $this->hasher->hash($snapshot);
     [$dependencies, $external] = $this->classifyReferences(array_values($context->references), $contract, $row['replica_id']);
@@ -122,6 +163,7 @@ class EventBuilder {
       previousSequence: $previous_sequence,
       externalReferences: $external,
       unresolved: $context->unresolved,
+      withheldLangcodes: $withheld,
     );
   }
 

@@ -12,6 +12,7 @@ use Drupal\content_relay_origin\DeliveryScheduler;
 use Drupal\content_relay_origin\EventStatus;
 use Drupal\content_relay_origin\HashStore;
 use Drupal\content_relay_origin\NotSyncableFlags;
+use Drupal\content_relay_origin\TranslationBlocks;
 use Drupal\content_relay_origin\Outbox;
 use Drupal\content_relay_origin\PairingCodes;
 use Drupal\content_relay_origin\Replica;
@@ -104,6 +105,7 @@ final class DeliveryTest extends KernelTestBase {
       PairingCodes::TABLE,
       ReplicaItems::TABLE,
       NotSyncableFlags::TABLE,
+      TranslationBlocks::TABLE,
       ReportIndex::TABLE,
     ]);
     $this->installConfig(['content_relay', 'content_relay_origin', 'node', 'filter']);

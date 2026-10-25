@@ -207,7 +207,9 @@ class GenericContentEntityNormalizer extends PluginBase implements EntityNormali
         $values[$bundle_key] = $snapshot['bundle'];
       }
       if ($langcode_key = $entity_type->getKey('langcode')) {
-        $values[$langcode_key] = $snapshot['default_langcode'];
+        // Without the sender's default, the first language received becomes
+        // this copy's default.
+        $values[$langcode_key] = Snapshot::langcodes($snapshot)[0];
       }
       if (isset($snapshot['metadata']['id']) && $this->hasMeaningfulId($entity_type)) {
         $values[$entity_type->getKey('id')] = $snapshot['metadata']['id'];
@@ -221,8 +223,12 @@ class GenericContentEntityNormalizer extends PluginBase implements EntityNormali
 
     $default = $snapshot['default_langcode'];
     if ($entity->getUntranslated()->language()->getId() !== $default) {
+      $context->defaultLanguageKept = $entity->getUntranslated()->language()->getId();
       $context->warnings[] = sprintf('Default language is "%s" here and "%s" in the snapshot; the local default was kept.', $entity->getUntranslated()->language()->getId(), $default);
     }
+    // Untranslatable fields are the same in every translation, and are set
+    // through whichever translation comes first.
+    $shared_from = Snapshot::langcodes($snapshot)[0];
 
     $fields = $this->getSyncedFields($entity);
     $this->recordUnknownFields($snapshot, $fields, $context);
@@ -256,7 +262,7 @@ class GenericContentEntityNormalizer extends PluginBase implements EntityNormali
           continue;
         }
         $shared = !$this->isTranslatableField($entity, $definition);
-        if ($shared && $langcode !== $default) {
+        if ($shared && $langcode !== $shared_from) {
           continue;
         }
         $metadata = $this->isMetadataField($definition);
@@ -370,15 +376,37 @@ class GenericContentEntityNormalizer extends PluginBase implements EntityNormali
    */
   protected function selectLangcodes(ContentEntityInterface $entity, NormalizationContext $context): array {
     $default = $entity->getUntranslated()->language()->getId();
-    $neutral = [LanguageInterface::LANGCODE_NOT_SPECIFIED, LanguageInterface::LANGCODE_NOT_APPLICABLE];
     $langcodes = [];
     foreach (array_keys($entity->getTranslationLanguages(FALSE)) as $langcode) {
-      if ($context->langcodes === NULL || in_array($langcode, $context->langcodes, TRUE) || in_array($langcode, $neutral, TRUE)) {
+      if (self::wanted((string) $langcode, $context->langcodes)) {
         $langcodes[] = (string) $langcode;
       }
     }
     sort($langcodes);
+    // The receiver's filter leaves the default translation out of the item
+    // it gets, but embedded entities always keep theirs: they are shown in
+    // the parent's languages, falling back to their default.
+    if (!self::wanted($default, $context->langcodes) && $langcodes !== [] && count($context->stack) <= 1) {
+      return $langcodes;
+    }
     return [$default, ...$langcodes];
+  }
+
+  /**
+   * Whether a language passes a receiver's filter.
+   *
+   * Language-neutral content passes any filter.
+   *
+   * @param string $langcode
+   *   The langcode.
+   * @param string[]|null $filter
+   *   Langcodes the receiver wants, or NULL for all.
+   */
+  public static function wanted(string $langcode, ?array $filter): bool {
+    return $filter === NULL || in_array($langcode, $filter, TRUE) || in_array($langcode, [
+      LanguageInterface::LANGCODE_NOT_SPECIFIED,
+      LanguageInterface::LANGCODE_NOT_APPLICABLE,
+    ], TRUE);
   }
 
   /**

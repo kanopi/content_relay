@@ -115,6 +115,13 @@ final class InboxController implements ContainerInjectionInterface {
           }
         }
         $by = is_string($body['by'] ?? NULL) ? $body['by'] : NULL;
+        // Scoped to one translation.
+        if (is_string($body['langcode'] ?? NULL) && $body['langcode'] !== '') {
+          return new JsonResponse([
+            'result' => 'recorded',
+            'queued' => $this->control->replicaTranslationDetached($message->sender, $body['entity_type'], $body['uuid'], $body['bundle'], $body['langcode'], $message->type === 'detach_notice', $by),
+          ]);
+        }
         if ($message->type === 'detach_notice') {
           $this->control->replicaDetached($message->sender, $body['entity_type'], $body['uuid'], $body['bundle'], $by, is_int($body['at'] ?? NULL) ? $body['at'] : NULL);
           return new JsonResponse(['result' => 'recorded']);

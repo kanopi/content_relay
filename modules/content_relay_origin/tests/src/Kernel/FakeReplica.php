@@ -119,6 +119,11 @@ final class FakeReplica {
    */
   public bool $dropAcks = FALSE;
 
+  /**
+   * Language notices received, each a list of changes.
+   */
+  public array $languageNotices = [];
+
   public function __construct(
     public string $originId,
   ) {
@@ -223,6 +228,10 @@ final class FakeReplica {
         $body['ack'] = $this->message('contract_ack', ['version' => $message['body']['version']]);
       }
       return Create::promiseFor(new Response(200, [], json_encode($body)));
+    }
+    if ($message['type'] === 'language_notice') {
+      $this->languageNotices[] = $message['body']['changes'];
+      return Create::promiseFor(new Response(200, [], json_encode(['result' => 'acknowledged'])));
     }
     if ($message['type'] === 'status_request') {
       $ids = $message['body']['event_ids'];

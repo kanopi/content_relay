@@ -166,14 +166,24 @@ final class OriginCommands extends DrushCommands {
   #[CLI\Argument(name: 'id', description: 'Entity ID or UUID.')]
   #[CLI\Option(name: 'replica', description: 'Only for these replicas, comma-separated.')]
   #[CLI\Option(name: 'behavior', description: 'For replicas that have it: detach or remove. Defaults to the configured behavior.')]
+  #[CLI\Option(name: 'langcode', description: 'Only this translation. Replicas keep what they have of it.')]
   public function notSyncable(
     string $entity_type,
     string $id,
     array $options = [
       'replica' => self::REQ,
       'behavior' => self::REQ,
+      'langcode' => self::REQ,
     ],
   ): void {
+    if ($options['langcode']) {
+      $resent = $this->control->setTranslationSyncable($this->load($entity_type, $id), $options['langcode'], FALSE, $this->list($options['replica']));
+      $this->logger()->success(dt('The @langcode translation is marked not syncable. @count replica(s) told.', [
+        '@langcode' => $options['langcode'],
+        '@count' => count($resent),
+      ]));
+      return;
+    }
     $behavior = $options['behavior'] ?: NULL;
     if ($behavior !== NULL && !in_array($behavior, [NotSyncableFlags::DETACH, NotSyncableFlags::REMOVE], TRUE)) {
       throw new \InvalidArgumentException('Behavior must be detach or remove.');
@@ -189,7 +199,23 @@ final class OriginCommands extends DrushCommands {
   #[CLI\Argument(name: 'entity_type', description: 'Entity type ID.')]
   #[CLI\Argument(name: 'id', description: 'Entity ID or UUID.')]
   #[CLI\Option(name: 'replica', description: 'Only remove the flags for these replicas, comma-separated.')]
-  public function syncable(string $entity_type, string $id, array $options = ['replica' => self::REQ]): void {
+  #[CLI\Option(name: 'langcode', description: 'Only this translation.')]
+  public function syncable(
+    string $entity_type,
+    string $id,
+    array $options = [
+      'replica' => self::REQ,
+      'langcode' => self::REQ,
+    ],
+  ): void {
+    if ($options['langcode']) {
+      $resent = $this->control->setTranslationSyncable($this->load($entity_type, $id), $options['langcode'], TRUE, $this->list($options['replica']));
+      $this->logger()->success(dt('The @langcode translation is syncable again. Sending to @count replica(s).', [
+        '@langcode' => $options['langcode'],
+        '@count' => count($resent),
+      ]));
+      return;
+    }
     $resumed = $this->control->markSyncable($this->load($entity_type, $id), $this->list($options['replica']));
     $this->logger()->success(dt('Marked syncable. Sending to @count replica(s) again.', ['@count' => count($resumed)]));
   }

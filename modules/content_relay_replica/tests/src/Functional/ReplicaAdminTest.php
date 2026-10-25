@@ -45,7 +45,11 @@ final class ReplicaAdminTest extends BrowserTestBase {
     $this->drupalCreateContentType(['type' => 'page', 'name' => 'Basic page']);
     $this->createFileKey('replica_signing');
     FakeOrigin::install($this->container->get('state'), self::CODE, ['node' => ['article']]);
-    $this->drupalLogin($this->drupalCreateUser(['administer content relay replica', 'change content relay subscription']));
+    $this->drupalLogin($this->drupalCreateUser([
+      'administer content relay replica',
+      'change content relay subscription',
+      'change content relay languages',
+    ]));
   }
 
   /**
@@ -126,12 +130,18 @@ final class ReplicaAdminTest extends BrowserTestBase {
    * Each page needs its permission.
    */
   public function testPermissions(): void {
+    $this->pair();
     $this->drupalLogin($this->drupalCreateUser(['change content relay subscription']));
     $this->drupalGet('admin/config/services/content-relay/replica/pair');
     $this->assertSession()->statusCodeEquals(403);
     $this->drupalLogin($this->drupalCreateUser(['administer content relay replica']));
     $this->drupalGet('admin/config/services/content-relay/replica');
     $this->assertSession()->statusCodeEquals(403);
+    // Languages need a permission of their own.
+    $this->drupalLogin($this->drupalCreateUser(['change content relay subscription']));
+    $this->drupalGet('admin/config/services/content-relay/replica');
+    $this->assertSession()->fieldExists('terms[paused]');
+    $this->assertSession()->fieldNotExists('terms[language_mode]');
   }
 
 }

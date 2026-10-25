@@ -6,7 +6,9 @@ namespace Drupal\content_relay_replica\Drush\Commands;
 
 use Drupal\content_relay_replica\File\FileSync;
 use Drupal\content_relay_replica\Puller;
+use Drupal\content_relay_replica\LanguageSubscription;
 use Drupal\content_relay_replica\Reconciler;
+use Drupal\content_relay_replica\SubscriptionManager;
 use Drupal\content_relay_replica\Validator;
 use Drupal\content_relay_replica\Apply\ApplyResult;
 use Drupal\content_relay_replica\Schema\SchemaWatcher;
@@ -52,6 +54,10 @@ final class ReplicaCommands extends DrushCommands {
     private readonly Reconciler $reconciler,
     #[Autowire(service: 'content_relay_replica.validator')]
     private readonly Validator $validator,
+    #[Autowire(service: 'content_relay_replica.language_subscription')]
+    private readonly LanguageSubscription $languages,
+    #[Autowire(service: 'content_relay_replica.subscription')]
+    private readonly SubscriptionManager $subscription,
   ) {
     parent::__construct();
   }
@@ -62,13 +68,19 @@ final class ReplicaCommands extends DrushCommands {
   #[CLI\Command(name: 'content-relay:detach', aliases: ['cr-detach'])]
   #[CLI\Argument(name: 'entity_type', description: 'Entity type ID.')]
   #[CLI\Argument(name: 'uuid', description: 'UUID of the synced item.')]
-  public function detach(string $entity_type, string $uuid): int {
+  #[CLI\Option(name: 'langcode', description: 'Only this translation, by the origin\'s langcode.')]
+  public function detach(string $entity_type, string $uuid, array $options = ['langcode' => self::REQ]): int {
     if ($this->syncState->get($entity_type, $uuid) === NULL) {
       $this->logger()->error(dt('@type @uuid was not received from the origin.', [
         '@type' => $entity_type,
         '@uuid' => $uuid,
       ]));
       return self::EXIT_FAILURE;
+    }
+    if ($options['langcode']) {
+      $done = $this->detacher->detachTranslation($entity_type, $uuid, $options['langcode']);
+      $this->logger()->success($done ? dt('The @langcode translation is detached.', ['@langcode' => $options['langcode']]) : dt('Already detached.'));
+      return self::EXIT_SUCCESS;
     }
     if (!$this->detacher->detach($entity_type, $uuid)) {
       $this->logger()->warning(dt('Already detached.'));
@@ -85,8 +97,24 @@ final class ReplicaCommands extends DrushCommands {
   #[CLI\Argument(name: 'entity_type', description: 'Entity type ID.')]
   #[CLI\Argument(name: 'uuid', description: 'UUID of the synced item.')]
   #[CLI\Option(name: 'accept-origin', description: 'If the item was changed here, replace the changes with the origin\'s version. Without it, a changed item stays detached.')]
-  public function reattach(string $entity_type, string $uuid, array $options = ['accept-origin' => FALSE]): int {
+  #[CLI\Option(name: 'langcode', description: 'Only this translation, by the origin\'s langcode.')]
+  public function reattach(
+    string $entity_type,
+    string $uuid,
+    array $options = [
+      'accept-origin' => FALSE,
+      'langcode' => self::REQ,
+    ],
+  ): int {
     $state = $this->syncState->get($entity_type, $uuid);
+    if ($options['langcode']) {
+      if (!$this->detacher->reattachTranslation($entity_type, $uuid, $options['langcode'], (bool) $options['accept-origin'])) {
+        $this->logger()->error(dt('The @langcode translation is not detached, or was changed here: use --accept-origin to replace the changes.', ['@langcode' => $options['langcode']]));
+        return self::EXIT_FAILURE;
+      }
+      $this->logger()->success(dt('The @langcode translation is reattached.', ['@langcode' => $options['langcode']]));
+      return self::EXIT_SUCCESS;
+    }
     if ($state === NULL || $state['detached_at'] === NULL) {
       $this->logger()->error(dt('@type @uuid is not detached on this site.', ['@type' => $entity_type, '@uuid' => $uuid]));
       return self::EXIT_FAILURE;
@@ -315,6 +343,41 @@ final class ReplicaCommands extends DrushCommands {
       ]));
     }
     return $result['local'] && $result['origin'] === TRUE ? self::EXIT_SUCCESS : self::EXIT_FAILURE;
+  }
+
+  /**
+   * Lists languages the origin added, or adds or ignores one.
+   */
+  #[CLI\Command(name: 'content-relay:languages', aliases: ['cr-languages'])]
+  #[CLI\Option(name: 'add', description: 'Start receiving this pending language.')]
+  #[CLI\Option(name: 'ignore', description: 'Ignore this pending language for good.')]
+  public function languages(array $options = ['add' => self::REQ, 'ignore' => self::REQ]): int {
+    $langcode = (string) ($options['add'] ?: $options['ignore']);
+    if ($langcode === '') {
+      $pending = $this->languages->pending();
+      $this->logger()->notice($pending === [] ? dt('No languages wait for a decision.') : dt('Waiting: @languages.', ['@languages' => implode(', ', array_map(fn ($code, $name) => "$name ($code)", array_keys($pending), $pending))]));
+      return self::EXIT_SUCCESS;
+    }
+    $terms = $this->languages->decide($this->subscription->getReplicaTerms(), $langcode, (bool) $options['add']);
+    $contract = $this->subscription->propose($terms);
+    if ($contract === NULL) {
+      $this->logger()->warning(dt('The origin could not be reached; the change will be retried.'));
+      return self::EXIT_FAILURE;
+    }
+    $this->logger()->success(dt('Contract version @version confirmed.', ['@version' => $contract->version()]));
+    return self::EXIT_SUCCESS;
+  }
+
+  /**
+   * Moves synced translations to another langcode, after a mapping change.
+   */
+  #[CLI\Command(name: 'content-relay:move-language', aliases: ['cr-move-language'])]
+  #[CLI\Argument(name: 'from', description: 'The langcode translations have here now.')]
+  #[CLI\Argument(name: 'to', description: 'The langcode they move to, as the new mapping says.')]
+  public function moveLanguage(string $from, string $to): int {
+    $this->languages->move($from, $to);
+    $this->logger()->success(dt('Queued; cron moves them a chunk at a time.'));
+    return self::EXIT_SUCCESS;
   }
 
 }

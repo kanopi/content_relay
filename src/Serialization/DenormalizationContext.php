@@ -36,6 +36,14 @@ final class DenormalizationContext {
   public array $skippedTranslations = [];
 
   /**
+   * The local default language, when it was kept over the snapshot's.
+   *
+   * Set when the copy's default language differs from the sender's, which
+   * happens when the receiver does not get the sender's default language.
+   */
+  public ?string $defaultLanguageKept = NULL;
+
+  /**
    * Notes about decisions taken while applying, for the sync log.
    *
    * @var string[]

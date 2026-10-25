@@ -66,8 +66,24 @@ class OriginClient {
    * @throws \Drupal\content_relay_replica\SubscriptionException
    */
   public function schema(): array {
+    return $this->schemaAndLanguages()['bundles'];
+  }
+
+  /**
+   * The origin's schema and its languages.
+   *
+   * @return array{bundles: array<string, array<string, array>>, languages: array<string, string>}
+   *   Bundle descriptions as schema() returns them, and the origin's
+   *   languages, names by langcode.
+   *
+   * @throws \Drupal\content_relay_replica\SubscriptionException
+   */
+  public function schemaAndLanguages(): array {
     $body = $this->read('/content-relay/v1/schema', 'schema');
-    return is_array($body['bundles'] ?? NULL) ? $body['bundles'] : [];
+    return [
+      'bundles' => is_array($body['bundles'] ?? NULL) ? $body['bundles'] : [],
+      'languages' => is_array($body['languages'] ?? NULL) ? array_map('strval', $body['languages']) : [],
+    ];
   }
 
   /**
@@ -102,7 +118,7 @@ class OriginClient {
    * @param int $limit
    *   Items per page.
    *
-   * @return array{contract_version: int|null, items: list<array{uuid: string, revision: int, changed: int|null, hash: array, not_syncable: bool}>, next: string|null}
+   * @return array{contract_version: int|null, items: list<array{uuid: string, revision: int, changed: int|null, hash: array, not_syncable: bool, no_languages: bool, withheld: string[]}>, next: string|null}
    *   The page, in UUID order, and the cursor for the next one.
    *
    * @throws \Drupal\content_relay_replica\SubscriptionException
@@ -128,6 +144,8 @@ class OriginClient {
         'changed' => is_int($item['changed'] ?? NULL) ? $item['changed'] : NULL,
         'hash' => $item['hash'],
         'not_syncable' => ($item['not_syncable'] ?? FALSE) === TRUE,
+        'no_languages' => ($item['no_languages'] ?? FALSE) === TRUE,
+        'withheld' => is_array($item['withheld'] ?? NULL) ? array_values(array_map('strval', $item['withheld'])) : [],
       ];
     }
     return [

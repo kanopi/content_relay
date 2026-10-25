@@ -46,10 +46,12 @@ class SchemaWatcher {
    *   When the schema cannot be had.
    */
   public function check(): array {
-    $schema = $this->originClient->schema();
+    $answer = $this->originClient->schemaAndLanguages();
+    $schema = $answer['bundles'];
     $previous = $this->state->get(self::STATE, []);
     $results = [];
-    foreach ($this->contracts->getCurrent()?->effectiveBundles() ?? [] as $entity_type_id => $bundles) {
+    $contract = $this->contracts->getCurrent();
+    foreach ($contract?->effectiveBundles() ?? [] as $entity_type_id => $bundles) {
       foreach ($bundles as $bundle) {
         $key = $entity_type_id . '.' . $bundle;
         $origin = $schema[$entity_type_id][$bundle] ?? NULL;
@@ -65,7 +67,8 @@ class SchemaWatcher {
         }
         $mapping = $this->mappings->forSource($entity_type_id, $bundle);
         if ($mapping === NULL) {
-          $check = $this->checker->check($entity_type_id, $bundle, $origin);
+          $languages = $contract->languagesFor($entity_type_id, $bundle);
+          $check = $this->checker->check($entity_type_id, $bundle, $origin, $languages ?? array_map('strval', array_keys($answer['languages'])));
         }
         else {
           $unmapped = $this->checker->unmappedFields($origin, $mapping);
@@ -90,7 +93,10 @@ class SchemaWatcher {
         }
       }
     }
-    $this->state->set(self::STATE, $results + ['_checked' => $this->time->getCurrentTime()]);
+    $this->state->set(self::STATE, $results + [
+      '_checked' => $this->time->getCurrentTime(),
+      '_languages' => $answer['languages'],
+    ]);
     return $results;
   }
 
@@ -111,6 +117,16 @@ class SchemaWatcher {
   }
 
   /**
+   * The origin's languages at the last check, names by langcode.
+   *
+   * @return array<string, string>
+   *   Languages; empty before the first check.
+   */
+  public function originLanguages(): array {
+    return $this->state->get(self::STATE, [])['_languages'] ?? [];
+  }
+
+  /**
    * Bundles with problems from the last check.
    *
    * @return array<string, string[]>
@@ -119,7 +135,7 @@ class SchemaWatcher {
   public function problems(): array {
     $problems = [];
     foreach ($this->state->get(self::STATE, []) as $key => $result) {
-      if ($key !== '_checked' && is_array($result) && !empty($result['problems'])) {
+      if (!str_starts_with((string) $key, '_') && is_array($result) && !empty($result['problems'])) {
         $problems[$key] = $result['problems'];
       }
     }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Drupal\content_relay_origin\Report;
 
+use Drupal\content_relay\Plugin\ContentRelay\Normalizer\GenericContentEntityNormalizer;
 use Drupal\Component\Datetime\TimeInterface;
 use Drupal\content_relay\Hash\RevisionHasher;
 use Drupal\content_relay_origin\ContractManager;
@@ -15,6 +16,7 @@ use Drupal\content_relay_origin\Replica;
 use Drupal\content_relay_origin\ReplicaItems;
 use Drupal\content_relay_origin\ReplicaRegistry;
 use Drupal\content_relay_origin\SyncScope;
+use Drupal\content_relay_origin\TranslationBlocks;
 use Drupal\Core\Database\Connection;
 use Drupal\Core\Entity\ContentEntityInterface;
 use Drupal\Core\Entity\EntityChangedInterface;
@@ -50,6 +52,8 @@ class ReportIndex {
   public const NOT_SYNCABLE = 'not_syncable';
   public const DETACHED_BY_REPLICA = 'detached_by_replica';
   public const NEVER_SENT = 'never_sent';
+  // The item has no translation in the languages the replica gets.
+  public const NO_LANGUAGES = 'no_languages';
 
   /**
    * Translation states.
@@ -70,6 +74,7 @@ class ReportIndex {
     protected ContractManager $contracts,
     protected SyncScope $scope,
     protected TimeInterface $time,
+    protected TranslationBlocks $translationBlocks,
   ) {}
 
   /**
@@ -91,6 +96,7 @@ class ReportIndex {
       self::NOT_SYNCABLE => new TranslatableMarkup('Not syncable'),
       self::DETACHED_BY_REPLICA => new TranslatableMarkup('Detached by replica'),
       self::NEVER_SENT => new TranslatableMarkup('Never sent'),
+      self::NO_LANGUAGES => new TranslatableMarkup('No languages for this replica'),
     ];
   }
 
@@ -273,10 +279,7 @@ class ReportIndex {
     $contract = $this->contracts->getActive($replica->id) ?? $this->contracts->getPending($replica->id);
     $languages = $contract?->languagesFor($entity_type_id, $entity->bundle());
     $origin_hashes = $latest['hashes'];
-    $langcodes = array_keys($origin_hashes->translations);
-    if ($languages !== NULL) {
-      $langcodes = array_values(array_intersect($langcodes, $languages));
-    }
+    $langcodes = array_values(array_filter(array_map('strval', array_keys($origin_hashes->translations)), fn (string $langcode) => GenericContentEntityNormalizer::wanted($langcode, $languages)));
 
     $item = $this->items->get($replica->id, $entity_type_id, $uuid);
     $replica_hashes = $item === NULL || $item['status'] === ReplicaItems::DELETED || $item['translation_hashes'] === NULL
@@ -333,6 +336,7 @@ class ReportIndex {
 
     $rows = [];
     $out_of_sync = FALSE;
+    $blocked = $this->translationBlocks->forReplica($entity_type_id, $uuid, $replica->id);
     foreach ($langcodes as $langcode) {
       $replica_hash = $replica_hashes[$langcode] ?? NULL;
       if ($replica_hashes === NULL) {
@@ -348,10 +352,17 @@ class ReportIndex {
         $in_sync = $comparable ? hash_equals($origin_hashes->translations[$langcode], $replica_hash) : $same_revision;
         $status = $in_sync ? self::IN_SYNC : self::OUT_OF_SYNC;
       }
-      $out_of_sync = $out_of_sync || $status !== self::IN_SYNC;
+      // A translation kept from the replica is neither in nor out of sync.
+      $block = $blocked[$langcode] ?? NULL;
+      if ($block !== NULL) {
+        $status = $block['side'] === TranslationBlocks::ORIGIN ? self::NOT_SYNCABLE : self::DETACHED_BY_REPLICA;
+      }
+      $out_of_sync = $out_of_sync || !in_array($status, [self::IN_SYNC, self::NOT_SYNCABLE, self::DETACHED_BY_REPLICA], TRUE);
       $translation = $entity->hasTranslation($langcode) ? $entity->getTranslation($langcode) : $entity;
       $rows[] = [
         'langcode' => $langcode,
+        'detached_by' => $block['by'] ?? $common['detached_by'],
+        'detached_at' => $block['created'] ?? $common['detached_at'],
         'default_translation' => (int) ($langcode === $entity->getUntranslated()->language()->getId()),
         'label' => mb_substr((string) $translation->label(), 0, 255),
         'origin_hash' => $origin_hashes->translations[$langcode],
@@ -359,6 +370,20 @@ class ReportIndex {
         'status' => $item_status ?? $status,
         'translation_status' => $translation_status,
         'changed' => $translation instanceof EntityChangedInterface ? (int) $translation->getChangedTime() : NULL,
+      ] + $common;
+    }
+    if ($langcodes === []) {
+      // Not sent at all, and not out of sync either: one row says why.
+      $default = $entity->getUntranslated();
+      $rows[] = [
+        'langcode' => $default->language()->getId(),
+        'default_translation' => 1,
+        'label' => mb_substr((string) $default->label(), 0, 255),
+        'origin_hash' => $origin_hashes->translations[$default->language()->getId()] ?? NULL,
+        'replica_hash' => NULL,
+        'status' => $item_status === self::NOT_SYNCABLE ? $item_status : self::NO_LANGUAGES,
+        'translation_status' => self::TRANSLATION_NEVER_SENT,
+        'changed' => $default instanceof EntityChangedInterface ? (int) $default->getChangedTime() : NULL,
       ] + $common;
     }
     foreach ($rows as &$built) {

@@ -22,6 +22,8 @@ final class SyncStatus {
   public const DETACHED_BY_ORIGIN = 'detached_by_origin';
   public const DETACHED_BY_REPLICA = 'detached_by_replica';
   public const SCHEMA_DRIFT = 'schema_drift';
+  // Its translations in a language just added are still to be pulled.
+  public const PENDING_BACKFILL = 'pending_backfill';
 
   /**
    * Labels, by status.
@@ -40,6 +42,7 @@ final class SyncStatus {
       self::DETACHED_BY_ORIGIN => new TranslatableMarkup('Detached by origin'),
       self::DETACHED_BY_REPLICA => new TranslatableMarkup('Detached by replica'),
       self::SCHEMA_DRIFT => new TranslatableMarkup('Schema drift'),
+      self::PENDING_BACKFILL => new TranslatableMarkup('Pending backfill'),
     ];
   }
 

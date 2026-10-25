@@ -34,6 +34,7 @@ class EntityChangeRecorder {
     protected NotSyncableFlags $flags,
     protected ReportIndex $report,
     protected ReplicaItems $items,
+    protected TranslationBlocks $translationBlocks,
   ) {}
 
   /**
@@ -108,6 +109,7 @@ class EntityChangeRecorder {
     $this->hashStore->forget($entity->getEntityTypeId(), (string) $entity->uuid());
     $this->report->remove($entity->getEntityTypeId(), (string) $entity->uuid());
     $this->flags->clear($entity->getEntityTypeId(), (string) $entity->uuid());
+    $this->translationBlocks->forget($entity->getEntityTypeId(), (string) $entity->uuid());
     $this->scheduler->schedule(array_keys($rows));
   }
 

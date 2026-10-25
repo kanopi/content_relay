@@ -69,6 +69,102 @@ class ItemDetacher {
   }
 
   /**
+   * Detaches one translation: the origin's updates leave it alone.
+   *
+   * @param string $entity_type_id
+   *   Entity type.
+   * @param string $uuid
+   *   UUID.
+   * @param string $langcode
+   *   The translation, by the origin's langcode.
+   *
+   * @return bool
+   *   FALSE if the item is not synced, or the translation already detached.
+   */
+  public function detachTranslation(string $entity_type_id, string $uuid, string $langcode): bool {
+    $state = $this->syncState->get($entity_type_id, $uuid);
+    if ($state === NULL || in_array($langcode, $state['detached_translations'], TRUE)) {
+      return FALSE;
+    }
+    $detached = ['detached_translations' => [...$state['detached_translations'], $langcode]] + $state;
+    $entity = $this->localChanges->localCopy($entity_type_id, $uuid, $state);
+    // What is compared from now on leaves the translation out.
+    $baseline = $entity === NULL || $this->localChanges->editedTranslations($entity, $state) !== NULL ? [] : $this->localChanges->baseline($entity, $detached);
+    $this->syncState->save($entity_type_id, $uuid, $baseline + [
+      'detached_translations' => $detached['detached_translations'],
+      'last_synced' => (int) $state['last_synced'],
+    ]);
+    $this->logger->notice('@user detached the @langcode translation of @type @uuid.', [
+      '@user' => $this->currentUser->getAccountName(),
+      '@langcode' => $langcode,
+      '@type' => $entity_type_id,
+      '@uuid' => $uuid,
+    ]);
+    $this->originClient->notify('detach_notice', [
+      'entity_type' => $entity_type_id,
+      'uuid' => $uuid,
+      'bundle' => $state['bundle'],
+      'langcode' => $langcode,
+      'by' => $this->currentUser->getDisplayName(),
+      'at' => $this->time->getCurrentTime(),
+    ]);
+    return TRUE;
+  }
+
+  /**
+   * Reattaches one translation.
+   *
+   * @param string $entity_type_id
+   *   Entity type.
+   * @param string $uuid
+   *   UUID.
+   * @param string $langcode
+   *   The translation, by the origin's langcode.
+   * @param bool $accept_origin
+   *   When it was edited here: TRUE to take the origin's version, FALSE to
+   *   keep the edits and stay detached.
+   *
+   * @return bool
+   *   TRUE if it was reattached.
+   */
+  public function reattachTranslation(string $entity_type_id, string $uuid, string $langcode, bool $accept_origin = TRUE): bool {
+    $state = $this->syncState->get($entity_type_id, $uuid);
+    if ($state === NULL || !in_array($langcode, $state['detached_translations'], TRUE)) {
+      return FALSE;
+    }
+    $attached = ['detached_translations' => array_values(array_diff($state['detached_translations'], [$langcode]))] + $state;
+    $entity = $this->localChanges->localCopy($entity_type_id, $uuid, $state);
+    $edited = $entity === NULL ? NULL : $this->localChanges->editedTranslations($entity, $attached);
+    if ($edited !== NULL && in_array($langcode, $edited, TRUE) && !$accept_origin) {
+      return FALSE;
+    }
+    $fields = [
+      'detached_translations' => $attached['detached_translations'],
+      'last_synced' => (int) $state['last_synced'],
+    ];
+    if ($edited !== NULL && $entity !== NULL) {
+      // The origin's version replaces the edits when it arrives.
+      $fields += $this->localChanges->baseline($entity, $attached);
+    }
+    $this->syncState->save($entity_type_id, $uuid, $fields);
+    $this->logger->notice('@user reattached the @langcode translation of @type @uuid.', [
+      '@user' => $this->currentUser->getAccountName(),
+      '@langcode' => $langcode,
+      '@type' => $entity_type_id,
+      '@uuid' => $uuid,
+    ]);
+    $this->originClient->notify('attach_notice', [
+      'entity_type' => $entity_type_id,
+      'uuid' => $uuid,
+      'bundle' => $state['bundle'],
+      'langcode' => $langcode,
+      'by' => $this->currentUser->getDisplayName(),
+      'at' => $this->time->getCurrentTime(),
+    ]);
+    return TRUE;
+  }
+
+  /**
    * The translations edited here since the item was last synced.
    *
    * @return string[]|null

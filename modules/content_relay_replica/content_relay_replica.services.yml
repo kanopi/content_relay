@@ -56,6 +56,8 @@ services:
       - '@content_relay_replica.mappings'
       - '@content_relay_replica.mapped_importer'
       - '@content_relay_replica.local_only_fields'
+      - '@content_relay_replica.language_map'
+      - '@content_relay_replica.moderation'
 
   content_relay_replica.contracts:
     class: Drupal\content_relay_replica\ContractStore
@@ -77,6 +79,7 @@ services:
       - '@datetime.time'
       - '@logger.channel.content_relay_replica'
       - '@content_relay_replica.origin_policy'
+      - '@content_relay_replica.language_subscription'
 
   content_relay_replica.local_changes:
     class: Drupal\content_relay_replica\LocalChanges
@@ -89,6 +92,7 @@ services:
       - '@config.factory'
       - '@entity.repository'
       - '@entity_type.manager'
+      - '@content_relay_replica.language_map'
 
   content_relay_replica.local_only_fields:
     class: Drupal\content_relay_replica\LocalOnlyFields
@@ -219,7 +223,7 @@ services:
 
   content_relay_replica.compatibility_checker:
     class: Drupal\content_relay_replica\Schema\CompatibilityChecker
-    arguments: ['@content_relay.schema_describer']
+    arguments: ['@content_relay.schema_describer', '@content_relay_replica.language_map']
 
   content_relay_replica.schema_watcher:
     class: Drupal\content_relay_replica\Schema\SchemaWatcher
@@ -254,6 +258,7 @@ services:
       - '@current_user'
       - '@datetime.time'
       - '@logger.channel.content_relay_replica'
+      - '@content_relay_replica.language_map'
 
   content_relay_replica.reconciler:
     class: Drupal\content_relay_replica\Reconciler
@@ -281,3 +286,25 @@ services:
       - '@content_relay_replica.sync_state'
       - '@content_relay_replica.local_changes'
       - '@content_relay_replica.origin_client'
+
+  content_relay_replica.language_map:
+    class: Drupal\content_relay_replica\LanguageMap
+    arguments: ['@config.factory', '@language_manager']
+
+  content_relay_replica.language_subscription:
+    class: Drupal\content_relay_replica\LanguageSubscription
+    arguments:
+      - '@database'
+      - '@content_relay_replica.contracts'
+      - '@content_relay_replica.sync_state'
+      - '@content_relay_replica.local_changes'
+      - '@content_relay_replica.language_map'
+      - '@queue'
+      - '@state'
+      - '@config.factory'
+      - '@datetime.time'
+      - '@logger.channel.content_relay_replica'
+
+  content_relay_replica.moderation:
+    class: Drupal\content_relay_replica\Moderation
+    arguments: ['@config.factory', '@?content_moderation.moderation_information']

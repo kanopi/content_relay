@@ -14,6 +14,7 @@ use Drupal\content_relay_origin\Outbox;
 use Drupal\content_relay_origin\PairingCodes;
 use Drupal\content_relay_origin\ReplicaItems;
 use Drupal\content_relay_origin\ReplicaRegistry;
+use Drupal\content_relay_origin\TranslationBlocks;
 use Drupal\content_relay_origin\Report\ReportIndex;
 
 /**
@@ -277,6 +278,31 @@ function content_relay_origin_schema(): array {
       'created' => ['type' => 'int', 'size' => 'big', 'not null' => TRUE],
     ],
     'primary key' => ['entity_type', 'uuid', 'replica_id'],
+  ];
+
+  $schema[TranslationBlocks::TABLE] = [
+    'description' => 'Single translations the origin does not send to a replica, or a replica detached.',
+    'fields' => [
+      'entity_type' => ['type' => 'varchar_ascii', 'length' => 32, 'not null' => TRUE],
+      'uuid' => ['type' => 'varchar_ascii', 'length' => 128, 'not null' => TRUE],
+      'langcode' => ['type' => 'varchar_ascii', 'length' => 12, 'not null' => TRUE],
+      'replica_id' => [
+        'type' => 'varchar_ascii',
+        'length' => 64,
+        'not null' => TRUE,
+        'default' => '',
+        'description' => 'The replica the block applies to; empty for all (origin blocks only).',
+      ],
+      'side' => [
+        'type' => 'varchar_ascii',
+        'length' => 8,
+        'not null' => TRUE,
+        'description' => 'origin (not syncable) or replica (detached there).',
+      ],
+      'by_name' => ['type' => 'varchar', 'length' => 255, 'not null' => FALSE],
+      'created' => ['type' => 'int', 'size' => 'big', 'not null' => TRUE],
+    ],
+    'primary key' => ['entity_type', 'uuid', 'langcode', 'replica_id', 'side'],
   ];
 
   $schema[ReportIndex::TABLE] = [
