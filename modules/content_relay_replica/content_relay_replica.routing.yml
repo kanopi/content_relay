@@ -66,3 +66,15 @@ content_relay_replica.pull_files:
     _permission: 'pull content relay items'
   options:
     _admin_route: TRUE
+
+content_relay_replica.mapping_reapply:
+  path: '/admin/config/services/content-relay/replica/mappings/{content_relay_mapping}/reapply'
+  defaults:
+    _form: '\Drupal\content_relay_replica\Form\MappingReapplyForm'
+    _title: 'Re-apply mapping'
+  requirements:
+    _permission: 'administer content relay mappings'
+  options:
+    parameters:
+      content_relay_mapping:
+        type: entity:content_relay_mapping

@@ -14,8 +14,8 @@ or refine, the original specification.
 | Module | Role | Status |
 | --- | --- | --- |
 | `content_relay` | Shared base: event schema, entity serialization, hashing, signing, keys | Phase 1 |
-| `content_relay_origin` | Publishes changes to replicas | Phases 2–8: event log, delivery, hash store, pairing, contracts, not syncable, push, status report, files, encryption, status polling |
-| `content_relay_replica` | Receives and applies changes | Phases 2–8: endpoint, transactional apply, failures, pairing, contracts, detach, files, encryption, processing modes |
+| `content_relay_origin` | Publishes changes to replicas | Phases 2–9: event log, delivery, hash store, pairing, contracts, not syncable, push, status report, files, encryption, status polling, read endpoints |
+| `content_relay_replica` | Receives and applies changes | Phases 2–9: endpoint, transactional apply, failures, pairing, contracts, detach, files, encryption, processing modes, mapping |
 
 ## Requirements
 
@@ -264,6 +264,74 @@ outcomes as if they had been immediate, sends unknown events again, and sends
 the contract again when the versions differ. No callbacks from the replica
 are needed.
 
+## Read endpoints
+
+Replicas read from the origin with their short-lived JWT; answers are signed
+messages, sealed when the contract is encrypted:
+
+- `GET /content-relay/v1/schema`: the synced fields (type, cardinality,
+  translatability, required, referenced type, properties) of every bundle the
+  replica may subscribe to;
+- `GET /content-relay/v1/items/{entity_type}/{uuid}`: one item, as an event
+  built under the replica's contract, when the replica may have it;
+- `GET /content-relay/v1/files/{uuid}`: a file's metadata and a fresh link.
+
+These are custom endpoints rather than JSON:API: they answer in the same
+snapshot form as events, with hashes, so a pulled item is applied like any
+event; access is decided per replica by its contract and not-syncable flags
+rather than by a Drupal user and role; answers are signed and can be
+encrypted; and they only read.
+
+## As it is, or mapped
+
+Each origin bundle is imported **as it is** onto the same bundle here, or
+**mapped** onto another structure.
+
+As it is needs the same bundle with the same synced fields (names, types,
+cardinality, referenced types). When a bundle is newly asked for on the
+Contract page, the origin's schema is checked and the request refused, with
+the differences, if it does not fit. `drush content-relay:check-schema`
+checks every received bundle.
+
+A **mapping** (Configuration › Content Relay replica › Mappings; a config
+entity, so it is exported and deployed) puts one origin bundle onto a bundle
+here, possibly of another entity type. Each origin field, or one of its
+properties (`body.value`), is mapped to a field or property here, with
+transforms between:
+
+| Transform | Does |
+| --- | --- |
+| `static_value` | always `value` |
+| `default_value` | `value` when there is none |
+| `text_format` | renames text formats (`map`, `default`) |
+| `taxonomy_lookup` | the local term with the same UUID (`vocabulary`, `missing: skip|reject`) |
+| `date_format` | `from_format` to `to_format`, in `timezone` |
+| `concat` | joins with more `sources`, by `delimiter` |
+| `callback` | passes each value through a function (`callable`) |
+
+Transforms are plugins (`ContentRelayTransform`); modules can add more. A
+whole field mapped without transforms goes through that field's normalizer,
+so references, links and file links resolve as they do as it is. Rows with
+no origin field give fields here a value from transforms alone, such as a
+default. A required field here that is not mapped and has no default refuses
+items with a clear error, unless the mapping leaves it to validation. Fields
+can be kept local only. Fields not translatable here are filled from the
+origin's default language, or one the mapping names.
+
+The form shows type differences, previews the mapping on a real origin item
+without saving, and refuses invalid mappings. Saving offers to **re-apply**
+the mapping to items already received, which pulls each from the origin and
+applies it again in batches (`drush content-relay:reapply-mapping`).
+
+Mapped items keep the origin's hash to compare with the origin, and a local
+hash of their own structure for noticing local edits.
+
+**Schema drift.** An event with origin fields that this site's bundle (as it
+is) or the mapping (neither mapped nor ignored) does not know is still
+applied for the fields it knows, and the item is flagged "schema drift" with
+the fields named. Cron also fetches the origin's schema daily, notices
+changes, and lists bundles that no longer fit on the status report.
+
 ## Dependencies and external references
 
 Before sending an item, the origin sends everything it references that the
@@ -423,6 +491,7 @@ with its sync status, and detaches or reattaches selected items in bulk.
 | Mark Content Relay items not syncable | origin | Not syncable flags |
 | Detach and reattach Content Relay items | replica | Detach, reattach, in bulk too |
 | Pull Content Relay items and files | replica | Pull file, pull missing files |
+| Administer Content Relay mappings | replica | Mappings, re-applying them (restricted: the callback transform calls PHP functions) |
 | View the Content Relay replica report | replica | The synced items report |
 
 Every push, flag, detach and reattach is logged with the user who did it.
@@ -439,6 +508,8 @@ Every push, flag, detach and reattach is logged with the user who did it.
 | `content-relay:reattach <type> <uuid> [--accept-origin]` | replica |
 | `content-relay:pull-file <uuid>` | replica |
 | `content-relay:pull-missing-files [<type> <uuid>] [--all]` | replica |
+| `content-relay:check-schema` | replica |
+| `content-relay:reapply-mapping <mapping>` | replica |
 | `content-relay:keys` | both |
 | `content-relay:generate-key <purpose> <key id> <path>` | both |
 | `content-relay:rotate-key <purpose> <key id>` | both |

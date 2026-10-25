@@ -92,3 +92,160 @@ content_relay_replica.settings:
         lock_wait:
           type: integer
           label: 'Seconds to wait for an item another process is writing, before answering busy'
+
+content_relay_replica.mapping.*:
+  type: config_entity
+  label: 'Content Relay mapping'
+  mapping:
+    id:
+      type: machine_name
+      label: 'ID'
+    label:
+      type: label
+      label: 'Label'
+    source_entity_type:
+      type: string
+      label: 'Origin entity type'
+    source_bundle:
+      type: string
+      label: 'Origin bundle'
+    target_entity_type:
+      type: string
+      label: 'Entity type here'
+    target_bundle:
+      type: string
+      label: 'Bundle here'
+    fields:
+      type: sequence
+      label: 'Field mappings'
+      sequence:
+        type: mapping
+        label: 'Field mapping'
+        mapping:
+          source:
+            type: string
+            label: 'Origin field or property; empty for a value from transforms only'
+          target:
+            type: string
+            label: 'Field or property here'
+          process:
+            type: sequence
+            label: 'Transforms, in order'
+            sequence:
+              type: mapping
+              label: 'Transform'
+              mapping:
+                plugin:
+                  type: string
+                  label: 'Transform plugin'
+                configuration:
+                  type: content_relay_replica.transform.[%parent.plugin]
+                  label: 'Transform configuration'
+    unmapped_required:
+      type: string
+      label: 'Required fields here that are not mapped'
+      constraints:
+        Choice:
+          - reject
+          - allow
+    ignored_source_fields:
+      type: sequence
+      label: 'Origin fields knowingly not mapped'
+      sequence:
+        type: string
+        label: 'Field'
+    local_only:
+      type: sequence
+      label: 'Fields here that sync never writes'
+      sequence:
+        type: string
+        label: 'Field'
+    translation:
+      type: mapping
+      label: 'Translations'
+      mapping:
+        untranslatable_source:
+          type: string
+          label: 'Origin language for fields not translatable here: default, or a langcode'
+
+content_relay_replica.transform.*:
+  type: mapping
+  label: 'Transform configuration'
+  mapping: {}
+
+content_relay_replica.transform.static_value:
+  type: mapping
+  label: 'Static value'
+  mapping:
+    value:
+      type: string
+      label: 'Value'
+
+content_relay_replica.transform.default_value:
+  type: mapping
+  label: 'Default value'
+  mapping:
+    value:
+      type: string
+      label: 'Value'
+
+content_relay_replica.transform.text_format:
+  type: mapping
+  label: 'Text format'
+  mapping:
+    map:
+      type: sequence
+      label: 'Origin format to format here'
+      sequence:
+        type: string
+        label: 'Format here'
+    default:
+      type: string
+      label: 'Format for others'
+
+content_relay_replica.transform.taxonomy_lookup:
+  type: mapping
+  label: 'Taxonomy lookup'
+  mapping:
+    vocabulary:
+      type: string
+      label: 'Vocabulary'
+    missing:
+      type: string
+      label: 'When a term is not here: skip or reject'
+
+content_relay_replica.transform.date_format:
+  type: mapping
+  label: 'Date format'
+  mapping:
+    from_format:
+      type: string
+      label: 'Origin format'
+    to_format:
+      type: string
+      label: 'Format here'
+    timezone:
+      type: string
+      label: 'Timezone'
+
+content_relay_replica.transform.concat:
+  type: mapping
+  label: 'Concatenate'
+  mapping:
+    sources:
+      type: sequence
+      label: 'More origin fields or properties'
+      sequence:
+        type: string
+        label: 'Field or property'
+    delimiter:
+      type: string
+      label: 'Delimiter'
+
+content_relay_replica.transform.callback:
+  type: mapping
+  label: 'Callback'
+  mapping:
+    callable:
+      type: string
+      label: 'Function or static method'

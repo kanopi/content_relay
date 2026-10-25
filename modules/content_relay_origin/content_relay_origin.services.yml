@@ -287,3 +287,11 @@ services:
       - '@config.factory'
       - '@datetime.time'
       - '@logger.channel.content_relay_origin'
+
+  content_relay_origin.replica_requests:
+    class: Drupal\content_relay_origin\ReplicaRequests
+    arguments:
+      - '@content_relay.pull_authenticator'
+      - '@content_relay_origin.replica_registry'
+      - '@content_relay.message_signer'
+      - '@logger.channel.content_relay_origin'

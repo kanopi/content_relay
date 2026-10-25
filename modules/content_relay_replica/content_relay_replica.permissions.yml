@@ -15,3 +15,7 @@ pull content relay items:
 view content relay replica report:
   title: 'View the Content Relay replica report'
   description: 'See the sync status of every item received from the origin.'
+administer content relay mappings:
+  title: 'Administer Content Relay mappings'
+  description: 'Map origin bundles onto this site''s structure, and re-apply mappings. Mappings can call PHP functions through the callback transform.'
+  restrict access: true

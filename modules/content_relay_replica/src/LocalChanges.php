@@ -42,7 +42,8 @@ class LocalChanges {
     }
     $source = $state['source_translation_hashes'];
     $source = is_array($source) ? $source : (json_decode((string) $source, TRUE) ?: []);
-    $context = new NormalizationContext(array_map('strval', array_keys($source)));
+    // A mapped copy was hashed whole, in its own structure.
+    $context = new NormalizationContext(($state['import_mode'] ?? 'as_is') === 'mapped' ? NULL : array_map('strval', array_keys($source)));
     $hashes = $this->hasher->hash($this->serializer->normalize($entity, $context), [], (int) $state['hash_algorithm']);
     if (hash_equals($state['local_hash'], $hashes->entity)) {
       return NULL;

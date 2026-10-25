@@ -619,7 +619,7 @@ class FileSync {
       }
       $entity->save();
     }
-    $context = new NormalizationContext(array_map('strval', array_keys($state['source_translation_hashes'])));
+    $context = new NormalizationContext($state['import_mode'] === 'mapped' ? NULL : array_map('strval', array_keys($state['source_translation_hashes'])));
     $context->fileUrlResolver = $this->originUrlResolver();
     $local = $this->hasher->hash($this->serializer->normalize($entity, $context), [], (int) $state['hash_algorithm']);
     $expected = $state['expected_hash'] ?? $state['source_hash'];

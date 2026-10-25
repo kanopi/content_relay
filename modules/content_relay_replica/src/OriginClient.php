@@ -8,16 +8,19 @@ use Drupal\content_relay\Auth\PullAuthenticatorInterface;
 use Drupal\content_relay\Crypto\MessageSigner;
 use Drupal\content_relay\Crypto\MessageVerifier;
 use Drupal\content_relay\Crypto\VerificationException;
+use Drupal\content_relay\Event\SyncEvent;
+use Drupal\content_relay\Exception\InvalidEventException;
 use Drupal\Core\State\StateInterface;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
 use Psr\Log\LoggerInterface;
 
 /**
- * Talks to the origin on the replica's initiative: notices and file requests.
+ * Talks to the origin on the replica's initiative: notices and reads.
  *
- * Notices about items are signed messages to the origin's inbox; file
- * requests carry the replica's short-lived JWT.
+ * Notices about items are signed messages to the origin's inbox. Reads
+ * (files, schema, items) carry the replica's short-lived JWT and are answered
+ * with signed messages.
  *
  * A notice that cannot be delivered is kept and sent again by cron. Only the
  * latest notice per item is kept: a detach followed by a reattach while the
@@ -47,13 +50,62 @@ class OriginClient {
    *   When the origin cannot be asked or will not say.
    */
   public function fileInfo(string $uuid): array {
+    $info = $this->read('/content-relay/v1/files/' . rawurlencode($uuid), 'file_info');
+    if (!is_string($info['sha256'] ?? NULL) || !is_string($info['download'] ?? NULL)) {
+      throw new SubscriptionException('The origin\'s answer is not file metadata.');
+    }
+    return $info;
+  }
+
+  /**
+   * The origin's schema: the synced fields of the bundles this site may have.
+   *
+   * @return array<string, array<string, array>>
+   *   Bundle descriptions by entity type and bundle; see SchemaDescriber.
+   *
+   * @throws \Drupal\content_relay_replica\SubscriptionException
+   */
+  public function schema(): array {
+    $body = $this->read('/content-relay/v1/schema', 'schema');
+    return is_array($body['bundles'] ?? NULL) ? $body['bundles'] : [];
+  }
+
+  /**
+   * One item from the origin, as an event built under this site's contract.
+   *
+   * @throws \Drupal\content_relay_replica\SubscriptionException
+   *   When the origin cannot be asked, does not have it or refuses.
+   */
+  public function item(string $entity_type_id, string $uuid): SyncEvent {
+    $body = $this->read('/content-relay/v1/items/' . rawurlencode($entity_type_id) . '/' . rawurlencode($uuid), 'item');
+    try {
+      $event = SyncEvent::fromArray(is_array($body['event'] ?? NULL) ? $body['event'] : []);
+    }
+    catch (InvalidEventException $e) {
+      throw new SubscriptionException('The origin sent a malformed item: ' . $e->getMessage(), 0, $e);
+    }
+    if ($event->entityType !== $entity_type_id || $event->entityUuid !== $uuid) {
+      throw new SubscriptionException('The origin sent a different item.');
+    }
+    return $event;
+  }
+
+  /**
+   * Reads from the origin with a JWT and verifies the signed answer.
+   *
+   * @return array
+   *   The answer's body.
+   *
+   * @throws \Drupal\content_relay_replica\SubscriptionException
+   */
+  protected function read(string $path, string $type): array {
     $origin = $this->origin->get();
     if ($origin === NULL) {
       throw new SubscriptionException('This site is not paired.');
     }
     try {
       $token = $this->authenticator->issue($origin['site_id'], 'sync:read');
-      $response = $this->httpClient->request('GET', rtrim($origin['url'], '/') . '/content-relay/v1/files/' . rawurlencode($uuid), [
+      $response = $this->httpClient->request('GET', rtrim($origin['url'], '/') . $path, [
         'headers' => ['Accept' => 'application/json', 'Authorization' => 'Bearer ' . $token],
         'timeout' => 30,
         'http_errors' => FALSE,
@@ -70,18 +122,16 @@ class OriginClient {
     if ($response->getStatusCode() !== 200 || !is_array($answer)) {
       throw new SubscriptionException(sprintf('The origin answered HTTP %d%s.', $response->getStatusCode(), is_array($answer) && is_string($answer['result'] ?? NULL) ? ' (' . $answer['result'] . ')' : ''));
     }
-    // A signed message: it can carry the file's key.
     try {
       $message = $this->verifier->verify($answer);
     }
     catch (VerificationException $e) {
       throw new SubscriptionException(sprintf('The origin\'s answer does not verify: %s', $e->reason), 0, $e);
     }
-    $info = $message->body;
-    if ($message->type !== 'file_info' || $message->sender !== $origin['site_id'] || !is_string($info['sha256'] ?? NULL) || !is_string($info['download'] ?? NULL)) {
-      throw new SubscriptionException('The origin\'s answer is not file metadata.');
+    if ($message->type !== $type || $message->sender !== $origin['site_id']) {
+      throw new SubscriptionException(sprintf('Expected a "%s" answer from the origin.', $type));
     }
-    return $info;
+    return $message->body;
   }
 
   /**

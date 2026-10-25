@@ -433,3 +433,38 @@ means it was lost (for example, the replica was restored from a backup). The
 origin sends it again in its place in the stream, with the same event ID, so
 it is applied once whatever happened before.
 
+## 52. The read endpoint is custom, and arrives in phase 9
+
+Mapping previews and re-applying a changed mapping both need an origin item,
+so the item endpoint the specification places with pulls (phase 10) is built
+now; phase 10 adds manual pulls and reconciliation on top. It is a custom
+endpoint rather than JSON:API, authorized by the replica's JWT and contract
+rather than a "sync role": see the README for why. It cannot write.
+
+## 53. A mapping exists or it does not
+
+The specification has the replica choose "as is" or "mapped" per bundle.
+Here, a bundle is mapped exactly when an enabled mapping exists for it; there
+is no separate setting to keep in step. The mapping's ID is the origin entity
+type and bundle, so there is at most one per bundle.
+
+## 54. Transforms are written as YAML in the mapping form
+
+Transforms take different configuration each. Rather than a form per plugin,
+each mapping row takes a short YAML list of steps (plugin and configuration),
+checked on save against the plugins and their own validation. The config
+schema still types every plugin's configuration, so exports are validated.
+
+## 55. Mapped items are hashed in their own structure
+
+A mapped copy cannot hash the same as the origin's snapshot. It keeps the
+origin's hash (to tell whether it has the latest) and a hash of its own
+structure (to notice local edits); it is never flagged as an error for
+differing from the origin.
+
+## 56. The schema endpoint lists what a replica may subscribe to
+
+The specification says "bundles shared with that replica". To check a bundle
+before asking for it, the schema includes every bundle the replica is
+allowed, not only those it already receives.
+

@@ -50,6 +50,30 @@ content_relay_origin.file_download:
   options:
     no_cache: TRUE
 
+content_relay_origin.schema:
+  path: '/content-relay/v1/schema'
+  defaults:
+    _controller: '\Drupal\content_relay_origin\Controller\ReadController::schema'
+  methods: [GET]
+  requirements:
+    # Open on purpose: authenticated by the replica's JWT in the controller.
+    _access: 'TRUE'
+  options:
+    no_cache: TRUE
+
+content_relay_origin.item:
+  path: '/content-relay/v1/items/{entity_type}/{uuid}'
+  defaults:
+    _controller: '\Drupal\content_relay_origin\Controller\ReadController::item'
+  methods: [GET]
+  requirements:
+    # Open on purpose: authenticated by the replica's JWT in the controller.
+    _access: 'TRUE'
+    entity_type: '[a-z0-9_]+'
+    uuid: '[0-9a-fA-F\-]{36}'
+  options:
+    no_cache: TRUE
+
 # Administration.
 content_relay_origin.settings:
   path: '/admin/config/services/content-relay/origin'

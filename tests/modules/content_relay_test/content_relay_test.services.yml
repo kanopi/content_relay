@@ -1,7 +1,7 @@
 services:
   content_relay_test.fake_origin:
     class: Drupal\content_relay_test\FakeOrigin
-    arguments: ['@state']
+    arguments: ['@state', '@content_relay.schema_describer']
     tags:
       - { name: http_client_middleware }
 

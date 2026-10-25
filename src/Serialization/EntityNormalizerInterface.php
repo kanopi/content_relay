@@ -80,4 +80,12 @@ interface EntityNormalizerInterface extends PluginInspectionInterface {
    */
   public function getLocalFieldNames(ContentEntityTypeInterface $entity_type): array;
 
+  /**
+   * The fields synced for a bundle, keyed by name, in a stable order.
+   *
+   * @return array<string, \Drupal\Core\Field\FieldDefinitionInterface>
+   *   Field definitions.
+   */
+  public function getSyncedFieldDefinitions(ContentEntityTypeInterface $entity_type, string $bundle): array;
+
 }

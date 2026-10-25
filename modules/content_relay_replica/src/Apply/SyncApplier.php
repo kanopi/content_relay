@@ -15,9 +15,13 @@ use Drupal\content_relay\Serialization\DenormalizationContext;
 use Drupal\content_relay\Serialization\EntitySerializer;
 use Drupal\content_relay\Serialization\NormalizationContext;
 use Drupal\content_relay_replica\ContractStore;
+use Drupal\content_relay_replica\Entity\ContentRelayMapping;
 use Drupal\content_relay_replica\FailedEventStore;
 use Drupal\content_relay_replica\File\FileSync;
 use Drupal\content_relay_replica\LocalChanges;
+use Drupal\content_relay_replica\Mapping\MappedImporter;
+use Drupal\content_relay_replica\Mapping\MappingException;
+use Drupal\content_relay_replica\Mapping\MappingRepository;
 use Drupal\content_relay_replica\OriginPeer;
 use Drupal\content_relay_replica\ProcessedEvents;
 use Drupal\content_relay_replica\SyncStateStore;
@@ -86,6 +90,8 @@ class SyncApplier {
     protected LoggerInterface $logger,
     protected LocalChanges $localChanges,
     protected FileSync $files,
+    protected MappingRepository $mappings,
+    protected MappedImporter $mappedImporter,
   ) {}
 
   /**
@@ -98,9 +104,12 @@ class SyncApplier {
    * @param bool $is_retry
    *   TRUE to apply even though the event was handled before, for retries of
    *   recorded failures.
+   * @param bool $force
+   *   TRUE to apply even if this site already has that revision, for pulls
+   *   after a mapping changed.
    */
-  public function apply(SyncEvent $event, string $source_site, bool $is_retry = FALSE): ApplyResult {
-    if (!$is_retry && ($record = $this->processed->get($event->eventId))) {
+  public function apply(SyncEvent $event, string $source_site, bool $is_retry = FALSE, bool $force = FALSE): ApplyResult {
+    if (!$is_retry && !$force && ($record = $this->processed->get($event->eventId))) {
       return ApplyResult::fromRecord($record);
     }
     if ($event->snapshot !== NULL && ($event->hashes === NULL || !$this->hasher->matches($event->snapshot, $event->hashes))) {
@@ -128,7 +137,7 @@ class SyncApplier {
       }
     }
     try {
-      return $this->applyLocked($event, $source_site);
+      return $this->applyLocked($event, $source_site, $force);
     }
     finally {
       $this->lock->release($lock);
@@ -152,10 +161,16 @@ class SyncApplier {
   /**
    * Applies an event while holding the item's lock.
    */
-  protected function applyLocked(SyncEvent $event, string $source_site): ApplyResult {
+  protected function applyLocked(SyncEvent $event, string $source_site, bool $force = FALSE): ApplyResult {
     $state = $this->syncState->get($event->entityType, $event->entityUuid);
+    $mapping = $this->mappings->forSource($event->entityType, $event->bundle);
+    if ($mapping !== NULL && !$this->entityTypeManager->hasDefinition($mapping->getTargetEntityType())) {
+      return $this->fail($event, $source_site, FailedEventStore::PERMANENT, 'mapping_failed', sprintf('Mapping %s targets entity type "%s", which does not exist here.', $mapping->id(), $mapping->getTargetEntityType()));
+    }
+    // Mapped content may live in another entity type here; the UUID is the
+    // same.
     /** @var \Drupal\Core\Entity\EntityInterface|null $entity */
-    $entity = $this->entityRepository->loadEntityByUuid($event->entityType, $event->entityUuid);
+    $entity = $this->entityRepository->loadEntityByUuid($mapping?->getTargetEntityType() ?? $event->entityType, $event->entityUuid);
     $entity = $entity instanceof ContentEntityInterface ? $entity : NULL;
 
     if ($event->operation === Operation::Detach || $event->operation === Operation::Attach) {
@@ -178,7 +193,7 @@ class SyncApplier {
       if ($this->isStale($event, $state)) {
         return $this->answer($event, new ApplyResult(409, ApplyResult::STALE, 'stale', sprintf('The replica already has revision %d.', $state['source_revision'])));
       }
-      if ($event->hashes !== NULL && (int) $state['source_revision'] === $event->sourceRevision && $state['source_hash'] === $event->hashes->entity && $state['status'] === SyncStatus::SYNCED) {
+      if (!$force && $event->hashes !== NULL && (int) $state['source_revision'] === $event->sourceRevision && $state['source_hash'] === $event->hashes->entity && $state['status'] === SyncStatus::SYNCED) {
         $this->failures->resolve($event->eventId);
         return $this->answer($event, new ApplyResult(200, ApplyResult::UNCHANGED));
       }
@@ -186,7 +201,7 @@ class SyncApplier {
 
     return $event->operation === Operation::Delete
       ? $this->applyDelete($event, $source_site, $entity, $state)
-      : $this->applySnapshot($event, $source_site, $entity);
+      : $this->applySnapshot($event, $source_site, $entity, $mapping);
   }
 
   /**
@@ -270,12 +285,23 @@ class SyncApplier {
   /**
    * Creates or updates an item from a snapshot.
    */
-  protected function applySnapshot(SyncEvent $event, string $source_site, ?ContentEntityInterface $entity): ApplyResult {
+  protected function applySnapshot(SyncEvent $event, string $source_site, ?ContentEntityInterface $entity, ?ContentRelayMapping $mapping = NULL): ApplyResult {
     assert($event->snapshot !== NULL && $event->hashes !== NULL);
     $transaction = $this->database->startTransaction();
     try {
       $context = $this->denormalizationContext($event);
-      $target = $this->serializer->denormalize($event->snapshot, $context, $entity);
+      if ($mapping !== NULL) {
+        try {
+          $target = $this->mappedImporter->build($event->snapshot, $mapping, $entity, $context);
+        }
+        catch (MappingException $e) {
+          $transaction->rollBack();
+          return $this->fail($event, $source_site, FailedEventStore::PERMANENT, 'mapping_failed', $e->getMessage());
+        }
+      }
+      else {
+        $target = $this->serializer->denormalize($event->snapshot, $context, $entity);
+      }
 
       if ($context->missingReferences !== []) {
         $transaction->rollBack();
@@ -291,7 +317,7 @@ class SyncApplier {
       $this->prepareRevision($target, $event);
       $this->eventDispatcher->dispatch(new ApplyEvent($event, $target), ContentRelayEvents::PRE_APPLY);
       $target->save();
-      $this->serializer->getUuidResolver()->reset($event->entityType);
+      $this->serializer->getUuidResolver()->reset($target->getEntityTypeId());
       $this->eventDispatcher->dispatch(new ApplyEvent($event, $target), ContentRelayEvents::POST_APPLY);
 
       // The binary of a file is fetched separately; the files the item uses
@@ -306,22 +332,33 @@ class SyncApplier {
       $pending = $this->files->pendingAmong($file_uuids);
 
       // Hash what is actually stored, not what is in memory.
-      $saved = $this->entityTypeManager->getStorage($event->entityType)->loadUnchanged($target->id());
+      $saved = $this->entityTypeManager->getStorage($target->getEntityTypeId())->loadUnchanged($target->id());
       assert($saved instanceof ContentEntityInterface);
-      $hash_context = new NormalizationContext($event->langcodes);
+      // A mapped copy has this site's structure: its hash is its own, kept to
+      // notice local edits, and cannot be compared with the origin's.
+      $hash_context = new NormalizationContext($mapping === NULL ? $event->langcodes : NULL);
       $hash_context->fileUrlResolver = $this->files->originUrlResolver();
       $local = $this->hasher->hash($this->serializer->normalize($saved, $hash_context), [], $event->hashes->algorithmVersion);
       // What the copy should hash to: the origin's snapshot, with the
       // references this site resolved by its own policy swapped the same way.
-      $expected = $context->substitutions === []
-        ? $event->hashes
-        : $this->hasher->hash($context->applySubstitutions($event->snapshot), [], $event->hashes->algorithmVersion);
+      $expected = match (TRUE) {
+        $mapping !== NULL => $local,
+        $context->substitutions === [] => $event->hashes,
+        default => $this->hasher->hash($context->applySubstitutions($event->snapshot), [], $event->hashes->algorithmVersion),
+      };
 
       $status = SyncStatus::SYNCED;
       $error = NULL;
       if ($context->unknownFields !== []) {
         $status = SyncStatus::SCHEMA_DRIFT;
-        $error = sprintf('Fields from the origin that do not exist here were ignored: %s.', implode(', ', array_keys($context->unknownFields)));
+        $error = $mapping === NULL
+          ? sprintf('Fields from the origin that do not exist here were ignored: %s.', implode(', ', array_keys($context->unknownFields)))
+          : sprintf('Fields from the origin that mapping %s does not map or ignore: %s.', $mapping->id(), implode(', ', array_keys($context->unknownFields)));
+        $this->logger->warning('Schema drift on @type @uuid: @error', [
+          '@type' => $event->entityType,
+          '@uuid' => $event->entityUuid,
+          '@error' => $error,
+        ]);
       }
       elseif ($pending !== []) {
         $status = SyncStatus::WAITING_FILES;
@@ -341,7 +378,8 @@ class SyncApplier {
         'source_translation_hashes' => $event->hashes->translations,
         'local_hash' => $local->entity,
         'expected_hash' => $expected->entity,
-        'import_mode' => 'as_is',
+        'import_mode' => $mapping === NULL ? 'as_is' : 'mapped',
+        'mapping_id' => $mapping?->id(),
         'origin_detached_at' => NULL,
         'status' => $status,
         'last_error' => $error,
@@ -392,7 +430,7 @@ class SyncApplier {
       if ($entity instanceof FileInterface) {
         $this->files->forget($event->entityUuid);
       }
-      $this->serializer->getUuidResolver()->reset($event->entityType);
+      $this->serializer->getUuidResolver()->reset($entity->getEntityTypeId());
       $this->eventDispatcher->dispatch(new ApplyEvent($event, $entity), ContentRelayEvents::POST_APPLY);
       $this->failures->resolve($event->eventId);
       $this->failures->supersede($event->entityType, $event->entityUuid, $event->eventId);

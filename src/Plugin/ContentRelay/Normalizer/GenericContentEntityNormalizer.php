@@ -310,9 +310,31 @@ class GenericContentEntityNormalizer extends PluginBase implements EntityNormali
   protected function getSyncedFields(ContentEntityInterface $entity): array {
     $entity_type = $entity->getEntityType();
     assert($entity_type instanceof ContentEntityTypeInterface);
+    return $this->filterSyncedFields($entity_type, $entity->getFieldDefinitions());
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  public function getSyncedFieldDefinitions(ContentEntityTypeInterface $entity_type, string $bundle): array {
+    return $this->filterSyncedFields($entity_type, $this->entityFieldManager->getFieldDefinitions($entity_type->id(), $bundle));
+  }
+
+  /**
+   * Keeps the synced fields of a set of definitions, sorted by name.
+   *
+   * @param \Drupal\Core\Entity\ContentEntityTypeInterface $entity_type
+   *   The entity type.
+   * @param array<string, \Drupal\Core\Field\FieldDefinitionInterface> $definitions
+   *   Field definitions.
+   *
+   * @return array<string, \Drupal\Core\Field\FieldDefinitionInterface>
+   *   The synced ones.
+   */
+  protected function filterSyncedFields(ContentEntityTypeInterface $entity_type, array $definitions): array {
     $local = array_flip($this->getLocalFieldNames($entity_type));
     $fields = [];
-    foreach ($entity->getFieldDefinitions() as $name => $definition) {
+    foreach ($definitions as $name => $definition) {
       if (isset($local[$name]) || $definition->getType() === 'password') {
         continue;
       }

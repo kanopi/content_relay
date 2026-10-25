@@ -28,6 +28,13 @@ function content_relay_replica_requirements(string $phase): array {
     ];
   }
   if ($phase === 'runtime') {
+    $schema = \Drupal::service('content_relay_replica.schema_watcher')->problems();
+    $requirements['content_relay_replica_schema'] = [
+      'title' => t('Content Relay origin schema'),
+      'value' => $schema === [] ? t('Every received bundle fits this site') : t('Bundles that do not fit: @bundles', ['@bundles' => implode(', ', array_keys($schema))]),
+      'description' => $schema === [] ? '' : implode(' ', array_merge(...array_values($schema))),
+      'severity' => $schema === [] ? REQUIREMENT_OK : REQUIREMENT_WARNING,
+    ];
     $open = \Drupal::service('content_relay_replica.failed_events')->countOpen();
     $requirements['content_relay_replica_failures'] = [
       'title' => t('Content Relay synced items'),

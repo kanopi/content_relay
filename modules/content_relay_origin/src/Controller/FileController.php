@@ -4,16 +4,14 @@ declare(strict_types=1);
 
 namespace Drupal\content_relay_origin\Controller;
 
-use Drupal\content_relay\Auth\AuthenticationException;
-use Drupal\content_relay\Auth\PullAuthenticatorInterface;
 use Drupal\content_relay\Crypto\EncryptionMode;
 use Drupal\content_relay\Crypto\FileCipher;
-use Drupal\content_relay\Crypto\MessageSigner;
 use Drupal\content_relay\Crypto\PeerPolicy;
 use Drupal\content_relay\File\FileChecksums;
 use Drupal\content_relay_origin\File\FileAccess;
 use Drupal\content_relay_origin\File\FileKeys;
 use Drupal\content_relay_origin\File\FileLinks;
+use Drupal\content_relay_origin\ReplicaRequests;
 use Drupal\Core\DependencyInjection\ContainerInjectionInterface;
 use Drupal\Core\Entity\EntityRepositoryInterface;
 use Drupal\Core\File\FileUrlGeneratorInterface;
@@ -41,22 +39,16 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
  */
 final class FileController implements ContainerInjectionInterface {
 
-  /**
-   * The scope replicas' tokens must carry.
-   */
-  public const SCOPE = 'sync:read';
-
   public function __construct(
     private readonly EntityRepositoryInterface $entityRepository,
     private readonly FileAccess $access,
     private readonly FileLinks $links,
     private readonly FileChecksums $checksums,
     private readonly FileUrlGeneratorInterface $fileUrlGenerator,
-    private readonly PullAuthenticatorInterface $authenticator,
     private readonly LoggerInterface $logger,
     private readonly FileKeys $fileKeys,
-    private readonly MessageSigner $signer,
     private readonly PeerPolicy $peerPolicy,
+    private readonly ReplicaRequests $requests,
   ) {}
 
   /**
@@ -69,11 +61,10 @@ final class FileController implements ContainerInjectionInterface {
       $container->get('content_relay_origin.file_links'),
       $container->get('content_relay.file_checksums'),
       $container->get('file_url_generator'),
-      $container->get('content_relay.pull_authenticator'),
       $container->get('logger.channel.content_relay_origin'),
       $container->get('content_relay_origin.file_keys'),
-      $container->get('content_relay.message_signer'),
       $container->get('content_relay.peer_policy'),
+      $container->get('content_relay_origin.replica_requests'),
     );
   }
 
@@ -81,19 +72,9 @@ final class FileController implements ContainerInjectionInterface {
    * Fresh metadata and a new download link.
    */
   public function info(string $uuid, Request $request): JsonResponse {
-    $header = (string) $request->headers->get('Authorization', '');
-    if (!str_starts_with($header, 'Bearer ')) {
-      return $this->refuse(401, 'unauthenticated', 'A bearer token is required.');
-    }
-    try {
-      $replica_id = $this->authenticator->authenticate(substr($header, 7), self::SCOPE);
-    }
-    catch (AuthenticationException $e) {
-      $this->logger->warning('Refused a file request from @ip: @reason', [
-        '@ip' => $request->getClientIp(),
-        '@reason' => $e->reason,
-      ]);
-      return $this->refuse(401, $e->reason, $e->getMessage());
+    $replica_id = $this->requests->authenticate($request);
+    if ($replica_id instanceof JsonResponse) {
+      return $replica_id;
     }
     $file = $this->file($uuid);
     if ($file === NULL || !$this->access->allows($replica_id, $file)) {
@@ -107,7 +88,7 @@ final class FileController implements ContainerInjectionInterface {
     $encrypted = $this->peerPolicy->sendMode($replica_id) === EncryptionMode::Sealed;
     $key_id = $encrypted ? $this->fileKeys->currentKeyId() : NULL;
     $metadata = self::metadata($file, $checksum, $this->links->build($file, $replica_id, $key_id), $this->fileUrlGenerator, $key_id === NULL ? NULL : $this->fileKeys->derive($key_id, (string) $file->uuid(), $replica_id, $checksum['sha256']));
-    return new JsonResponse($this->signer->sign($replica_id, 'file_info', $metadata)->toArray(), 200, ['Cache-Control' => 'no-store']);
+    return $this->requests->answer($replica_id, 'file_info', $metadata);
   }
 
   /**

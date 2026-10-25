@@ -5,6 +5,11 @@ declare(strict_types=1);
 namespace Drupal\content_relay_replica\Drush\Commands;
 
 use Drupal\content_relay_replica\File\FileSync;
+use Drupal\content_relay_replica\Puller;
+use Drupal\content_relay_replica\Schema\SchemaWatcher;
+use Drupal\content_relay_replica\SubscriptionException;
+use Drupal\Core\Database\Connection;
+use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\content_relay_replica\ItemDetacher;
 use Drupal\Core\Entity\ContentEntityInterface;
 use Drupal\Core\Entity\EntityRepositoryInterface;
@@ -32,6 +37,14 @@ final class ReplicaCommands extends DrushCommands {
     private readonly FileSync $files,
     #[Autowire(service: 'entity.repository')]
     private readonly EntityRepositoryInterface $entityRepository,
+    #[Autowire(service: 'content_relay_replica.schema_watcher')]
+    private readonly SchemaWatcher $schemaWatcher,
+    #[Autowire(service: 'content_relay_replica.puller')]
+    private readonly Puller $puller,
+    #[Autowire(service: 'entity_type.manager')]
+    private readonly EntityTypeManagerInterface $entityTypeManager,
+    #[Autowire(service: 'database')]
+    private readonly Connection $database,
   ) {
     parent::__construct();
   }
@@ -124,6 +137,68 @@ final class ReplicaCommands extends DrushCommands {
     $this->logger()->notice(dt('@count file(s) missing or altered; @fetched fetched.', [
       '@count' => count($uuids),
       '@fetched' => count($uuids) - $failed,
+    ]));
+    return $failed === 0 ? self::EXIT_SUCCESS : self::EXIT_FAILURE;
+  }
+
+  /**
+   * Checks every received bundle against the origin's schema.
+   */
+  #[CLI\Command(name: 'content-relay:check-schema', aliases: ['cr-check-schema'])]
+  public function checkSchema(): int {
+    try {
+      $results = $this->schemaWatcher->check();
+    }
+    catch (SubscriptionException $e) {
+      $this->logger()->error($e->getMessage());
+      return self::EXIT_FAILURE;
+    }
+    $failed = FALSE;
+    foreach ($results as $bundle => $result) {
+      $this->io()->writeln(sprintf('%s (%s)%s', $bundle, $result['mode'], $result['changed'] ? ', changed since the last check' : ''));
+      foreach ($result['problems'] as $problem) {
+        $this->io()->writeln('  problem: ' . $problem);
+        $failed = TRUE;
+      }
+      foreach ($result['warnings'] as $warning) {
+        $this->io()->writeln('  warning: ' . $warning);
+      }
+    }
+    return $failed ? self::EXIT_FAILURE : self::EXIT_SUCCESS;
+  }
+
+  /**
+   * Pulls every synced item of a mapping's origin bundle and applies it again.
+   */
+  #[CLI\Command(name: 'content-relay:reapply-mapping', aliases: ['cr-reapply-mapping'])]
+  #[CLI\Argument(name: 'mapping', description: 'Mapping ID, such as node__article.')]
+  public function reapplyMapping(string $mapping): int {
+    /** @var \Drupal\content_relay_replica\Entity\ContentRelayMapping|null $entity */
+    $entity = $this->entityTypeManager->getStorage('content_relay_mapping')->load($mapping);
+    if ($entity === NULL) {
+      $this->logger()->error(dt('There is no mapping @mapping.', ['@mapping' => $mapping]));
+      return self::EXIT_FAILURE;
+    }
+    $uuids = $this->database->select(SyncStateStore::TABLE, 's')
+      ->fields('s', ['uuid'])
+      ->condition('entity_type', $entity->getSourceEntityType())
+      ->condition('bundle', $entity->getSourceBundle())
+      ->isNull('detached_at')
+      ->execute()
+      ->fetchCol();
+    $failed = 0;
+    foreach ($uuids as $uuid) {
+      try {
+        $failed += (int) ($this->puller->pull($entity->getSourceEntityType(), $uuid, TRUE)->httpStatus !== 200);
+      }
+      catch (SubscriptionException $e) {
+        $this->logger()->warning(dt('@uuid: @message', ['@uuid' => $uuid, '@message' => $e->getMessage()]));
+        $failed++;
+      }
+    }
+    $this->logger()->notice(dt('@count item(s) re-applied, @failed failed.', [
+      '@count' => count($uuids) - $failed,
+      '@failed' => $failed,
     ]));
     return $failed === 0 ? self::EXIT_SUCCESS : self::EXIT_FAILURE;
   }

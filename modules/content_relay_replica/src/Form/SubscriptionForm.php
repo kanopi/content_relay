@@ -8,6 +8,10 @@ use Drupal\content_relay\Contract\ContractRenderer;
 use Drupal\content_relay\Contract\SubscriptionContract;
 use Drupal\content_relay\Serialization\SyncableEntityTypes;
 use Drupal\content_relay_replica\ContractStore;
+use Drupal\content_relay_replica\Mapping\MappingRepository;
+use Drupal\content_relay_replica\OriginClient;
+use Drupal\content_relay_replica\Schema\CompatibilityChecker;
+use Drupal\content_relay_replica\SubscriptionException;
 use Drupal\content_relay_replica\OriginPeer;
 use Drupal\content_relay_replica\SubscriptionManager;
 use Drupal\Core\Form\FormBase;
@@ -28,6 +32,9 @@ final class SubscriptionForm extends FormBase {
     protected ContractRenderer $renderer,
     protected SyncableEntityTypes $syncableTypes,
     protected LanguageManagerInterface $languageManager,
+    protected OriginClient $originClient,
+    protected CompatibilityChecker $checker,
+    protected MappingRepository $mappings,
   ) {}
 
   /**
@@ -41,6 +48,9 @@ final class SubscriptionForm extends FormBase {
       $container->get('content_relay.contract_renderer'),
       $container->get('content_relay.syncable_entity_types'),
       $container->get('language_manager'),
+      $container->get('content_relay_replica.origin_client'),
+      $container->get('content_relay_replica.compatibility_checker'),
+      $container->get('content_relay_replica.mappings'),
     );
   }
 
@@ -152,6 +162,49 @@ final class SubscriptionForm extends FormBase {
     $form['history'] = $this->renderer->history($history);
     $form['#cache']['max-age'] = 0;
     return $form;
+  }
+
+  /**
+   * Refuses bundles newly asked for as they are when they do not fit here.
+   *
+   * {@inheritdoc}
+   */
+  public function validateForm(array &$form, FormStateInterface $form_state): void {
+    // New: not asked for before, whether or not it was granted then.
+    $current = $this->subscription->getReplicaTerms()['bundles'] ?? [];
+    $new = [];
+    foreach ((array) ($form_state->getValue(['terms', 'bundles']) ?? []) as $entity_type_id => $selected) {
+      foreach (array_filter((array) $selected) as $bundle) {
+        if (!in_array($bundle, $current[$entity_type_id] ?? [], TRUE) && $this->mappings->forSource((string) $entity_type_id, (string) $bundle) === NULL) {
+          $new[(string) $entity_type_id][] = (string) $bundle;
+        }
+      }
+    }
+    if ($new === []) {
+      return;
+    }
+    try {
+      $schema = $this->originClient->schema();
+    }
+    catch (SubscriptionException $e) {
+      $form_state->setErrorByName('terms][bundles', $this->t('The origin schema could not be checked, so new bundles cannot be added as they are: @message', ['@message' => $e->getMessage()]));
+      return;
+    }
+    foreach ($new as $entity_type_id => $bundles) {
+      foreach ($bundles as $bundle) {
+        $origin = $schema[$entity_type_id][$bundle] ?? NULL;
+        if ($origin === NULL) {
+          continue;
+        }
+        $problems = $this->checker->check($entity_type_id, $bundle, $origin)['problems'];
+        if ($problems !== []) {
+          $form_state->setErrorByName('terms][bundles][' . $entity_type_id, $this->t('%bundle cannot be taken as it is: @problems Add a mapping for it first.', [
+            '%bundle' => $origin['label'] ?? $bundle,
+            '@problems' => implode(' ', $problems),
+          ]));
+        }
+      }
+    }
   }
 
   /**

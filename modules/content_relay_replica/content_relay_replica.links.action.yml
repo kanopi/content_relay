@@ -1,0 +1,5 @@
+entity.content_relay_mapping.add_form:
+  title: 'Add mapping'
+  route_name: entity.content_relay_mapping.add_form
+  appears_on:
+    - entity.content_relay_mapping.collection

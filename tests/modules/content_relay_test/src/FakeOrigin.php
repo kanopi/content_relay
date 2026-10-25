@@ -12,6 +12,7 @@ use Drupal\content_relay\Crypto\Message;
 use Drupal\content_relay\Crypto\MessageSigner;
 use Drupal\content_relay\Key\KeyPair;
 use Drupal\content_relay\Key\KeyPurpose;
+use Drupal\content_relay\Schema\SchemaDescriber;
 use Drupal\Core\State\StateInterface;
 use GuzzleHttp\Exception\ConnectException;
 use GuzzleHttp\Promise\Create;
@@ -35,6 +36,11 @@ use Psr\Http\Message\RequestInterface;
  * - down: TRUE to fail every request with a connection error.
  * - versions: contracts issued; acks: versions acknowledged; requests: log.
  * - notices: detach and attach notices received, each type and body.
+ * - schema: what the schema endpoint answers, by entity type and bundle;
+ *   without it, this site's own allowed bundles are described, so content
+ *   fits as it is.
+ * - items: what the item endpoint answers, event arrays by
+ *   "entity_type:uuid".
  * - files: files it serves, by UUID: content, uri and, to serve it
  *   encrypted, key (base64 file key). Downloads are
  *   answered 410 while expire_downloads is positive and with wrong bytes
@@ -48,6 +54,7 @@ final class FakeOrigin {
 
   public function __construct(
     private readonly StateInterface $state,
+    private readonly SchemaDescriber $describer,
   ) {}
 
   /**
@@ -107,7 +114,20 @@ final class FakeOrigin {
         }
         return Create::promiseFor(new Response($status, ['Content-Type' => 'application/json'], json_encode($answer)));
       }
+      if (preg_match('#^/content-relay/v1/items/([a-z0-9_]+)/([0-9a-f\-]{36})$#', $path, $m)) {
+        $event = $config['items'][$m[1] . ':' . $m[2]] ?? NULL;
+        [$status, $answer] = $event === NULL ? [404, ['result' => 'not_found']] : [
+          200,
+          $this->sign($config, 'item', ['event' => $event]),
+        ];
+        $this->state->set(self::STATE, $config);
+        return Create::promiseFor(new Response($status, ['Content-Type' => 'application/json'], json_encode($answer)));
+      }
       [$status, $answer] = match ($path) {
+        '/content-relay/v1/schema' => [
+          200,
+          $this->sign($config, 'schema', ['bundles' => $config['schema'] ?? $this->describer->describeMany($config['allowed'])]),
+        ],
         '/content-relay/v1/pair' => $this->pair($config, $body),
         '/content-relay/v1/messages' => $this->message($config, $body),
         default => [404, ['result' => 'not_found']],
@@ -291,7 +311,7 @@ final class FakeOrigin {
    */
   private function sign(array $config, string $type, array $body): array {
     $key = KeyPair::fromMaterial(KeyPurpose::Signing, $config['key']);
-    $message = new Message((new PhpUuid())->generate(), $type, self::SITE_ID, $config['replica'], time(), EncryptionMode::None, $body);
+    $message = new Message((new PhpUuid())->generate(), $type, self::SITE_ID, $config['replica'] ?? 'not-paired-yet', time(), EncryptionMode::None, $body);
     $signature = $key->sign(MessageSigner::signedBytes($key->id(), $message->toArray()));
     return [
       'v' => 1,

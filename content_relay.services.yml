@@ -49,6 +49,10 @@ services:
     class: Drupal\content_relay\File\FileUrlMapper
     arguments: ['@file_url_generator', '@entity_type.manager', '@config.factory', '@request_stack']
 
+  content_relay.schema_describer:
+    class: Drupal\content_relay\Schema\SchemaDescriber
+    arguments: ['@entity_type.manager', '@entity_type.bundle.info', '@plugin.manager.content_relay_normalizer']
+
   content_relay.revision_hasher:
     class: Drupal\content_relay\Hash\RevisionHasher
 

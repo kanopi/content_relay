@@ -53,6 +53,8 @@ services:
       - '@logger.channel.content_relay_replica'
       - '@content_relay_replica.local_changes'
       - '@content_relay_replica.file_sync'
+      - '@content_relay_replica.mappings'
+      - '@content_relay_replica.mapped_importer'
 
   content_relay_replica.contracts:
     class: Drupal\content_relay_replica\ContractStore
@@ -181,3 +183,44 @@ services:
       - '@content_relay_replica.received_events'
       - '@content_relay_replica.contracts'
       - '@content_relay_replica.stream'
+
+  plugin.manager.content_relay_transform:
+    class: Drupal\content_relay_replica\Mapping\TransformManager
+    parent: default_plugin_manager
+
+  content_relay_replica.mapped_importer:
+    class: Drupal\content_relay_replica\Mapping\MappedImporter
+    arguments:
+      - '@entity_type.manager'
+      - '@entity_field.manager'
+      - '@language_manager'
+      - '@plugin.manager.content_relay_field_normalizer'
+      - '@plugin.manager.content_relay_normalizer'
+      - '@plugin.manager.content_relay_transform'
+      - '@content_relay.entity_serializer'
+
+  content_relay_replica.mappings:
+    class: Drupal\content_relay_replica\Mapping\MappingRepository
+    arguments: ['@entity_type.manager']
+
+  content_relay_replica.compatibility_checker:
+    class: Drupal\content_relay_replica\Schema\CompatibilityChecker
+    arguments: ['@content_relay.schema_describer']
+
+  content_relay_replica.schema_watcher:
+    class: Drupal\content_relay_replica\Schema\SchemaWatcher
+    arguments:
+      - '@content_relay_replica.origin_client'
+      - '@content_relay_replica.contracts'
+      - '@content_relay_replica.mappings'
+      - '@content_relay_replica.compatibility_checker'
+      - '@state'
+      - '@datetime.time'
+      - '@logger.channel.content_relay_replica'
+
+  content_relay_replica.puller:
+    class: Drupal\content_relay_replica\Puller
+    arguments:
+      - '@content_relay_replica.origin_client'
+      - '@content_relay_replica.origin'
+      - '@content_relay_replica.applier'
