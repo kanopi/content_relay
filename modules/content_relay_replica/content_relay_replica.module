@@ -81,15 +81,18 @@ function content_relay_replica_entity_operation(EntityInterface $entity, ?Cachea
  */
 function content_relay_replica_help(string $route_name, RouteMatchInterface $route_match): ?string {
   return match ($route_name) {
-    'help.page.content_relay_replica' => '<p>' . t('This site is a Content Relay replica. <a href=":pair">Pair it</a> with an origin, choose what it receives on the <a href=":subscription">subscription</a> page, and how it applies it in the <a href=":settings">settings</a>. The <a href=":report">synced items</a> report shows each item\'s state; content created on this site is never touched by sync.', [
+    'help.page.content_relay_replica' => '<p>' . t('This site is a Content Relay replica. <a href=":pair">Pair it</a> with one origin or several; each is listed under <a href=":origins">Origins</a>, with its contract, settings, reconciliation and unpairing. The <a href=":settings">settings for every origin</a> are the starting point for new pairings. The <a href=":report">synced items</a> report shows each item\'s state; content created on this site is never touched by sync.', [
       ':pair' => Url::fromRoute('content_relay_replica.pair')->toString(),
-      ':subscription' => Url::fromRoute('content_relay_replica.subscription')->toString(),
+      ':origins' => Url::fromRoute('content_relay_replica.origins')->toString(),
       ':settings' => Url::fromRoute('content_relay_replica.settings')->toString(),
       ':report' => Url::fromUserInput('/admin/reports/content-relay/received')->toString(),
     ]) . '</p>',
+    'content_relay_replica.origins' => '<p>' . t('Each origin this site receives from has its own contract, settings and reconciliation. The origin that first sent an item owns it; the others cannot change it.') . '</p>',
     'content_relay_replica.subscription' => '<p>' . t('Changes are proposed to the origin, which answers with a new contract version. Until it confirms, the current contract stays in force.') . '</p>',
-    'content_relay_replica.settings' => '<p>' . t('How received content is applied here. What is received is set on the subscription page.') . '</p>',
-    'content_relay_replica.reconcile' => '<p>' . t('Reconciliation compares every received item with the origin and fixes what differs. It never touches content made here, items detached here, or items in conflict.') . '</p>',
+    'content_relay_replica.settings' => '<p>' . t('Settings that are not about one origin, and the settings new pairings start with. Each origin has its own on its Settings tab.') . '</p>',
+    'content_relay_replica.pairing_settings' => '<p>' . t('How content received from this origin is applied here. What is received is set on the Contract tab.') . '</p>',
+    'content_relay_replica.reconcile', 'content_relay_replica.pairing_reconcile' => '<p>' . t('Reconciliation compares every received item with the origin and fixes what differs. It never touches content made here, items detached here, or items in conflict.') . '</p>',
+    'content_relay_replica.unpair' => '<p>' . t("The origin is told, and stops sending. What came from it is either kept as this site's own content or deleted.") . '</p>',
     'view.content_relay_replica_report.page_1' => '<p>' . t('Items received from the origin. Use the operations to pull, resolve a conflict, validate, detach or reattach; select several to detach or reattach them together.') . '</p>',
     default => NULL,
   };

@@ -221,4 +221,16 @@ final class PairingTest extends OriginTestBase {
     $this->assertSame(FakeReplica::ENDPOINT, $terms['replica_terms']['webhook_url']);
   }
 
+  /**
+   * A replica that unpairs is revoked, and can pair again.
+   */
+  public function testReplicaUnpairs(): void {
+    $this->pairAndAcknowledge();
+    $response = $this->post('/content-relay/v1/messages', $this->replica->message('unpair_notice', ['at' => time()]));
+    $this->assertSame(200, $response->getStatusCode(), (string) $response->getContent());
+    $this->assertSame('revoked', $this->json($response)['result']);
+    $this->assertSame(Replica::REVOKED, $this->container->get('content_relay_origin.replica_registry')->get($this->replica->siteId)->status);
+    $this->pair();
+  }
+
 }

@@ -21,6 +21,7 @@ class MappingListBuilder extends ConfigEntityListBuilder {
     return [
       'label' => $this->t('Mapping'),
       'source' => $this->t('From the origin'),
+      'origin' => $this->t('Origin'),
       'target' => $this->t('To'),
       'status' => $this->t('Enabled'),
     ] + parent::buildHeader();
@@ -34,6 +35,7 @@ class MappingListBuilder extends ConfigEntityListBuilder {
     return [
       'label' => $entity->label(),
       'source' => $entity->getSourceEntityType() . ' › ' . $entity->getSourceBundle(),
+      'origin' => $entity->getPairing() === '' ? $this->t('Every origin') : $entity->getPairing(),
       'target' => $entity->getTargetEntityType() . ' › ' . $entity->getTargetBundle(),
       'status' => $entity->status() ? $this->t('Yes') : $this->t('No'),
     ] + parent::buildRow($entity);

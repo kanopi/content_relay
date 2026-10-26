@@ -51,12 +51,6 @@ final class ReceivingSettingsTest extends ReplicaTestBase {
     $this->assertTrue($receiving->get('detach.follow_deletes'));
     $this->config('content_relay_replica.settings')->set('processed_retention_days', 30)->save();
     $this->assertSame(30, $receiving->get('processed_retention_days'));
-
-    // While there is one origin, the settings form's values reach it.
-    $this->config('content_relay_replica.settings')->set('conflicts.on_event', 'overwrite')->save();
-    $receiving->copyToPairing();
-    $this->assertSame('overwrite', $receiving->pairing()->getSetting('conflicts.on_event'));
-    $this->assertTrue($receiving->pairing()->getSetting('detach.follow_deletes'));
   }
 
   /**
@@ -69,6 +63,30 @@ final class ReceivingSettingsTest extends ReplicaTestBase {
     content_relay_replica_post_update_origin_pairing();
     $pairing = $this->container->get('content_relay_replica.receiving_settings')->pairing();
     $this->assertSame([ContentRelayOriginPairing::DEFAULT, 'Origin'], [$pairing->id(), $pairing->label()]);
+  }
+
+  /**
+   * The synced items report gains its origin column and filter on update.
+   */
+  public function testReportUpdate(): void {
+    $this->enableModules(['views']);
+    $this->installConfig(['content_relay_replica']);
+    $config = $this->config('views.view.content_relay_replica_report');
+    $options = 'display.default.display_options';
+    $config->clear("$options.fields.source_site")
+      ->clear("$options.filters.source_site")
+      ->clear("$options.style.options.columns.source_site")
+      ->clear("$options.style.options.info.source_site")
+      ->save();
+
+    $this->container->get('module_handler')->loadInclude('content_relay_replica', 'install');
+    $this->assertSame('The synced items report shows and filters by origin.', content_relay_replica_update_10005());
+    $config = $this->config('views.view.content_relay_replica_report');
+    $fields = array_keys($config->get("$options.fields"));
+    $this->assertSame('source_site', $fields[array_search('bundle', $fields, TRUE) + 1]);
+    $this->assertSame('origin', $config->get("$options.filters.source_site.expose.identifier"));
+    $this->assertSame('source_site', $config->get("$options.style.options.columns.source_site"));
+    $this->assertSame('Nothing to do.', content_relay_replica_update_10005());
   }
 
 }

@@ -22,6 +22,7 @@ use Drupal\content_relay_replica\StreamTracker;
 use Drupal\content_relay_replica\SubscriptionException;
 use Drupal\content_relay_replica\SubscriptionManager;
 use Drupal\content_relay_replica\SyncStateStore;
+use Drupal\content_relay_replica\Unpairer;
 use Drupal\content_relay_replica\Validator;
 use Drupal\Core\Database\Connection;
 use Drupal\Core\Entity\ContentEntityInterface;
@@ -80,6 +81,8 @@ final class ReplicaCommands extends DrushCommands {
     private readonly Adopter $adopter,
     #[Autowire(service: 'content_relay_replica.active_pairing')]
     private readonly ActivePairing $active,
+    #[Autowire(service: 'content_relay_replica.unpairer')]
+    private readonly Unpairer $unpairer,
   ) {
     parent::__construct();
   }
@@ -632,6 +635,38 @@ final class ReplicaCommands extends DrushCommands {
     }
     $this->failures->dismiss($id, 0, trim((string) $options['reason']));
     $this->logger()->success(dt('Dismissed.'));
+    return self::EXIT_SUCCESS;
+  }
+
+  /**
+   * Unpairs from an origin, keeping or deleting what came from it.
+   */
+  #[CLI\Command(name: 'content-relay:replica-unpair', aliases: ['cr-replica-unpair'])]
+  #[CLI\Argument(name: 'pairing', description: 'The origin pairing, as listed under Origins.')]
+  #[CLI\Option(name: 'keep', description: 'Keep what came from the origin as content of this site.')]
+  #[CLI\Option(name: 'delete', description: 'Delete what came from the origin.')]
+  #[CLI\Usage(name: 'drush content-relay:replica-unpair asia --keep', description: 'Stop receiving from the origin paired as "asia", keeping its content.')]
+  public function unpair(string $pairing, array $options = ['keep' => FALSE, 'delete' => FALSE]): int {
+    if (!in_array($pairing, $this->active->ids(), TRUE)) {
+      $this->logger()->error(dt('There is no origin pairing "@pairing"; pairings: @ids.', [
+        '@pairing' => $pairing,
+        '@ids' => implode(', ', $this->active->ids()),
+      ]));
+      return self::EXIT_FAILURE;
+    }
+    if ((bool) $options['keep'] === (bool) $options['delete']) {
+      $this->logger()->error(dt('Say what happens to the content that came from the origin: --keep or --delete.'));
+      return self::EXIT_FAILURE;
+    }
+    $result = $this->unpairer->unpair($pairing, (bool) $options['delete']);
+    if (!$result['notified']) {
+      $this->logger()->warning(dt('The origin could not be told; it may keep sending until it is revoked there, and its events are refused here.'));
+    }
+    $this->logger()->success(dt('Unpaired @pairing: @deleted item(s) deleted, @kept kept as content of this site.', [
+      '@pairing' => $pairing,
+      '@deleted' => $result['deleted'],
+      '@kept' => $result['kept'],
+    ]));
     return self::EXIT_SUCCESS;
   }
 

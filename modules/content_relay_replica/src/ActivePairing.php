@@ -7,6 +7,7 @@ namespace Drupal\content_relay_replica;
 use Drupal\content_relay_replica\Entity\ContentRelayOriginPairing;
 use Drupal\Core\Database\Connection;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
+use Drupal\Core\Routing\RouteMatchInterface;
 use Drupal\Core\State\StateInterface;
 
 /**
@@ -16,7 +17,8 @@ use Drupal\Core\State\StateInterface;
  * the event endpoint (by the sender), cron (one pairing after another), a
  * form or Drush command (by the pairing it names) or an item (by the origin
  * that owns it), runs it here; the origin, its contract and the state kept
- * for it are then that pairing's. A site with one pairing needs nothing
+ * for it are then that pairing's. A page for one pairing, with the pairing in
+ * its path, works for it throughout. A site with one pairing needs nothing
  * chosen.
  *
  * The first pairing, "default", keeps its live state under the plain state
@@ -35,6 +37,7 @@ class ActivePairing {
     protected EntityTypeManagerInterface $entityTypeManager,
     protected StateInterface $state,
     protected Connection $database,
+    protected ?RouteMatchInterface $routeMatch = NULL,
   ) {}
 
   /**
@@ -44,8 +47,8 @@ class ActivePairing {
    *   When the site has several pairings and none was chosen.
    */
   public function id(): string {
-    if ($this->stack !== []) {
-      return end($this->stack);
+    if (($chosen = $this->current()) !== NULL) {
+      return $chosen;
     }
     $ids = $this->ids();
     if (count($ids) <= 1) {
@@ -58,7 +61,11 @@ class ActivePairing {
    * The pairing chosen for the current work, if any was.
    */
   public function current(): ?string {
-    return $this->stack === [] ? NULL : end($this->stack);
+    if ($this->stack !== []) {
+      return end($this->stack);
+    }
+    $pairing = $this->routeMatch?->getRawParameter('content_relay_origin_pairing');
+    return is_string($pairing) && $pairing !== '' ? $pairing : NULL;
   }
 
   /**

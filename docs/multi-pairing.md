@@ -62,8 +62,8 @@ its own runs check every replica in one pass.
 
 Sync state records the pairing that created each item. An event from another
 pairing for that UUID is refused with `uuid_collision`, naming the owner.
-Unpairing with "keep" releases ownership, so another origin, or adopting, can
-take the items over.
+Unpairing with "keep" releases ownership: the items become local content,
+which another origin takes over only by adopting them.
 
 ## UI and Drush
 
@@ -75,7 +75,7 @@ take the items over.
 - Reports gain a pairing filter and column; item pages name the pairing.
 - Drush commands that act on one pairing take `--origin=` (replica) or keep
   `--replica=` (origin), required when there is more than one;
-  `content-relay:unpair <pairing> --keep|--delete` is new.
+  `content-relay:replica-unpair <pairing> --keep|--delete` is new.
 
 ## Migration
 

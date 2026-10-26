@@ -59,6 +59,16 @@ display:
           plugin_id: standard
           label: Bundle
           exclude: false
+        source_site:
+          id: source_site
+          table: content_relay_sync_state
+          field: source_site
+          relationship: none
+          group_type: group
+          admin_label: ''
+          plugin_id: machine_name
+          label: Origin
+          exclude: false
         uuid:
           id: uuid
           table: content_relay_sync_state
@@ -295,6 +305,34 @@ display:
             remember_roles:
               authenticated: authenticated
           is_grouped: false
+        source_site:
+          id: source_site
+          table: content_relay_sync_state
+          field: source_site
+          relationship: none
+          group_type: group
+          admin_label: ''
+          plugin_id: in_operator
+          operator: in
+          value: {  }
+          group: 1
+          exposed: true
+          expose:
+            operator_id: source_site_op
+            label: Origin
+            description: ''
+            use_operator: false
+            operator: source_site_op
+            operator_limit_selection: false
+            operator_list: {  }
+            identifier: origin
+            required: false
+            remember: false
+            multiple: false
+            remember_roles:
+              authenticated: authenticated
+            reduce: false
+          is_grouped: false
         status:
           id: status
           table: content_relay_sync_state
@@ -338,6 +376,7 @@ display:
             content_relay_item: content_relay_item
             entity_type: entity_type
             bundle: bundle
+            source_site: source_site
             uuid: uuid
             status: status
             source_revision: source_revision
@@ -372,6 +411,13 @@ display:
               empty_column: false
               responsive: ''
             bundle:
+              sortable: true
+              default_sort_order: asc
+              align: ''
+              separator: ''
+              empty_column: false
+              responsive: ''
+            source_site:
               sortable: true
               default_sort_order: asc
               align: ''

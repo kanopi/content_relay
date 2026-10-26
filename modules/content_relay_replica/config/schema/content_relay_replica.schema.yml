@@ -268,6 +268,9 @@ content_relay_replica.mapping.*:
     source_bundle:
       type: string
       label: 'Origin bundle'
+    pairing:
+      type: string
+      label: 'Origin pairing, or empty for every origin'
     target_entity_type:
       type: string
       label: 'Entity type here'

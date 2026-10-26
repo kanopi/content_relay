@@ -150,6 +150,43 @@ final class OriginAdminTest extends BrowserTestBase {
   }
 
   /**
+   * Each replica can be sent to with settings of its own.
+   */
+  public function testReplicaSettings(): void {
+    $this->registerReplica();
+    $this->drupalGet('admin/config/services/content-relay/origin/replicas');
+    $this->clickLink('Settings');
+    $this->assertSession()->pageTextContains('Sending to China');
+    // Until given its own, it follows the site-wide settings.
+    $this->assertSession()->checkboxNotChecked('delivery[own]');
+    $this->assertSession()->checkboxChecked('bundles[values][node][page]');
+
+    $this->submitForm([
+      'delivery[own]' => TRUE,
+      'delivery[values][max_attempts]' => 7,
+      'bundles[own]' => TRUE,
+      'bundles[values][node][page]' => FALSE,
+    ], 'Save');
+    $this->assertSession()->pageTextContains('The settings for China are saved.');
+    $this->assertSession()->pageTextContains('China will be sent a new contract version.');
+    $sending = $this->container->get('content_relay_origin.sending_settings');
+    $settings = $sending->pairing(self::REPLICA)->getSettings();
+    $this->assertSame(7, $settings['delivery']['max_attempts']);
+    $this->assertSame(['node' => ['article']], $settings['bundles']);
+    $this->assertArrayNotHasKey('read_limit', $settings);
+    $latest = $this->container->get('content_relay_origin.contract_manager')->getLatest(self::REPLICA);
+    $this->assertSame(2, $latest->version());
+    $this->assertSame(['node' => ['article']], $latest->effectiveBundles());
+
+    // Back to the site-wide settings.
+    $this->drupalGet('admin/config/services/content-relay/origin/replicas/' . self::REPLICA . '/settings');
+    $this->assertSession()->checkboxChecked('delivery[own]');
+    $this->submitForm(['delivery[own]' => FALSE], 'Save');
+    $this->assertArrayNotHasKey('delivery', $sending->pairing(self::REPLICA)->getSettings());
+    $this->assertSession()->pageTextNotContains('new contract version');
+  }
+
+  /**
    * Each page needs its own permission.
    */
   public function testPermissions(): void {
@@ -159,6 +196,7 @@ final class OriginAdminTest extends BrowserTestBase {
       'admin/config/services/content-relay/origin/replicas' => 'administer content relay replicas',
       'admin/config/services/content-relay/origin/replicas/' . self::REPLICA . '/contract' => 'administer content relay replicas',
       'admin/config/services/content-relay/origin/replicas/' . self::REPLICA . '/suspend' => 'administer content relay replicas',
+      'admin/config/services/content-relay/origin/replicas/' . self::REPLICA . '/settings' => 'administer content relay replicas',
       'admin/config/services/content-relay/origin/pairing-code' => 'generate content relay pairing codes',
       'admin/reports/content-relay' => 'view content relay status report',
       'admin/reports/content-relay/events' => 'view content relay event log',

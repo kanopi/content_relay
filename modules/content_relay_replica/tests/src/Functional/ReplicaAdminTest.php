@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Drupal\Tests\content_relay_replica\Functional;
 
+use Drupal\content_relay_replica\Entity\ContentRelayOriginPairing;
 use Drupal\content_relay_test\FakeOrigin;
 use Drupal\Tests\BrowserTestBase;
 use Drupal\Tests\content_relay\Traits\FileKeyTrait;
@@ -75,17 +76,30 @@ final class ReplicaAdminTest extends BrowserTestBase {
    */
   public function testPairing(): void {
     $this->drupalGet('admin/config/services/content-relay/replica');
-    $this->assertSession()->pageTextContains('This site is not paired with an origin yet.');
+    $this->assertSession()->pageTextContains('This site does not receive from any origin yet.');
 
     $this->pair();
     $this->assertSession()->pageTextContains('Paired. Contract version 1 is in place.');
-    $this->assertSession()->addressEquals('admin/config/services/content-relay/replica');
+    $this->assertSession()->addressEquals('admin/config/services/content-relay/replica/origins/default');
     $this->assertSession()->pageTextContains('Fake origin');
     $this->assertSession()->pageTextContains('You receive Article in all languages, immediately, unencrypted.');
     $this->assertSession()->pageTextContains('Requested but not granted: Basic page (Not allowed for this replica.)');
 
+    // Pairing again is with another origin, under a name of its own.
     $this->drupalGet('admin/config/services/content-relay/replica/pair');
-    $this->assertSession()->pageTextContains('This site is paired with Fake origin');
+    $this->assertSession()->pageTextContains('This site already receives from');
+    $this->assertSession()->pageTextContains('Fake origin (https://' . FakeOrigin::HOST . ')');
+    $this->submitForm(['pairing' => 'default', 'origin_url' => 'https://' . FakeOrigin::HOST, 'code' => self::CODE], 'Pair');
+    $this->assertSession()->pageTextContains('default is already paired with an origin.');
+    $this->submitForm(['pairing' => 'Not OK', 'origin_url' => 'https://' . FakeOrigin::HOST, 'code' => self::CODE], 'Pair');
+    $this->assertSession()->pageTextContains('Use lowercase letters, digits and underscores.');
+
+    // The origins list.
+    $this->drupalGet('admin/config/services/content-relay/replica');
+    $this->assertSession()->pageTextContains('Fake origin');
+    $this->assertSession()->pageTextContains('v1');
+    $this->assertSession()->linkExists('Pair with another origin');
+    $this->assertSession()->linkByHrefExists('admin/config/services/content-relay/replica/origins/default/unpair');
   }
 
   /**
@@ -99,7 +113,7 @@ final class ReplicaAdminTest extends BrowserTestBase {
     $this->submitForm(['origin_url' => 'https://' . FakeOrigin::HOST, 'code' => 'WRONG'], 'Pair');
     $this->assertSession()->pageTextContains('The origin refused to pair: The pairing code is not valid.');
     $this->drupalGet('admin/config/services/content-relay/replica');
-    $this->assertSession()->pageTextContains('not paired');
+    $this->assertSession()->pageTextContains('does not receive from any origin');
   }
 
   /**
@@ -140,22 +154,29 @@ final class ReplicaAdminTest extends BrowserTestBase {
     $this->drupalGet('admin/config/services/content-relay/replica/pair');
     $this->assertSession()->statusCodeEquals(403);
     $this->drupalLogin($this->drupalCreateUser(['administer content relay replica']));
+    $this->drupalGet('admin/config/services/content-relay/replica/origins/default');
+    $this->assertSession()->statusCodeEquals(403);
+    // The list shows each the operations they may use.
+    $this->drupalGet('admin/config/services/content-relay/replica');
+    $this->assertSession()->linkByHrefExists('admin/config/services/content-relay/replica/origins/default/settings');
+    $this->assertSession()->linkNotExists('Contract');
+    $this->drupalLogin($this->drupalCreateUser(['access content']));
     $this->drupalGet('admin/config/services/content-relay/replica');
     $this->assertSession()->statusCodeEquals(403);
     // Languages need a permission of their own.
     $this->drupalLogin($this->drupalCreateUser(['change content relay subscription']));
-    $this->drupalGet('admin/config/services/content-relay/replica');
+    $this->drupalGet('admin/config/services/content-relay/replica/origins/default');
     $this->assertSession()->fieldExists('terms[paused]');
     $this->assertSession()->fieldNotExists('terms[language_mode]');
   }
 
   /**
-   * The settings form saves every setting and checks what it is given.
+   * An origin's settings form saves every setting and checks what it is given.
    */
   public function testSettingsForm(): void {
     ConfigurableLanguage::createFromLangcode('fr')->save();
     $this->pair();
-    $this->drupalGet('admin/config/services/content-relay/replica/settings');
+    $this->drupalGet('admin/config/services/content-relay/replica/origins/default/settings');
     $this->assertSession()->statusCodeEquals(200);
 
     $this->submitForm(['map' => 'zh-hans|xx', 'origin_allowed_ips' => 'nonsense'], 'Save configuration');
@@ -174,18 +195,36 @@ final class ReplicaAdminTest extends BrowserTestBase {
     ], 'Save configuration');
     $this->assertSession()->pageTextContains('The configuration options have been saved.');
     $this->assertSession()->pageTextContains('Translations in fr-ca move to fr');
-    $config = $this->config('content_relay_replica.settings');
-    $this->assertSame('reject', $config->get('conflicts.on_event'));
-    $this->assertSame([['entity_type' => 'node', 'bundle' => 'article', 'fields' => ['field_notes', 'field_extra']]], $config->get('local_only'));
-    $this->assertSame([['origin' => 'fr-ca', 'local' => 'fr']], $config->get('languages.map'));
-    $this->assertSame(25, $config->get('reconcile.max_items'));
-    $this->assertSame(['203.0.113.5', '2001:db8::/32'], $config->get('origin_allowed_ips'));
+    $pairing = $this->pairing('default');
+    $this->assertSame('reject', $pairing->getSetting('conflicts.on_event'));
+    $this->assertSame([['entity_type' => 'node', 'bundle' => 'article', 'fields' => ['field_notes', 'field_extra']]], $pairing->getSetting('local_only'));
+    $this->assertSame([['origin' => 'fr-ca', 'local' => 'fr']], $pairing->getSetting('languages.map'));
+    $this->assertSame(25, $pairing->getSetting('reconcile.max_items'));
+    $this->assertSame(['203.0.113.5', '2001:db8::/32'], $pairing->getSetting('origin_allowed_ips'));
     $this->assertGreaterThan(0, $this->container->get('queue')->get(LanguageSubscription::QUEUE)->numberOfItems());
+    // The site-wide settings are left as they were.
+    $config = $this->config('content_relay_replica.settings');
+    $this->assertNotSame('reject', $config->get('conflicts.on_event'));
+    $this->assertSession()->fieldNotExists('webhook_url');
 
     // Shown back as typed.
-    $this->drupalGet('admin/config/services/content-relay/replica/settings');
+    $this->drupalGet('admin/config/services/content-relay/replica/origins/default/settings');
     $this->assertSession()->fieldValueEquals('local_only', 'node.article: field_notes, field_extra');
     $this->assertSession()->fieldValueEquals('map', 'fr-ca|fr');
+
+    // The site-wide settings, which new pairings start with, leave the
+    // pairing alone.
+    $this->drupalGet('admin/config/services/content-relay/replica/settings');
+    $this->assertSession()->pageTextContains('Origins paired from now on start with these settings.');
+    $this->assertSession()->fieldNotExists('move');
+    $this->submitForm(['on_event' => 'draft', 'webhook_url' => 'https://replica.example.com/hook'], 'Save configuration');
+    $config = $this->config('content_relay_replica.settings');
+    $this->assertSame(['draft', 'https://replica.example.com/hook'], [
+      $config->get('conflicts.on_event'),
+      $config->get('webhook_url'),
+    ]);
+    $pairing = $this->pairing('default');
+    $this->assertSame('reject', $pairing->getSetting('conflicts.on_event'));
   }
 
   /**
@@ -227,6 +266,16 @@ final class ReplicaAdminTest extends BrowserTestBase {
     $this->drush('content-relay:replica-status');
     $this->assertStringContainsString('Contract: 1', $this->getOutput());
     $this->drush('content-relay:languages');
+  }
+
+  /**
+   * A pairing as saved.
+   */
+  private function pairing(string $id): ContentRelayOriginPairing {
+    $this->container->get('entity_type.manager')->getStorage('content_relay_origin_pairing')->resetCache([$id]);
+    $pairing = ContentRelayOriginPairing::load($id);
+    $this->assertInstanceOf(ContentRelayOriginPairing::class, $pairing);
+    return $pairing;
   }
 
 }

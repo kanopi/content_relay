@@ -49,6 +49,7 @@ final class SyncStateViewsData {
     $data[$table]['entity_type'] = $this->options($this->t('Entity type'), [self::class, 'entityTypeOptions']);
     $data[$table]['uuid'] = $this->column($this->t('UUID'), 'standard', 'string');
     $data[$table]['bundle'] = $this->column($this->t('Bundle'), 'standard', 'string');
+    $data[$table]['source_site'] = $this->options($this->t('Origin'), [self::class, 'originOptions']);
     $data[$table]['source_revision'] = $this->column($this->t('Origin revision'), 'numeric', 'numeric');
     $data[$table]['source_changed'] = $this->column($this->t('Changed on origin'), 'date', 'date', 'date');
     $data[$table]['source_hash'] = $this->column($this->t('Origin hash'), 'standard', 'string');
@@ -109,6 +110,17 @@ final class SyncStateViewsData {
     $options = [];
     foreach (\Drupal::service('content_relay.syncable_entity_types')->getEntityTypes() as $id => $definition) {
       $options[$id] = $definition->getLabel();
+    }
+    return $options;
+  }
+
+  /**
+   * Origin options: labels by site ID.
+   */
+  public static function originOptions(): array {
+    $options = [];
+    foreach (\Drupal::service('content_relay_replica.origin')->all() as $origin) {
+      $options[$origin['site_id']] = $origin['label'];
     }
     return $options;
   }

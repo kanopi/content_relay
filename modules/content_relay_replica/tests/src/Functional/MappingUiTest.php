@@ -178,7 +178,7 @@ final class MappingUiTest extends BrowserTestBase {
     $this->drupalCreateContentType(['type' => 'page', 'name' => 'Page']);
 
     $this->drupalLogin($this->drupalCreateUser(['change content relay subscription']));
-    $this->drupalGet('admin/config/services/content-relay/replica');
+    $this->drupalGet('admin/config/services/content-relay/replica/origins/default');
     $this->submitForm(['terms[bundles][node][page]' => TRUE], 'Propose changes');
     $this->assertSession()->pageTextContains('Page cannot be taken as it is: Field "field_only_on_origin" (string) is missing here. Add a mapping for it first.');
   }

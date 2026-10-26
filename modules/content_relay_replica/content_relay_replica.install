@@ -15,6 +15,7 @@ use Drupal\content_relay_replica\ProcessedEvents;
 use Drupal\content_relay_replica\Reconciler;
 use Drupal\content_relay_replica\StreamTracker;
 use Drupal\content_relay_replica\SyncStateStore;
+use Drupal\Core\Serialization\Yaml;
 use Drupal\Core\Url;
 
 /**
@@ -453,4 +454,38 @@ function content_relay_replica_update_10004(): string {
     }
   }
   return (string) t('Reconciliation runs and files record their origin pairing.');
+}
+
+/**
+ * Adds the origin column and filter to the synced items report.
+ */
+function content_relay_replica_update_10005(): string {
+  $config = \Drupal::configFactory()->getEditable('views.view.content_relay_replica_report');
+  if ($config->isNew() || $config->get('display.default.display_options.fields.source_site') !== NULL) {
+    return (string) t('Nothing to do.');
+  }
+  $shipped = Yaml::decode((string) file_get_contents(__DIR__ . '/config/install/views.view.content_relay_replica_report.yml'));
+  $options = $shipped['display']['default']['display_options'];
+  foreach (['fields', 'filters'] as $type) {
+    $config->set("display.default.display_options.$type", _content_relay_replica_insert_after(
+      $config->get("display.default.display_options.$type") ?? [],
+      'bundle',
+      ['source_site' => $options[$type]['source_site']],
+    ));
+  }
+  $config->set('display.default.display_options.style.options.columns.source_site', 'source_site');
+  $config->set('display.default.display_options.style.options.info.source_site', $options['style']['options']['info']['source_site']);
+  $config->save();
+  return (string) t('The synced items report shows and filters by origin.');
+}
+
+/**
+ * Inserts entries after a key, or at the end without it.
+ */
+function _content_relay_replica_insert_after(array $array, string $after, array $insert): array {
+  $position = array_search($after, array_keys($array), TRUE);
+  if ($position === FALSE) {
+    return $array + $insert;
+  }
+  return array_slice($array, 0, $position + 1, TRUE) + $insert + array_slice($array, $position + 1, NULL, TRUE);
 }

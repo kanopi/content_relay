@@ -54,11 +54,11 @@ On the origin:
 
 On the replica:
 
-5. Pair at Configuration » Web services » Content Relay replica » Pairing
-   (or `drush content-relay:pair https://origin.example.com CODE
+5. Pair at Configuration » Web services » Content Relay replica » Pair with
+   an origin (or `drush content-relay:pair https://origin.example.com CODE
    --bundles=node:article`) with the origin's HTTPS address and the code.
-6. Adjust what it receives on the subscription page, and how it applies it
-   on the Settings tab.
+6. Under Origins, adjust what it receives on the origin's Contract tab, and
+   how it applies it on its Settings tab.
 7. Make sure cron runs on both sites: delivery, retries, files,
    reconciliation and notices all run from it.
 
@@ -231,7 +231,12 @@ event decided from the entity as it is now.
 
 Replicas are stored in `content_relay_replica`, and managed under
 **Configuration › Web services › Content Relay origin › Replicas**: approve,
-suspend, resume or revoke each one, and open its contract.
+suspend, resume or revoke each one, open its contract, and give it settings
+of its own. Each group of sending settings (published bundles, delivery, read
+limit, not-syncable handling, file links, encryption) follows the site-wide
+settings until it is set for the replica; a change to what its contract
+offers or requires sends it a new version. A replica that unpairs tells the
+origin, which revokes it, so it can pair again with a new code.
 
 ## Replica
 
@@ -266,7 +271,29 @@ A newer event that applies supersedes older failures. Subscribers to
 `content_relay.apply_failed` can send alerts, and the status report shows a
 warning while failures are open.
 
-The paired origin is stored in state (`content_relay_replica.origin`).
+### Several origins
+
+A replica can receive from several origins. **Configuration › Web services ›
+Content Relay replica** lists them, each with its contract, its settings, its
+reconciliation and Unpair; **Pair with another origin** adds one under a name
+of its own (Drush commands about one origin take it as `--origin=`). The
+Settings tab beside Origins holds what is not about one origin (the endpoint
+URL, how long handled events are remembered) and the settings new pairings
+start with. Each origin's record, contract and stream are kept in state and
+tables under its pairing; its settings are a config entity,
+`content_relay_origin_pairing`, so they deploy like any configuration.
+
+The origin that first sent an item owns it; the others' events for it are
+refused as collisions. The synced items report has an Origin column and
+filter. A mapping can be for one origin, and then comes before one for every
+origin.
+
+Unpairing asks each time what happens to what came from the origin: kept as
+this site's own content, no longer synced, or deleted (a batch, as sync
+deletes, so this site's own replicas follow). Detached items are this site's
+already and are kept either way. The origin is told, and everything kept
+about the pairing goes. Kept items are then local content: another origin
+takes them over only by adopting them.
 
 ### Processing modes
 
@@ -305,7 +332,8 @@ are needed.
 A replica set up from a copy of the origin's database has the origin's items
 under the same UUIDs, but made outside sync, so sync refuses them as
 collisions. **Reports › Content Relay synced items › Reconciliation ›
-Adopt existing content** (or `drush content-relay:adopt`) compares each item
+Adopt existing content**, for the origin in question (or `drush
+content-relay:adopt`), compares each item
 the contract covers with the origin's hashes: identical ones are marked in
 sync without a new revision; ones that differ become conflicts, resolved like
 any edit made here. It can run at any time, also once sync is under way:
@@ -770,7 +798,8 @@ address change is logged with the user who did it.
 | `content-relay:pairing-code [--bundles=]` | origin |
 | `content-relay:origin-status` | origin |
 | `content-relay:origin-validate <type> <id or uuid>` | origin |
-| `content-relay:pair <origin url> <code> [--bundles=]` | replica |
+| `content-relay:pair <origin url> <code> [--bundles=] [--pairing=]` | replica |
+| `content-relay:replica-unpair <pairing> --keep\|--delete` | replica |
 | `content-relay:replica-status` | replica |
 | `content-relay:failures [--status=] [--bundle=]` | replica |
 | `content-relay:retry <ids> \| --all [--bundle=]` | replica |
@@ -780,7 +809,8 @@ address change is logged with the user who did it.
 | `content-relay:rotate-key <purpose> <key id>` | both |
 | `content-relay:retire-key <purpose> <key id>` | both |
 
-Each exits non-zero when it could not do what was asked.
+Each exits non-zero when it could not do what was asked. On a replica with
+several origins, the commands about one origin need `--origin=<pairing>`.
 
 ## Pull authentication
 

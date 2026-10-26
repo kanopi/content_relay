@@ -11,6 +11,7 @@ use Drupal\content_relay\Key\KeyPurpose;
 use Drupal\content_relay\Key\PeerKeys;
 use Drupal\content_relay_origin\ContractManager;
 use Drupal\content_relay_origin\ItemSyncControl;
+use Drupal\content_relay_origin\Replica;
 use Drupal\content_relay_origin\ReplicaRegistry;
 use Drupal\Core\DependencyInjection\ContainerInjectionInterface;
 use Psr\Log\LoggerInterface;
@@ -141,6 +142,13 @@ final class InboxController implements ContainerInjectionInterface {
           'result' => 'recorded',
           'queued' => $this->control->replicaAttached($message->sender, $body['entity_type'], $body['uuid'], $by),
         ]);
+
+      case 'unpair_notice':
+        // The replica no longer receives: as if revoked here, so it can pair
+        // again with a new code.
+        $this->registry->setStatus($message->sender, Replica::REVOKED);
+        $this->logger->notice('Replica @replica unpaired; it is revoked here.', ['@replica' => $message->sender]);
+        return new JsonResponse(['result' => 'revoked']);
 
       default:
         return new JsonResponse([

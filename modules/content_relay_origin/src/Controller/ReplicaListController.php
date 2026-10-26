@@ -119,6 +119,10 @@ final class ReplicaListController extends ControllerBase {
    */
   protected function operations(Replica $replica): array {
     $links = [
+      'settings' => [
+        'title' => $this->t('Settings'),
+        'url' => Url::fromRoute('content_relay_origin.replica_sending', ['replica_id' => $replica->id]),
+      ],
       'contract' => [
         'title' => $this->t('Contract'),
         'url' => Url::fromRoute('content_relay_origin.replica_contract', ['replica_id' => $replica->id]),

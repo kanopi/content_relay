@@ -129,6 +129,14 @@ content_relay_origin.replica_contract:
   requirements:
     _permission: 'administer content relay replicas'
 
+content_relay_origin.replica_sending:
+  path: '/admin/config/services/content-relay/origin/replicas/{replica_id}/settings'
+  defaults:
+    _form: '\Drupal\content_relay_origin\Form\ReplicaSendingForm'
+    _title: 'Settings'
+  requirements:
+    _permission: 'administer content relay replicas'
+
 content_relay_origin.replica_addresses:
   path: '/admin/config/services/content-relay/origin/replicas/{replica_id}/addresses'
   defaults:

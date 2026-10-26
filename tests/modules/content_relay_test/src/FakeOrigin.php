@@ -35,7 +35,7 @@ use Psr\Http\Message\RequestInterface;
  * - allowed: bundles it grants, by entity type.
  * - down: TRUE to fail every request with a connection error.
  * - versions: contracts issued; acks: versions acknowledged; requests: log.
- * - notices: detach and attach notices received, each type and body.
+ * - notices: detach, attach and unpair notices received, each type and body.
  * - schema: what the schema endpoint answers, by entity type and bundle;
  *   without it, this site's own allowed bundles are described, so content
  *   fits as it is.
@@ -232,7 +232,7 @@ final class FakeOrigin {
         'contract' => $this->sign($config, 'contract', $this->contract($config, $message['body']['replica_terms'] ?? [])->toArray()),
       ],
       ],
-      'detach_notice', 'attach_notice' => $this->notice($config, $message['type'], $message['body'] ?? []),
+      'detach_notice', 'attach_notice', 'unpair_notice' => $this->notice($config, $message['type'], $message['body'] ?? []),
       default => [400, ['result' => 'unsupported_type']],
     };
   }
@@ -328,7 +328,7 @@ final class FakeOrigin {
   }
 
   /**
-   * Records a detach or attach notice.
+   * Records a detach, attach or unpair notice.
    */
   private function notice(array &$config, string $type, array $body): array {
     $config['notices'][] = ['type' => $type, 'body' => $body];

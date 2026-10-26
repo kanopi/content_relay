@@ -9,8 +9,10 @@ use Drupal\Component\Serialization\Yaml;
 use Drupal\content_relay\Schema\SchemaDescriber;
 use Drupal\content_relay\Serialization\DenormalizationContext;
 use Drupal\content_relay\Serialization\SyncableEntityTypes;
+use Drupal\content_relay_replica\ActivePairing;
 use Drupal\content_relay_replica\ContractStore;
 use Drupal\content_relay_replica\Entity\ContentRelayMapping;
+use Drupal\content_relay_replica\Entity\ContentRelayOriginPairing;
 use Drupal\content_relay_replica\Mapping\MappedImporter;
 use Drupal\content_relay_replica\Mapping\MappingException;
 use Drupal\content_relay_replica\OriginClient;
@@ -50,6 +52,7 @@ class MappingForm extends EntityForm {
     protected SchemaDescriber $describer,
     protected MappedImporter $importer,
     protected LanguageManagerInterface $languageManager,
+    protected ActivePairing $active,
   ) {}
 
   /**
@@ -63,6 +66,7 @@ class MappingForm extends EntityForm {
       $container->get('content_relay.schema_describer'),
       $container->get('content_relay_replica.mapped_importer'),
       $container->get('language_manager'),
+      $container->get('content_relay_replica.active_pairing'),
     );
   }
 
@@ -88,6 +92,16 @@ class MappingForm extends EntityForm {
       '#title' => $this->t('Label'),
       '#default_value' => $mapping->label(),
       '#required' => TRUE,
+    ];
+    $pairings = $this->active->ids();
+    $form['pairing'] = [
+      '#type' => 'select',
+      '#title' => $this->t('Origin'),
+      '#options' => ['' => $this->t('Every origin')] + array_combine($pairings, array_map($this->pairingLabel(...), $pairings)),
+      '#default_value' => $this->pairing($form_state),
+      '#access' => count($pairings) > 1 || $mapping->getPairing() !== '',
+      '#disabled' => $chosen,
+      '#description' => $this->t('A mapping for one origin comes before one for every origin.'),
     ];
     $form['source'] = [
       '#type' => 'select',
@@ -279,6 +293,7 @@ class MappingForm extends EntityForm {
     // The selects are disabled from now on, so their values are kept here.
     $form_state->set('source', $form_state->getValue('source'));
     $form_state->set('target', $form_state->getValue('target'));
+    $form_state->set('pairing', (string) $form_state->getValue('pairing'));
     $form_state->set('chosen', TRUE);
     $form_state->setRebuild();
   }
@@ -290,7 +305,7 @@ class MappingForm extends EntityForm {
     parent::validateForm($form, $form_state);
     if ($this->mapping()->isNew() && !$form_state->get('chosen')) {
       [$type, $bundle] = $this->split((string) $form_state->getValue('source'));
-      if ($this->entityTypeManager->getStorage('content_relay_mapping')->load(ContentRelayMapping::idFor($type, $bundle))) {
+      if ($this->entityTypeManager->getStorage('content_relay_mapping')->load(ContentRelayMapping::idFor($type, $bundle, (string) $form_state->getValue('pairing')))) {
         $form_state->setErrorByName('source', $this->t('That origin bundle has a mapping already.'));
       }
       return;
@@ -323,7 +338,9 @@ class MappingForm extends EntityForm {
     if ($entity->isNew()) {
       [$source_type, $source_bundle] = $this->split((string) ($form_state->get('source') ?? $form_state->getValue('source')));
       [$target_type, $target_bundle] = $this->split((string) ($form_state->get('target') ?? $form_state->getValue('target')));
-      $entity->set('id', ContentRelayMapping::idFor($source_type, $source_bundle));
+      $pairing = $this->pairing($form_state);
+      $entity->set('id', ContentRelayMapping::idFor($source_type, $source_bundle, $pairing));
+      $entity->set('pairing', $pairing);
       $entity->set('source_entity_type', $source_type);
       $entity->set('source_bundle', $source_bundle);
       $entity->set('target_entity_type', $target_type);
@@ -378,7 +395,7 @@ class MappingForm extends EntityForm {
     $form_state->setValues($input);
     $this->copyFormValuesToEntity($mapping, $form, $form_state);
     try {
-      $event = $this->originClient->item($mapping->getSourceEntityType(), $uuid);
+      $event = $this->active->run($this->schemaPairing($form_state), fn () => $this->originClient->item($mapping->getSourceEntityType(), $uuid));
       $context = new DenormalizationContext();
       $entity = $this->importer->build((array) $event->snapshot, $mapping, NULL, $context);
     }
@@ -474,7 +491,7 @@ class MappingForm extends EntityForm {
   protected function originBundle(string $entity_type_id, string $bundle, FormStateInterface $form_state): ?array {
     if (!$form_state->has('origin_schema')) {
       try {
-        $form_state->set('origin_schema', $this->originClient->schema());
+        $form_state->set('origin_schema', $this->active->run($this->schemaPairing($form_state), fn () => $this->originClient->schema()));
       }
       catch (SubscriptionException $e) {
         $this->messenger()->addWarning($this->t('The origin schema could not be loaded (@message); only mapped fields are shown.', ['@message' => $e->getMessage()]));
@@ -492,16 +509,63 @@ class MappingForm extends EntityForm {
    */
   protected function sourceOptions(): array {
     $options = [];
-    foreach ($this->contracts->getCurrent()?->effectiveBundles() ?? [] as $entity_type_id => $bundles) {
-      foreach ($bundles as $bundle) {
-        $options[$entity_type_id . '.' . $bundle] = $entity_type_id . ' › ' . $bundle;
+    foreach ($this->active->ids() as $pairing) {
+      $contract = $this->active->run($pairing, fn () => $this->contracts->getCurrent());
+      foreach ($contract?->effectiveBundles() ?? [] as $entity_type_id => $bundles) {
+        foreach ($bundles as $bundle) {
+          $options[$entity_type_id . '.' . $bundle] = $entity_type_id . ' › ' . $bundle;
+        }
       }
     }
+    ksort($options);
     $mapping = $this->mapping();
     if (!$mapping->isNew()) {
       $options[$mapping->getSourceEntityType() . '.' . $mapping->getSourceBundle()] ??= $mapping->getSourceEntityType() . ' › ' . $mapping->getSourceBundle();
     }
     return $options;
+  }
+
+  /**
+   * The origin pairing the mapping is for, or empty for every origin.
+   */
+  protected function pairing(FormStateInterface $form_state): string {
+    $mapping = $this->mapping();
+    if (!$mapping->isNew()) {
+      return $mapping->getPairing();
+    }
+    return (string) ($form_state->get('pairing') ?? $form_state->getValue('pairing') ?? '');
+  }
+
+  /**
+   * The pairing whose origin describes the bundle.
+   *
+   * The mapping's, or for a mapping for every origin, the first whose
+   * contract has the bundle.
+   */
+  protected function schemaPairing(FormStateInterface $form_state): string {
+    $pairing = $this->pairing($form_state);
+    if ($pairing !== '') {
+      return $pairing;
+    }
+    $mapping = $this->mapping();
+    [$type, $bundle] = $mapping->isNew()
+      ? $this->split((string) $form_state->get('source'))
+      : [$mapping->getSourceEntityType(), $mapping->getSourceBundle()];
+    $ids = $this->active->ids();
+    foreach ($ids as $id) {
+      $contract = $this->active->run($id, fn () => $this->contracts->getCurrent());
+      if (in_array($bundle, $contract?->effectiveBundles()[$type] ?? [], TRUE)) {
+        return $id;
+      }
+    }
+    return $ids[0] ?? ContentRelayOriginPairing::DEFAULT;
+  }
+
+  /**
+   * A pairing's label.
+   */
+  protected function pairingLabel(string $pairing): string {
+    return (string) ($this->entityTypeManager->getStorage('content_relay_origin_pairing')->load($pairing)?->label() ?? $pairing);
   }
 
   /**

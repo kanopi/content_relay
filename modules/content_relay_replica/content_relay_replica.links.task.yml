@@ -1,24 +1,38 @@
-content_relay_replica.subscription:
-  title: 'Contract'
-  route_name: content_relay_replica.subscription
-  base_route: content_relay_replica.subscription
+content_relay_replica.origins:
+  title: 'Origins'
+  route_name: content_relay_replica.origins
+  base_route: content_relay_replica.origins
+content_relay_replica.settings:
+  title: 'Settings'
+  route_name: content_relay_replica.settings
+  base_route: content_relay_replica.origins
+  weight: 5
 content_relay_replica.pair:
-  title: 'Pairing'
+  title: 'Pair with an origin'
   route_name: content_relay_replica.pair
-  base_route: content_relay_replica.subscription
+  base_route: content_relay_replica.origins
   weight: 10
 entity.content_relay_mapping.collection:
   title: 'Mappings'
   route_name: entity.content_relay_mapping.collection
-  base_route: content_relay_replica.subscription
+  base_route: content_relay_replica.origins
   weight: 20
-content_relay_replica.settings:
+content_relay_replica.subscription:
+  title: 'Contract'
+  route_name: content_relay_replica.subscription
+  base_route: content_relay_replica.subscription
+content_relay_replica.pairing_settings:
   title: 'Settings'
-  route_name: content_relay_replica.settings
+  route_name: content_relay_replica.pairing_settings
   base_route: content_relay_replica.subscription
   weight: 5
-content_relay_replica.reconcile:
+content_relay_replica.pairing_reconcile:
   title: 'Reconciliation'
-  route_name: content_relay_replica.reconcile
+  route_name: content_relay_replica.pairing_reconcile
   base_route: content_relay_replica.subscription
-  weight: 30
+  weight: 10
+content_relay_replica.unpair:
+  title: 'Unpair'
+  route_name: content_relay_replica.unpair
+  base_route: content_relay_replica.subscription
+  weight: 20

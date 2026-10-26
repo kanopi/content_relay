@@ -62,6 +62,10 @@ final class ReconcileWorker extends QueueWorkerBase implements ContainerFactoryP
     }
     // Items queued before pairings had names are the first pairing's.
     $data += ['pairing' => ContentRelayOriginPairing::DEFAULT];
+    // Left behind by a pairing since ended.
+    if (!in_array($data['pairing'], $this->active->ids(), TRUE)) {
+      return;
+    }
     if ($this->processed >= $this->active->run($data['pairing'], fn () => $this->reconciler->maxItems())) {
       throw new SuspendQueueException('Reached the reconciliation limit for this run.');
     }

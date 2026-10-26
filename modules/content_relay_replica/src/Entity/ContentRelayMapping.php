@@ -60,6 +60,7 @@ use Drupal\Core\StringTranslation\TranslatableMarkup;
     'label',
     'source_entity_type',
     'source_bundle',
+    'pairing',
     'target_entity_type',
     'target_bundle',
     'fields',
@@ -90,6 +91,11 @@ class ContentRelayMapping extends ConfigEntityBase {
    * The origin bundle.
    */
   protected string $source_bundle = '';
+
+  /**
+   * The origin pairing it is for, or empty for every origin.
+   */
+  protected string $pairing = '';
 
   /**
    * The entity type here.
@@ -136,9 +142,23 @@ class ContentRelayMapping extends ConfigEntityBase {
 
   /**
    * The ID of the mapping for an origin bundle.
+   *
+   * @param string $entity_type_id
+   *   The origin entity type.
+   * @param string $bundle
+   *   The origin bundle.
+   * @param string $pairing
+   *   The origin pairing, or empty for every origin.
    */
-  public static function idFor(string $entity_type_id, string $bundle): string {
-    return $entity_type_id . '__' . $bundle;
+  public static function idFor(string $entity_type_id, string $bundle, string $pairing = ''): string {
+    return $entity_type_id . '__' . $bundle . ($pairing === '' ? '' : '__' . $pairing);
+  }
+
+  /**
+   * The origin pairing it is for, or empty for every origin.
+   */
+  public function getPairing(): string {
+    return $this->pairing;
   }
 
   /**

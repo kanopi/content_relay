@@ -12,6 +12,7 @@ use Drupal\content_relay\Event\SyncEvent;
 use Drupal\content_relay\Key\KeyPair;
 use Drupal\content_relay\Key\KeyPurpose;
 use Drupal\content_relay_replica\Apply\ApplyResult;
+use Drupal\content_relay_replica\Entity\ContentRelayMapping;
 use Drupal\content_relay_replica\Entity\ContentRelayOriginPairing;
 use Drupal\content_relay_test\FakeOrigin;
 use PHPUnit\Framework\Attributes\Group;
@@ -179,6 +180,33 @@ final class MultiOriginTest extends ReplicaTestBase {
     $this->assertNotNull($this->local($theirs['uuid']), 'The second origin\'s item is not the first origin\'s to delete.');
     $this->assertNotNull($this->local($mine['uuid']));
     $this->assertSame(FakeOrigin::SITE_ID, $this->container->get('content_relay_replica.origin')->getSiteId(ContentRelayOriginPairing::DEFAULT));
+  }
+
+  /**
+   * A mapping for one origin comes before one for every origin.
+   */
+  public function testMappingPerOrigin(): void {
+    foreach (['' => 'page', 'asia' => 'article'] as $pairing => $target) {
+      ContentRelayMapping::create([
+        'id' => ContentRelayMapping::idFor('node', 'article', $pairing),
+        'label' => 'Articles',
+        'source_entity_type' => 'node',
+        'source_bundle' => 'article',
+        'pairing' => $pairing,
+        'target_entity_type' => 'node',
+        'target_bundle' => $target,
+      ])->save();
+    }
+    $active = $this->container->get('content_relay_replica.active_pairing');
+    $mappings = $this->container->get('content_relay_replica.mappings');
+    $this->assertSame('node__article__asia', $active->run('asia', fn () => $mappings->forSource('node', 'article'))?->id());
+    $this->assertSame('node__article', $active->run(ContentRelayOriginPairing::DEFAULT, fn () => $mappings->forSource('node', 'article'))?->id());
+    // Without an origin chosen, only one for every origin applies.
+    $this->assertSame('node__article', $mappings->forSource('node', 'article')?->id());
+
+    // A disabled mapping for an origin means that origin's is taken as is.
+    ContentRelayMapping::load('node__article__asia')?->disable()->save();
+    $this->assertNull($active->run('asia', fn () => $mappings->forSource('node', 'article')));
   }
 
   /**

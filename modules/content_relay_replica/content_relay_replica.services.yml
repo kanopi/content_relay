@@ -5,7 +5,7 @@ services:
 
   content_relay_replica.active_pairing:
     class: Drupal\content_relay_replica\ActivePairing
-    arguments: ['@entity_type.manager', '@state', '@database']
+    arguments: ['@entity_type.manager', '@state', '@database', '@current_route_match']
 
   content_relay_replica.origin:
     class: Drupal\content_relay_replica\OriginPeer
@@ -237,7 +237,7 @@ services:
 
   content_relay_replica.mappings:
     class: Drupal\content_relay_replica\Mapping\MappingRepository
-    arguments: ['@entity_type.manager']
+    arguments: ['@entity_type.manager', '@content_relay_replica.active_pairing']
 
   content_relay_replica.compatibility_checker:
     class: Drupal\content_relay_replica\Schema\CompatibilityChecker
@@ -359,3 +359,16 @@ services:
   content_relay_replica.moderation:
     class: Drupal\content_relay_replica\Moderation
     arguments: ['@config.factory', '@content_relay_replica.receiving_settings', '@?content_moderation.moderation_information']
+
+  content_relay_replica.unpairer:
+    class: Drupal\content_relay_replica\Unpairer
+    arguments:
+      - '@content_relay_replica.active_pairing'
+      - '@content_relay_replica.origin'
+      - '@content_relay_replica.origin_client'
+      - '@database'
+      - '@state'
+      - '@entity_type.manager'
+      - '@cache_tags.invalidator'
+      - '@logger.channel.content_relay_replica'
+      - '@datetime.time'

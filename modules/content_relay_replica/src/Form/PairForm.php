@@ -15,6 +15,9 @@ use Symfony\Component\DependencyInjection\ContainerInterface;
 
 /**
  * Pairs this replica with an origin using a code generated there.
+ *
+ * A site already paired can pair with further origins; each pairing after the
+ * first is named.
  */
 final class PairForm extends FormBase {
 
@@ -46,14 +49,23 @@ final class PairForm extends FormBase {
    * {@inheritdoc}
    */
   public function buildForm(array $form, FormStateInterface $form_state): array {
-    if ($origin = $this->origin->get()) {
+    $paired = $this->origin->all();
+    if ($paired !== []) {
       $form['paired'] = [
-        '#markup' => '<p>' . $this->t('This site is paired with %origin (@url).', [
+        '#theme' => 'item_list',
+        '#title' => $this->t('This site already receives from'),
+        '#items' => array_map(fn (array $origin) => $this->t('%origin (@url)', [
           '%origin' => $origin['label'],
           '@url' => $origin['url'],
-        ]) . '</p>',
+        ]), array_values($paired)),
       ];
-      return $form;
+      $form['pairing'] = [
+        '#type' => 'textfield',
+        '#title' => $this->t('Name for this pairing'),
+        '#description' => $this->t('Lowercase letters, digits and underscores, such as <em>asia</em>. Drush commands use it to say which origin they are for.'),
+        '#required' => TRUE,
+        '#maxlength' => 64,
+      ];
     }
     $form['origin_url'] = [
       '#type' => 'url',
@@ -97,6 +109,15 @@ final class PairForm extends FormBase {
     if (!str_starts_with(strtolower((string) $form_state->getValue('origin_url')), 'https://')) {
       $form_state->setErrorByName('origin_url', $this->t('Content Relay pairs only over HTTPS.'));
     }
+    if ($form_state->hasValue('pairing')) {
+      $pairing = (string) $form_state->getValue('pairing');
+      if (preg_match('/^[a-z0-9_]{1,64}$/', $pairing) !== 1) {
+        $form_state->setErrorByName('pairing', $this->t('Use lowercase letters, digits and underscores.'));
+      }
+      elseif (array_key_exists($pairing, $this->origin->all())) {
+        $form_state->setErrorByName('pairing', $this->t('%pairing is already paired with an origin.', ['%pairing' => $pairing]));
+      }
+    }
   }
 
   /**
@@ -111,7 +132,13 @@ final class PairForm extends FormBase {
       }
     }
     try {
-      $result = $this->subscription->pair((string) $form_state->getValue('origin_url'), (string) $form_state->getValue('code'), ['bundles' => $bundles], (int) $this->currentUser()->id());
+      $result = $this->subscription->pair(
+        (string) $form_state->getValue('origin_url'),
+        (string) $form_state->getValue('code'),
+        ['bundles' => $bundles],
+        (int) $this->currentUser()->id(),
+        $form_state->hasValue('pairing') ? (string) $form_state->getValue('pairing') : NULL,
+      );
     }
     catch (SubscriptionException $e) {
       $this->messenger()->addError($e->getMessage());
@@ -122,7 +149,7 @@ final class PairForm extends FormBase {
     if ($result['approval_required']) {
       $this->messenger()->addWarning($this->t('The origin requires an administrator there to approve this replica before content flows.'));
     }
-    $form_state->setRedirectUrl(Url::fromRoute('content_relay_replica.subscription'));
+    $form_state->setRedirectUrl(Url::fromRoute('content_relay_replica.subscription', ['content_relay_origin_pairing' => $result['pairing']]));
   }
 
 }

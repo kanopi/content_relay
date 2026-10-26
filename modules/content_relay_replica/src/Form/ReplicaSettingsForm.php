@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Drupal\content_relay_replica\Form;
 
 use Drupal\content_relay\Http\IpAllowlist;
+use Drupal\content_relay_replica\Entity\ContentRelayOriginPairing;
 use Drupal\content_relay_replica\LanguageMap;
 use Drupal\content_relay_replica\LanguageSubscription;
 use Drupal\content_relay_replica\ReceivingSettings;
@@ -18,9 +19,16 @@ use Symfony\Component\DependencyInjection\ContainerInterface;
 /**
  * How this replica applies what it receives.
  *
- * What it receives is the contract's business, on the subscription page.
+ * With a pairing in the path, how it applies what that origin sends; without,
+ * the settings that are not about one origin and those new pairings start
+ * with. What is received is the contract's business, on the Contract tab.
  */
 final class ReplicaSettingsForm extends ConfigFormBase {
+
+  /**
+   * The pairing edited, or NULL for the site-wide settings.
+   */
+  protected ?ContentRelayOriginPairing $pairing = NULL;
 
   public function __construct(
     ConfigFactoryInterface $config_factory,
@@ -64,8 +72,14 @@ final class ReplicaSettingsForm extends ConfigFormBase {
   /**
    * {@inheritdoc}
    */
-  public function buildForm(array $form, FormStateInterface $form_state): array {
-    $config = $this->config('content_relay_replica.settings');
+  public function buildForm(array $form, FormStateInterface $form_state, ?ContentRelayOriginPairing $content_relay_origin_pairing = NULL): array {
+    $this->pairing = $content_relay_origin_pairing;
+    $site_wide = $this->pairing === NULL;
+    $form['intro'] = [
+      '#markup' => '<p>' . ($site_wide
+        ? $this->t('Origins paired from now on start with these settings. Each origin has its own on its Settings tab, under Origins.')
+        : $this->t('How content from %origin is applied here.', ['%origin' => $this->pairing->label()])) . '</p>',
+    ];
 
     $form['conflicts'] = [
       '#type' => 'details',
@@ -80,20 +94,20 @@ final class ReplicaSettingsForm extends ConfigFormBase {
         'draft' => $this->t("Save the origin's version as a draft and leave the edit live (needs Content Moderation; otherwise as above)"),
         'reject' => $this->t('Keep the edit and refuse the update until someone resolves the conflict'),
       ],
-      '#default_value' => $config->get('conflicts.on_event') ?? 'overwrite',
+      '#default_value' => $this->setting('conflicts.on_event') ?? 'overwrite',
       '#description' => $this->t('Pulls never replace local edits without someone accepting the origin version.'),
     ];
     $form['conflicts']['local_only'] = [
       '#type' => 'textarea',
       '#title' => $this->t('Local-only fields'),
       '#description' => $this->t('Fields this site keeps for itself: never written by sync and not compared. One bundle per line, as <code>entity_type.bundle: field_one, field_two</code>. Mappings have their own.'),
-      '#default_value' => $this->localOnlyText($config->get('local_only') ?? []),
+      '#default_value' => $this->localOnlyText($this->setting('local_only') ?? []),
     ];
     $form['conflicts']['follow_deletes'] = [
       '#type' => 'checkbox',
       '#title' => $this->t('Delete detached items when the origin deletes them'),
       '#description' => $this->t("Otherwise a detached item stays, as this site's own content."),
-      '#default_value' => (bool) $config->get('detach.follow_deletes'),
+      '#default_value' => (bool) $this->setting('detach.follow_deletes'),
     ];
 
     $form['languages'] = [
@@ -106,10 +120,11 @@ final class ReplicaSettingsForm extends ConfigFormBase {
       '#type' => 'textarea',
       '#title' => $this->t('Language code mapping'),
       '#description' => $this->t("Origin languages kept under another code here, one per line as <code>origin|local</code>, such as <code>zh-hans|zh-cn</code>. Hashes always use the origin's codes."),
-      '#default_value' => implode("\n", array_map(fn ($origin, $local) => "$origin|$local", array_keys($this->languageMap->all()), $this->languageMap->all())),
+      '#default_value' => implode("\n", array_map(fn ($origin, $local) => "$origin|$local", array_keys($this->languageMapNow()), $this->languageMapNow())),
     ];
     $form['languages']['move'] = [
       '#type' => 'checkbox',
+      '#access' => !$site_wide,
       '#title' => $this->t('Move existing translations to the new codes'),
       '#description' => $this->t('For mappings added or changed here: translations already received under the old code move to the new one, a chunk at a time on cron, before events use it.'),
       '#default_value' => TRUE,
@@ -121,7 +136,7 @@ final class ReplicaSettingsForm extends ConfigFormBase {
         'skip' => $this->t('Skip that translation and flag the item'),
         'reject' => $this->t('Refuse the item'),
       ],
-      '#default_value' => $config->get('languages.unknown') ?? 'skip',
+      '#default_value' => $this->setting('languages.unknown') ?? 'skip',
     ];
     $form['languages']['removed'] = [
       '#type' => 'radios',
@@ -130,7 +145,7 @@ final class ReplicaSettingsForm extends ConfigFormBase {
         'keep' => $this->t('Keep them as local translations'),
         'delete' => $this->t('Delete them'),
       ],
-      '#default_value' => $config->get('languages.removed') ?? 'keep',
+      '#default_value' => $this->setting('languages.removed') ?? 'keep',
       '#description' => $this->t('When this site stops receiving a language, the subscription page asks.'),
     ];
 
@@ -145,7 +160,7 @@ final class ReplicaSettingsForm extends ConfigFormBase {
       '#type' => 'select',
       '#title' => $this->t('State for synced content'),
       '#options' => ['' => $this->t("The origin's state, per translation")] + $states,
-      '#default_value' => $config->get('moderation.target_state') ?? '',
+      '#default_value' => $this->setting('moderation.target_state') ?? '',
       '#description' => $this->t("A state of this site's own takes moderation state, and whether the item is published, out of the comparison with the origin."),
     ];
 
@@ -155,9 +170,10 @@ final class ReplicaSettingsForm extends ConfigFormBase {
     ];
     $form['processing']['webhook_url'] = [
       '#type' => 'url',
+      '#access' => $site_wide,
       '#title' => $this->t('Endpoint URL to give the origin'),
       '#description' => $this->t('Only when the site cannot work out its own address, such as behind a proxy. HTTPS.'),
-      '#default_value' => $config->get('webhook_url'),
+      '#default_value' => $this->setting('webhook_url'),
     ];
     $numbers = [
       'processing.auto_backlog' => [
@@ -180,10 +196,11 @@ final class ReplicaSettingsForm extends ConfigFormBase {
     foreach ($numbers as $key => [$title, $description]) {
       $form['processing'][str_replace('.', '__', $key)] = [
         '#type' => 'number',
+        '#access' => $site_wide || $this->isPerPairing($key),
         '#title' => $title,
         '#description' => $description,
         '#min' => 0,
-        '#default_value' => $config->get($key),
+        '#default_value' => $this->setting($key),
       ];
     }
     $form['processing']['processing__auto_max_load'] = [
@@ -192,7 +209,7 @@ final class ReplicaSettingsForm extends ConfigFormBase {
       '#description' => $this->t('0 to ignore the load.'),
       '#min' => 0,
       '#step' => 0.1,
-      '#default_value' => $config->get('processing.auto_max_load'),
+      '#default_value' => $this->setting('processing.auto_max_load'),
     ];
 
     $form['files'] = [
@@ -206,7 +223,7 @@ final class ReplicaSettingsForm extends ConfigFormBase {
         'publish' => $this->t('Publish it as received'),
         'hold' => $this->t('Hold it unpublished until they arrive'),
       ],
-      '#default_value' => $config->get('files.pending') ?? 'publish',
+      '#default_value' => $this->setting('files.pending') ?? 'publish',
     ];
     $form['files']['links'] = [
       '#type' => 'radios',
@@ -215,7 +232,7 @@ final class ReplicaSettingsForm extends ConfigFormBase {
         'local' => $this->t("Point at this site's copies"),
         'origin' => $this->t("Point at the origin's"),
       ],
-      '#default_value' => $config->get('files.links') ?? 'local',
+      '#default_value' => $this->setting('files.links') ?? 'local',
     ];
     $form['files']['fetch_on_miss'] = [
       '#type' => 'radios',
@@ -225,7 +242,7 @@ final class ReplicaSettingsForm extends ConfigFormBase {
         'redirect' => $this->t("Redirect to the origin's copy and fetch it"),
         'placeholder' => $this->t('Show a placeholder and fetch it'),
       ],
-      '#default_value' => $config->get('files.fetch_on_miss') ?? 'redirect',
+      '#default_value' => $this->setting('files.fetch_on_miss') ?? 'redirect',
     ];
     foreach ([
       'files.max_attempts' => $this->t('Download attempts before a file is marked as failed'),
@@ -237,7 +254,7 @@ final class ReplicaSettingsForm extends ConfigFormBase {
         '#type' => 'number',
         '#title' => $title,
         '#min' => 0,
-        '#default_value' => $config->get($key),
+        '#default_value' => $this->setting($key),
       ];
     }
 
@@ -250,14 +267,14 @@ final class ReplicaSettingsForm extends ConfigFormBase {
       '#title' => $this->t('Seconds between scheduled runs'),
       '#description' => $this->t('0 to run only on demand. Nightly is 86400.'),
       '#min' => 0,
-      '#default_value' => $config->get('reconcile.interval'),
+      '#default_value' => $this->setting('reconcile.interval'),
     ];
     $form['reconcile']['max_items'] = [
       '#type' => 'number',
       '#title' => $this->t('Items a run acts on itself'),
       '#description' => $this->t('The rest wait in a queue that cron works through at the same number per run.'),
       '#min' => 1,
-      '#default_value' => $config->get('reconcile.max_items'),
+      '#default_value' => $this->setting('reconcile.max_items'),
     ];
 
     $form['security'] = [
@@ -268,7 +285,7 @@ final class ReplicaSettingsForm extends ConfigFormBase {
       '#type' => 'textarea',
       '#title' => $this->t('Addresses the origin may post from'),
       '#description' => $this->t('One address or range per line. Messages from anywhere else are refused. Leave empty to accept any address; every message is signed either way.'),
-      '#default_value' => implode("\n", $config->get('origin_allowed_ips') ?? []),
+      '#default_value' => implode("\n", $this->setting('origin_allowed_ips') ?? []),
     ];
     return parent::buildForm($form, $form_state);
   }
@@ -309,37 +326,49 @@ final class ReplicaSettingsForm extends ConfigFormBase {
    * {@inheritdoc}
    */
   public function submitForm(array &$form, FormStateInterface $form_state): void {
-    $before = $this->languageMap->all();
-    $config = $this->config('content_relay_replica.settings')
-      ->set('conflicts.on_event', $form_state->getValue('on_event'))
-      ->set('local_only', $form_state->get('local_only'))
-      ->set('detach.follow_deletes', (bool) $form_state->getValue('follow_deletes'))
-      ->set('languages.map', $form_state->get('map'))
-      ->set('languages.unknown', $form_state->getValue('unknown'))
-      ->set('languages.removed', $form_state->getValue('removed'))
-      ->set('webhook_url', (string) $form_state->getValue('webhook_url'))
-      ->set('files.pending', $form_state->getValue('pending'))
-      ->set('files.links', $form_state->getValue('links'))
-      ->set('files.fetch_on_miss', $form_state->getValue('fetch_on_miss'))
-      ->set('processing.auto_max_load', (float) $form_state->getValue('processing__auto_max_load'))
-      ->set('reconcile.interval', (int) $form_state->getValue('interval'))
-      ->set('reconcile.max_items', max(1, (int) $form_state->getValue('max_items')))
-      ->set('origin_allowed_ips', $form_state->get('origin_allowed_ips'));
+    $before = $this->languageMapNow();
+    $values = [
+      'conflicts.on_event' => $form_state->getValue('on_event'),
+      'local_only' => $form_state->get('local_only'),
+      'detach.follow_deletes' => (bool) $form_state->getValue('follow_deletes'),
+      'languages.map' => $form_state->get('map'),
+      'languages.unknown' => $form_state->getValue('unknown'),
+      'languages.removed' => $form_state->getValue('removed'),
+      'files.pending' => $form_state->getValue('pending'),
+      'files.links' => $form_state->getValue('links'),
+      'files.fetch_on_miss' => $form_state->getValue('fetch_on_miss'),
+      'processing.auto_max_load' => (float) $form_state->getValue('processing__auto_max_load'),
+      'reconcile.interval' => (int) $form_state->getValue('interval'),
+      'reconcile.max_items' => max(1, (int) $form_state->getValue('max_items')),
+      'origin_allowed_ips' => $form_state->get('origin_allowed_ips'),
+      'webhook_url' => (string) $form_state->getValue('webhook_url'),
+    ];
     if ($form_state->hasValue('target_state')) {
-      $config->set('moderation.target_state', (string) $form_state->getValue('target_state'));
+      $values['moderation.target_state'] = (string) $form_state->getValue('target_state');
     }
     foreach ($form_state->getValues() as $key => $value) {
       if (str_contains((string) $key, '__') && $key !== 'processing__auto_max_load') {
-        $config->set(str_replace('__', '.', (string) $key), (int) $value);
+        $values[str_replace('__', '.', (string) $key)] = (int) $value;
       }
     }
-    $config->save();
-    // While this site has one origin, its pairing follows this form.
-    $this->receiving->copyToPairing();
+    if ($this->pairing === NULL) {
+      $config = $this->config('content_relay_replica.settings');
+      foreach ($values as $path => $value) {
+        $config->set($path, $value);
+      }
+      $config->save();
+    }
+    else {
+      foreach (array_filter(array_keys($values), $this->isPerPairing(...)) as $path) {
+        $this->pairing->setSetting($path, $values[$path]);
+      }
+      $this->pairing->save();
+    }
 
-    // Translations follow a changed mapping when asked to.
-    if ($form_state->getValue('move')) {
-      foreach ($this->languageMap->all() as $origin => $local) {
+    // Translations of this origin's content follow a changed mapping when
+    // asked to.
+    if ($this->pairing !== NULL && $form_state->getValue('move')) {
+      foreach ($this->languageMapNow() as $origin => $local) {
         $previous = $before[$origin] ?? $origin;
         if ($previous !== $local) {
           $this->languages->move($previous, $local);
@@ -349,11 +378,43 @@ final class ReplicaSettingsForm extends ConfigFormBase {
           ]));
         }
       }
-      foreach (array_diff_key($before, $this->languageMap->all()) as $origin => $local) {
+      foreach (array_diff_key($before, $this->languageMapNow()) as $origin => $local) {
         $this->languages->move($local, $origin);
       }
     }
     parent::submitForm($form, $form_state);
+  }
+
+  /**
+   * A setting as edited here: the pairing's, or the site-wide one.
+   */
+  protected function setting(string $path): mixed {
+    return $this->pairing === NULL
+      ? $this->config('content_relay_replica.settings')->get($path)
+      : $this->receiving->get($path, (string) $this->pairing->id());
+  }
+
+  /**
+   * Whether a setting belongs to a pairing rather than the whole site.
+   */
+  protected function isPerPairing(string $path): bool {
+    return in_array(explode('.', $path)[0], ReceivingSettings::KEYS, TRUE);
+  }
+
+  /**
+   * The language mapping as edited here.
+   *
+   * @return array<string, string>
+   *   Local codes by origin code.
+   */
+  protected function languageMapNow(): array {
+    $map = [];
+    foreach ($this->setting('languages.map') ?? [] as $entry) {
+      if (is_string($entry['origin'] ?? NULL) && is_string($entry['local'] ?? NULL) && $entry['origin'] !== $entry['local']) {
+        $map[$entry['origin']] = $entry['local'];
+      }
+    }
+    return $map;
   }
 
   /**

@@ -89,21 +89,6 @@ class ReceivingSettings {
   }
 
   /**
-   * Copies the site-wide receiving settings into the active pairing.
-   *
-   * While a site has one origin, its settings form edits both.
-   */
-  public function copyToPairing(): void {
-    $pairing = $this->pairing();
-    if ($pairing !== NULL) {
-      foreach ($this->defaults() as $key => $value) {
-        $pairing->setSetting($key, $value);
-      }
-      $pairing->save();
-    }
-  }
-
-  /**
    * Settings for a new pairing: the site-wide receiving settings.
    */
   public function defaults(): array {

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Drupal\content_relay_replica\Form;
 
+use Drupal\content_relay_replica\ActivePairing;
 use Drupal\content_relay_replica\Adopter;
 use Drupal\content_relay_replica\Reconciler;
 use Drupal\content_relay_replica\SubscriptionException;
@@ -12,10 +13,14 @@ use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Form\FormBase;
 use Drupal\Core\Form\FormStateInterface;
 use Drupal\Core\StringTranslation\TranslatableMarkup;
+use Drupal\Core\Url;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 
 /**
  * Reconciliation run history, and a button to run one now.
+ *
+ * For the origin in the path; on the report, for the only origin, or else a
+ * list of the origins to choose from.
  */
 final class ReconcileForm extends FormBase {
 
@@ -24,6 +29,7 @@ final class ReconcileForm extends FormBase {
     protected Adopter $adopter,
     protected DateFormatterInterface $dateFormatter,
     protected EntityTypeManagerInterface $entityTypeManager,
+    protected ActivePairing $active,
   ) {}
 
   /**
@@ -35,6 +41,7 @@ final class ReconcileForm extends FormBase {
       $container->get('content_relay_replica.adopter'),
       $container->get('date.formatter'),
       $container->get('entity_type.manager'),
+      $container->get('content_relay_replica.active_pairing'),
     );
   }
 
@@ -49,6 +56,26 @@ final class ReconcileForm extends FormBase {
    * {@inheritdoc}
    */
   public function buildForm(array $form, FormStateInterface $form_state): array {
+    $ids = $this->active->ids();
+    $pairing = $this->active->current() ?? (count($ids) === 1 ? $ids[0] : NULL);
+    if ($pairing === NULL) {
+      $links = [];
+      foreach ($ids as $id) {
+        $links[] = [
+          '#type' => 'link',
+          '#title' => $this->entityTypeManager->getStorage('content_relay_origin_pairing')->load($id)?->label() ?? $id,
+          '#url' => Url::fromRoute('content_relay_replica.pairing_reconcile', ['content_relay_origin_pairing' => $id]),
+        ];
+      }
+      $form['origins'] = [
+        '#theme' => 'item_list',
+        '#title' => $this->t('Reconcile with which origin?'),
+        '#items' => $links,
+        '#empty' => $this->t('This site does not receive from any origin yet.'),
+      ];
+      return $form;
+    }
+    $form_state->set('pairing', $pairing);
     $form['intro'] = [
       '#markup' => '<p>' . $this->t('Reconciliation compares every item this site receives with the origin, pulls what differs or is missing, and deletes what the origin no longer has. Content created on this site, items detached here and items in conflict are left alone.') . '</p>',
     ];
@@ -67,7 +94,7 @@ final class ReconcileForm extends FormBase {
     ];
 
     $rows = [];
-    foreach ($this->reconciler->history() as $run) {
+    foreach ($this->active->run($pairing, fn () => $this->reconciler->history()) as $run) {
       $counts = [];
       foreach ($run['counts'] as $outcome => $number) {
         $counts[] = $outcome . ': ' . $number;
@@ -105,8 +132,9 @@ final class ReconcileForm extends FormBase {
    * {@inheritdoc}
    */
   public function submitForm(array &$form, FormStateInterface $form_state): void {
+    $pairing = (string) $form_state->get('pairing');
     try {
-      $run_id = $this->reconciler->start('manual');
+      $run_id = $this->active->run($pairing, fn () => $this->reconciler->start('manual'));
     }
     catch (SubscriptionException $e) {
       $this->messenger()->addError($e->getMessage());
@@ -114,7 +142,7 @@ final class ReconcileForm extends FormBase {
     }
     batch_set([
       'title' => $this->t('Reconciling with the origin'),
-      'operations' => [[[self::class, 'batchStep'], [$run_id]]],
+      'operations' => [[[self::class, 'batchStep'], [$run_id, $pairing]]],
       'finished' => [self::class, 'batchFinished'],
     ]);
   }
@@ -123,8 +151,9 @@ final class ReconcileForm extends FormBase {
    * Submit handler: adopts existing content, a page at a time.
    */
   public function adopt(array &$form, FormStateInterface $form_state): void {
+    $pairing = (string) $form_state->get('pairing');
     try {
-      $bundles = $this->adopter->bundles();
+      $bundles = $this->active->run($pairing, fn () => $this->adopter->bundles());
     }
     catch (SubscriptionException $e) {
       $this->messenger()->addError($e->getMessage());
@@ -132,7 +161,7 @@ final class ReconcileForm extends FormBase {
     }
     batch_set([
       'title' => $this->t('Adopting existing content'),
-      'operations' => array_map(fn (array $pair) => [[self::class, 'adoptStep'], $pair], $bundles),
+      'operations' => array_map(fn (array $pair) => [[self::class, 'adoptStep'], [...$pair, $pairing]], $bundles),
       'finished' => [self::class, 'adoptFinished'],
     ]);
   }
@@ -140,8 +169,9 @@ final class ReconcileForm extends FormBase {
   /**
    * Batch operation: adopts one bundle, a page per request.
    */
-  public static function adoptStep(string $entity_type_id, string $bundle, &$context): void {
-    $page = \Drupal::service('content_relay_replica.adopter')->adoptPage($entity_type_id, $bundle, $context['sandbox']['after'] ?? '');
+  public static function adoptStep(string $entity_type_id, string $bundle, string $pairing, &$context): void {
+    $after = $context['sandbox']['after'] ?? '';
+    $page = \Drupal::service('content_relay_replica.active_pairing')->run($pairing, fn () => \Drupal::service('content_relay_replica.adopter')->adoptPage($entity_type_id, $bundle, $after));
     foreach ($page['counts'] as $outcome => $number) {
       $context['results'][$outcome] = ($context['results'][$outcome] ?? 0) + $number;
     }
@@ -171,10 +201,10 @@ final class ReconcileForm extends FormBase {
   /**
    * Batch operation: one step of the run, until it is done.
    */
-  public static function batchStep(int $run_id, &$context): void {
+  public static function batchStep(int $run_id, string $pairing, &$context): void {
     $reconciler = \Drupal::service('content_relay_replica.reconciler');
     $context['results']['run'] = $run_id;
-    $next = $reconciler->step($run_id);
+    $next = \Drupal::service('content_relay_replica.active_pairing')->run($pairing, fn () => $reconciler->step($run_id));
     $run = $reconciler->load($run_id);
     $context['results']['waiting'] = $next === Reconciler::WAIT;
     $context['message'] = new TranslatableMarkup('@checked item(s) checked.', ['@checked' => $run['counts']['checked'] ?? 0]);

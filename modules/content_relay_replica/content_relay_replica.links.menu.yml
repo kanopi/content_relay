@@ -1,7 +1,7 @@
-content_relay_replica.subscription:
+content_relay_replica.origins:
   title: 'Content Relay replica'
-  description: 'Receive content from a Content Relay origin.'
-  route_name: content_relay_replica.subscription
+  description: 'The origins this site receives content from.'
+  route_name: content_relay_replica.origins
   parent: content_relay.admin
   weight: 10
 content_relay_replica.report:

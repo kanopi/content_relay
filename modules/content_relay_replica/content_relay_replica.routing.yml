@@ -12,19 +12,67 @@ content_relay_replica.receive_events:
   options:
     no_cache: TRUE
 
-content_relay_replica.subscription:
+content_relay_replica.origins:
   path: '/admin/config/services/content-relay/replica'
   defaults:
+    _controller: '\Drupal\content_relay_replica\Controller\OriginListController::list'
+    _title: 'Origins'
+  requirements:
+    _permission: 'administer content relay replica+change content relay subscription'
+
+content_relay_replica.subscription:
+  path: '/admin/config/services/content-relay/replica/origins/{content_relay_origin_pairing}'
+  defaults:
     _form: '\Drupal\content_relay_replica\Form\SubscriptionForm'
-    _title: 'Content Relay replica'
+    _title_callback: '\Drupal\content_relay_replica\Controller\OriginListController::title'
+  options:
+    parameters:
+      content_relay_origin_pairing:
+        type: entity:content_relay_origin_pairing
   requirements:
     _permission: 'change content relay subscription'
+
+content_relay_replica.pairing_settings:
+  path: '/admin/config/services/content-relay/replica/origins/{content_relay_origin_pairing}/settings'
+  defaults:
+    _form: '\Drupal\content_relay_replica\Form\ReplicaSettingsForm'
+    _title_callback: '\Drupal\content_relay_replica\Controller\OriginListController::title'
+  options:
+    parameters:
+      content_relay_origin_pairing:
+        type: entity:content_relay_origin_pairing
+  requirements:
+    _permission: 'administer content relay replica'
+
+content_relay_replica.pairing_reconcile:
+  path: '/admin/config/services/content-relay/replica/origins/{content_relay_origin_pairing}/reconciliation'
+  defaults:
+    _form: '\Drupal\content_relay_replica\Form\ReconcileForm'
+    _title_callback: '\Drupal\content_relay_replica\Controller\OriginListController::title'
+  options:
+    parameters:
+      content_relay_origin_pairing:
+        type: entity:content_relay_origin_pairing
+  requirements:
+    _permission: 'reconcile content relay items'
+
+content_relay_replica.unpair:
+  path: '/admin/config/services/content-relay/replica/origins/{content_relay_origin_pairing}/unpair'
+  defaults:
+    _form: '\Drupal\content_relay_replica\Form\UnpairForm'
+    _title: 'Unpair'
+  options:
+    parameters:
+      content_relay_origin_pairing:
+        type: entity:content_relay_origin_pairing
+  requirements:
+    _permission: 'administer content relay replica'
 
 content_relay_replica.settings:
   path: '/admin/config/services/content-relay/replica/settings'
   defaults:
     _form: '\Drupal\content_relay_replica\Form\ReplicaSettingsForm'
-    _title: 'Content Relay replica settings'
+    _title: 'Settings for every origin'
   requirements:
     _permission: 'administer content relay replica'
 

@@ -287,10 +287,11 @@ class OriginClient {
   }
 
   /**
-   * Signs and posts one message.
+   * Signs and posts one message, without keeping it when it fails.
    */
-  protected function send(string $type, array $body): bool {
+  public function send(string $type, array $body): bool {
     $origin = $this->origin->get();
+    $item = isset($body['entity_type'], $body['uuid']) ? $body['entity_type'] . ' ' . $body['uuid'] : 'this site';
     if ($origin === NULL) {
       return FALSE;
     }
@@ -314,7 +315,7 @@ class OriginClient {
     catch (GuzzleException $e) {
       $this->logger->warning('Sending a @type for @item to the origin failed: @message', [
         '@type' => $type,
-        '@item' => $body['entity_type'] . ' ' . $body['uuid'],
+        '@item' => $item,
         '@message' => $e->getMessage(),
       ]);
       return FALSE;
@@ -322,7 +323,7 @@ class OriginClient {
     if ($response->getStatusCode() !== 200) {
       $this->logger->warning('The origin refused a @type for @item with HTTP @code.', [
         '@type' => $type,
-        '@item' => $body['entity_type'] . ' ' . $body['uuid'],
+        '@item' => $item,
         '@code' => $response->getStatusCode(),
       ]);
       return FALSE;

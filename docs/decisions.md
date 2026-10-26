@@ -757,3 +757,34 @@ can receive it; each replica's contract is offered only its pairing's.
 Pairing creates the entity, named from the replica's label; replicas paired
 before get one on update. Reconciliation settings stay site-wide.
 
+## 92. Unpairing asks what happens to the content
+
+Unpairing from an origin always asks: keep what came from it as this site's
+own content, or delete it. Neither is a safe default, so the form has none
+and Drush needs `--keep` or `--delete`. Detached items are this site's
+already and are kept either way. Deleting runs a page at a time, as sync
+deletes, so a site that is also an origin passes them on to its replicas.
+The origin is sent an `unpair_notice` and revokes the replica, which can
+then pair again with a new code; if it cannot be reached, unpairing goes on
+and its events are refused. Everything kept about the pairing (origin,
+contract, stream, failures, files, reconciliation runs, notices, settings)
+is removed, and queued work for it is dropped. Kept items are local
+content: another origin takes them over only by adopting them.
+
+## 93. A page for one origin works in that origin
+
+Pages about one origin have the pairing in their path
+(`.../replica/origins/{pairing}/...`), and ActivePairing takes it from the
+route when no work chose one, so the contract, settings and reconciliation
+forms work for that origin without each method switching. Batch operations
+run on another route and are given the pairing. The site-wide settings form
+edits only `content_relay_replica.settings`, the starting point for new
+pairings; it no longer copies into a pairing.
+
+## 94. Mappings can be for one origin
+
+A mapping has an optional pairing. One for the origin an event comes from is
+used before one for every origin, so two origins with different bundles of
+the same name can each be mapped. Its ID is the source bundle's plus the
+pairing.
+
