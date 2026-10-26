@@ -6,6 +6,7 @@ namespace Drupal\Tests\content_relay_replica\Kernel;
 
 use Drupal\content_relay_origin\ContractManager;
 use Drupal\content_relay_origin\Outbox;
+use Drupal\content_relay_origin\Report\ReportIndex;
 use Drupal\content_relay_replica\ContractStore;
 use Drupal\content_relay_replica\SyncStateStore;
 use Drupal\KernelTests\KernelTestBase;
@@ -68,6 +69,13 @@ final class UpdateTest extends KernelTestBase {
       $this->assertTrue($schema->tableExists($table), $table);
     }
     $this->assertTrue($schema->tableExists(SyncStateStore::TABLE));
+
+    // The report's indexes, on a table made before they were added.
+    $schema->dropIndex(ReportIndex::TABLE, 'status_changed');
+    $schema->dropIndex(ReportIndex::TABLE, 'bundle_changed');
+    $this->assertSame('Added indexes: status_changed, bundle_changed.', content_relay_origin_update_10002());
+    $this->assertTrue($schema->indexExists(ReportIndex::TABLE, 'status_changed'));
+    $this->assertSame('Nothing to do.', content_relay_origin_update_10002());
 
     // Run again, nothing changes.
     $this->assertSame('The replica keeps its contracts in their own table.', content_relay_replica_update_10001());

@@ -418,3 +418,19 @@ function content_relay_origin_update_10001(): string {
   }
   return $created === [] ? (string) t('Nothing to do.') : (string) t('Created missing tables: @tables.', ['@tables' => implode(', ', $created)]);
 }
+
+/**
+ * Adds the status report's indexes for its main filters and order.
+ */
+function content_relay_origin_update_10002(): string {
+  $schema = \Drupal::database()->schema();
+  $definition = content_relay_origin_schema()[ReportIndex::TABLE];
+  $added = [];
+  foreach ($definition['indexes'] as $name => $fields) {
+    if (!$schema->indexExists(ReportIndex::TABLE, $name)) {
+      $schema->addIndex(ReportIndex::TABLE, $name, $fields, $definition);
+      $added[] = $name;
+    }
+  }
+  return $added === [] ? (string) t('Nothing to do.') : (string) t('Added indexes: @indexes.', ['@indexes' => implode(', ', $added)]);
+}
