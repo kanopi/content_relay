@@ -73,7 +73,7 @@ final class ReplicaContractForm extends FormBase {
       $latest = $this->contracts->getLatest($replica->id);
       $allowed = $latest?->terms['origin_terms']['allowed_bundles'] ?? NULL;
       $options = [];
-      foreach ($this->scope->getPublishedBundles() as $entity_type_id => $bundles) {
+      foreach ($this->scope->getPublishedBundles($replica->id) as $entity_type_id => $bundles) {
         $labels = $this->syncableTypes->getBundles($entity_type_id);
         foreach ($bundles as $bundle) {
           $options[$entity_type_id . '.' . $bundle] = $labels[$bundle] ?? $entity_type_id . ':' . $bundle;

@@ -42,6 +42,7 @@ class PairingService {
     protected ConfigFactoryInterface $configFactory,
     protected TimeInterface $time,
     protected LoggerInterface $logger,
+    protected SendingSettings $sending,
   ) {}
 
   /**
@@ -88,6 +89,7 @@ class PairingService {
       NULL,
       FALSE,
     ));
+    $this->sending->ensurePairing($body['site_id'], $body['label']);
     $replica_terms = array_intersect_key($body['requested'], SubscriptionContract::defaultReplicaTerms());
     $replica_terms['webhook_url'] = $body['webhook_url'];
     $origin_terms = ['allowed_bundles' => $allowed] + SubscriptionContract::defaultOriginTerms();

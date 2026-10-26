@@ -40,13 +40,17 @@ class ItemSyncControl {
     protected AccountInterface $currentUser,
     protected LoggerInterface $logger,
     protected TranslationBlocks $translationBlocks,
+    protected SendingSettings $sending,
   ) {}
 
   /**
    * The configured behavior for replicas that already have a marked item.
+   *
+   * @param string|null $replica_id
+   *   A replica, whose pairing may set its own; NULL for the site-wide one.
    */
-  public function defaultBehavior(): string {
-    $behavior = $this->configFactory->get('content_relay_origin.settings')->get('not_syncable.behavior');
+  public function defaultBehavior(?string $replica_id = NULL): string {
+    $behavior = $this->sending->get('not_syncable.behavior', $replica_id);
     return $behavior === NotSyncableFlags::REMOVE ? NotSyncableFlags::REMOVE : NotSyncableFlags::DETACH;
   }
 
@@ -58,21 +62,23 @@ class ItemSyncControl {
    * @param string[]|null $replica_ids
    *   Only for these replicas; NULL for all, now and later.
    * @param string|null $behavior
-   *   NotSyncableFlags::DETACH or ::REMOVE; the configured one if NULL.
+   *   NotSyncableFlags::DETACH or ::REMOVE; if NULL, each replica's
+   *   configured one.
    *
    * @return string[]
    *   The replicas sent a detach or delete.
    */
   public function markNotSyncable(ContentEntityInterface $entity, ?array $replica_ids = NULL, ?string $behavior = NULL): array {
-    $behavior ??= $this->defaultBehavior();
-    if (!in_array($behavior, [NotSyncableFlags::DETACH, NotSyncableFlags::REMOVE], TRUE)) {
+    if ($behavior !== NULL && !in_array($behavior, [NotSyncableFlags::DETACH, NotSyncableFlags::REMOVE], TRUE)) {
       throw new \InvalidArgumentException(sprintf('Unknown not syncable behavior "%s".', $behavior));
     }
+    // Chosen here, or each replica's own.
+    $behavior_for = fn (string $replica_id) => $behavior ?? $this->defaultBehavior($replica_id === NotSyncableFlags::ALL ? NULL : $replica_id);
     $entity_type_id = $entity->getEntityTypeId();
     $uuid = (string) $entity->uuid();
     $before = $this->blockedReplicas($entity_type_id, $uuid);
     foreach ($replica_ids ?? [NotSyncableFlags::ALL] as $replica_id) {
-      $this->flags->set($entity_type_id, $uuid, $entity->bundle(), $replica_id, $behavior, (int) $this->currentUser->id());
+      $this->flags->set($entity_type_id, $uuid, $entity->bundle(), $replica_id, $behavior_for($replica_id), (int) $this->currentUser->id());
     }
     // Only replicas that had the item and were not already cut off from it
     // need telling.
@@ -80,9 +86,13 @@ class ItemSyncControl {
       array_diff($this->blockedReplicas($entity_type_id, $uuid), $before),
       fn (string $id) => $this->items->isKnown($id, $entity_type_id, $uuid),
     ));
+    foreach ([NotSyncableFlags::REMOVE => Operation::Delete, NotSyncableFlags::DETACH => Operation::Detach] as $mode => $operation) {
+      $told = array_values(array_filter($tell, fn (string $id) => $behavior_for($id) === $mode));
+      if ($told !== []) {
+        $this->outbox->enqueue($operation, $entity_type_id, $entity->bundle(), $uuid, $this->currentRevision($entity), $told, (int) $this->currentUser->id(), reason: Outbox::REASON_NOT_SYNCABLE);
+      }
+    }
     if ($tell !== []) {
-      $operation = $behavior === NotSyncableFlags::REMOVE ? Operation::Delete : Operation::Detach;
-      $this->outbox->enqueue($operation, $entity_type_id, $entity->bundle(), $uuid, $this->currentRevision($entity), $tell, (int) $this->currentUser->id(), reason: Outbox::REASON_NOT_SYNCABLE);
       $this->scheduler->schedule($tell);
     }
     if (!$entity->isNew()) {
@@ -93,7 +103,7 @@ class ItemSyncControl {
       '@type' => $entity_type_id,
       '@uuid' => $uuid,
       '@replicas' => $replica_ids === NULL ? 'all replicas' : implode(', ', $replica_ids),
-      '@behavior' => $behavior,
+      '@behavior' => $behavior ?? 'as configured for each',
     ]);
     return $tell;
   }

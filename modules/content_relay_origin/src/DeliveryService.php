@@ -84,6 +84,7 @@ class DeliveryService {
     protected ConfigFactoryInterface $configFactory,
     protected TimeInterface $time,
     protected LoggerInterface $logger,
+    protected SendingSettings $sending,
   ) {}
 
   /**
@@ -117,7 +118,7 @@ class DeliveryService {
       if ($contract->isPaused() || !$contract->isWithinWindow($now)) {
         return FALSE;
       }
-      $limit ??= max(1, (int) ($contract->terms['effective']['batch_size'] ?? $this->settings('batch_size')));
+      $limit ??= max(1, (int) ($contract->terms['effective']['batch_size'] ?? $this->settings('batch_size', $replica_id)));
       if ($per_minute = $contract->maxEventsPerMinute()) {
         $limit = min($limit, $per_minute - $this->outbox->countSentSince($replica_id, $now - 60));
       }
@@ -233,8 +234,8 @@ class DeliveryService {
       $response = $this->httpClient->request('POST', $replica->endpoint, [
         'json' => $envelope->toArray(),
         'headers' => ['Accept' => 'application/json'],
-        'timeout' => (int) $this->settings('timeout'),
-        'connect_timeout' => (int) $this->settings('connect_timeout'),
+        'timeout' => (int) $this->settings('timeout', $replica->id),
+        'connect_timeout' => (int) $this->settings('connect_timeout', $replica->id),
         'http_errors' => FALSE,
         'allow_redirects' => FALSE,
       ]);
@@ -266,7 +267,7 @@ class DeliveryService {
         '@replica' => $replica->id,
         '@version' => $contract->version(),
       ]);
-      if ($attempts >= max(1, (int) $this->settings('max_attempts'))) {
+      if ($attempts >= max(1, (int) $this->settings('max_attempts', $replica->id))) {
         $this->outbox->update($id, $fields + ['status' => EventStatus::DEAD_LETTER]);
         return TRUE;
       }
@@ -368,14 +369,14 @@ class DeliveryService {
    * Schedules a retry, or dead-letters the row when out of attempts.
    */
   protected function retryOrGiveUp(int $id, array $fields, int $attempts, array $row, Replica $replica): void {
-    if ($attempts >= max(1, (int) $this->settings('max_attempts'))) {
+    if ($attempts >= max(1, (int) $this->settings('max_attempts', $replica->id))) {
       $this->outbox->update($id, $fields + ['status' => EventStatus::DEAD_LETTER]);
       $this->logger->error('Event @event for @type @uuid was dead-lettered for replica @replica after @attempts attempts: @body', $this->context($row, $replica, (string) $fields['last_response']) + ['@attempts' => $attempts]);
       return;
     }
     $this->outbox->update($id, $fields + [
       'status' => EventStatus::FAILED,
-      'next_attempt' => $this->time->getCurrentTime() + $this->backoff($attempts),
+      'next_attempt' => $this->time->getCurrentTime() + $this->backoff($attempts, $replica->id),
     ]);
   }
 
@@ -386,9 +387,9 @@ class DeliveryService {
    * random point in the upper half, so replicas recovering from one outage
    * are not all retried in the same second.
    */
-  public function backoff(int $attempts): int {
-    $base = max(1, (int) $this->settings('backoff_base'));
-    $max = max($base, (int) $this->settings('backoff_max'));
+  public function backoff(int $attempts, ?string $replica_id = NULL): int {
+    $base = max(1, (int) $this->settings('backoff_base', $replica_id));
+    $max = max($base, (int) $this->settings('backoff_max', $replica_id));
     $delay = (int) min($max, $base * 2 ** min(30, $attempts - 1));
     return random_int(intdiv($delay + 1, 2), $delay);
   }
@@ -407,10 +408,10 @@ class DeliveryService {
   }
 
   /**
-   * A delivery setting.
+   * A delivery setting, for a replica or site-wide.
    */
-  protected function settings(string $key): mixed {
-    return $this->configFactory->get('content_relay_origin.settings')->get('delivery.' . $key);
+  protected function settings(string $key, ?string $replica_id = NULL): mixed {
+    return $this->sending->get('delivery.' . $key, $replica_id);
   }
 
 }

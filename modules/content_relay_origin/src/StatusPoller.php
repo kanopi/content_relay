@@ -45,6 +45,7 @@ class StatusPoller {
     protected ConfigFactoryInterface $configFactory,
     protected TimeInterface $time,
     protected LoggerInterface $logger,
+    protected SendingSettings $sending,
   ) {}
 
   /**
@@ -164,7 +165,7 @@ class StatusPoller {
       $response = $this->httpClient->request('POST', $replica->endpoint, [
         'json' => $this->signer->sign($replica->id, 'status_request', ['event_ids' => $event_ids])->toArray(),
         'headers' => ['Accept' => 'application/json'],
-        'timeout' => (int) ($this->configFactory->get('content_relay_origin.settings')->get('delivery.timeout') ?: 30),
+        'timeout' => (int) ($this->sending->get('delivery.timeout', $replica->id) ?: 30),
         'http_errors' => FALSE,
         'allow_redirects' => FALSE,
       ]);

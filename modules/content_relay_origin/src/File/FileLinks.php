@@ -7,6 +7,7 @@ namespace Drupal\content_relay_origin\File;
 use Drupal\Component\Datetime\TimeInterface;
 use Drupal\content_relay\Key\KeyPurpose;
 use Drupal\content_relay\Key\KeyStore;
+use Drupal\content_relay_origin\SendingSettings;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Url;
 use Drupal\file\FileInterface;
@@ -35,6 +36,7 @@ class FileLinks {
     protected KeyStore $keyStore,
     protected ConfigFactoryInterface $configFactory,
     protected TimeInterface $time,
+    protected SendingSettings $sending,
   ) {}
 
   /**
@@ -44,7 +46,7 @@ class FileLinks {
    *   The root-relative link and when it expires.
    */
   public function build(FileInterface $file, string $replica_id, ?string $encryption_key_id = NULL): array {
-    $expires = $this->time->getCurrentTime() + max(60, (int) ($this->configFactory->get('content_relay_origin.settings')->get('files.link_lifetime') ?: 3600));
+    $expires = $this->time->getCurrentTime() + max(60, (int) ($this->sending->get('files.link_lifetime', $replica_id) ?: 3600));
     $key = $this->keyStore->getPrimary(KeyPurpose::Signing);
     $signature = $key->sign(self::bytes((string) $file->uuid(), $replica_id, $expires, (string) $encryption_key_id));
     $query = [

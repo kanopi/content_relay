@@ -10,6 +10,7 @@ use Drupal\content_relay\Crypto\PeerPolicyInterface;
 use Drupal\content_relay\Key\PeerKeys;
 use Drupal\content_relay_origin\ContractManager;
 use Drupal\content_relay_origin\ReplicaRegistry;
+use Drupal\content_relay_origin\SendingSettings;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Database\Connection;
 use Drupal\Core\State\StateInterface;
@@ -41,6 +42,7 @@ class ReplicaPolicy implements PeerPolicyInterface {
     protected StateInterface $state,
     protected ConfigFactoryInterface $configFactory,
     protected TimeInterface $time,
+    protected SendingSettings $sending,
   ) {}
 
   /**
@@ -88,7 +90,7 @@ class ReplicaPolicy implements PeerPolicyInterface {
       }
     }
     $changed = $this->state->get(self::STATE_CHANGED, [])[$peer] ?? NULL;
-    return $changed !== NULL && $this->time->getCurrentTime() - (int) $changed <= $this->window();
+    return $changed !== NULL && $this->time->getCurrentTime() - (int) $changed <= $this->window($peer);
   }
 
   /**
@@ -103,8 +105,8 @@ class ReplicaPolicy implements PeerPolicyInterface {
   /**
    * The transition window, in seconds.
    */
-  protected function window(): int {
-    return max(0, (int) $this->configFactory->get('content_relay.settings')->get('encryption.transition_window'));
+  protected function window(string $replica_id): int {
+    return max(0, (int) $this->sending->get('encryption.transition_window', $replica_id));
   }
 
   /**

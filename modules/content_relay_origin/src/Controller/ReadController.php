@@ -105,7 +105,7 @@ final class ReadController implements ContainerInjectionInterface {
     if ($replica_id instanceof JsonResponse) {
       return $replica_id;
     }
-    $published = $this->scope->getPublishedBundles();
+    $published = $this->scope->getPublishedBundles($replica_id);
     $allowed = $this->contracts->getLatest($replica_id)?->terms['origin_terms']['allowed_bundles'] ?? NULL;
     $bundles = [];
     foreach ($published as $entity_type_id => $list) {

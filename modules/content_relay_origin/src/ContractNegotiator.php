@@ -25,10 +25,10 @@ class ContractNegotiator {
    * @return array{effective: array, not_granted: array}
    *   The effective section and the list of refusals.
    */
-  public function negotiate(array $origin_terms, array $replica_terms, bool $encryption_possible = FALSE): array {
+  public function negotiate(array $origin_terms, array $replica_terms, bool $encryption_possible = FALSE, ?string $replica_id = NULL): array {
     $origin_terms += SubscriptionContract::defaultOriginTerms();
     $replica_terms += SubscriptionContract::defaultReplicaTerms();
-    $published = $this->scope->getPublishedBundles();
+    $published = $this->scope->getPublishedBundles($replica_id);
     $allowed = $origin_terms['allowed_bundles'] ?? $published;
     $not_granted = [];
 

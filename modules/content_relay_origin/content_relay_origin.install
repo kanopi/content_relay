@@ -434,3 +434,14 @@ function content_relay_origin_update_10002(): string {
   }
   return $added === [] ? (string) t('Nothing to do.') : (string) t('Added indexes: @indexes.', ['@indexes' => implode(', ', $added)]);
 }
+
+/**
+ * Installs per-replica sending settings.
+ */
+function content_relay_origin_update_10003(): string {
+  $manager = \Drupal::entityDefinitionUpdateManager();
+  if ($manager->getEntityType('content_relay_replica_pairing') === NULL) {
+    $manager->installEntityType(\Drupal::entityTypeManager()->getDefinition('content_relay_replica_pairing'));
+  }
+  return (string) t('Each replica can now have its own sending settings.');
+}

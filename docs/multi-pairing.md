@@ -52,9 +52,11 @@ The webhook endpoint stays one URL; the sender's site ID selects the pairing.
 
 Published bundles (defaulting to the site-wide list), not-syncable behavior,
 require encryption and transition window, delivery (batch size, attempts,
-backoff, timeouts), read limits, file link lifetime, reconciliation interval
-and size, allowed addresses. The site-wide settings remain as defaults for new
-pairings and for pairings that do not override them.
+backoff, timeouts), read limits and file link lifetime. A pairing starts
+empty and follows the site-wide settings for whatever it does not set.
+Allowed addresses were already kept per replica. Reconciliation stays
+site-wide: the origin answers each replica's hash listings the same way, and
+its own runs check every replica in one pass.
 
 ### Ownership
 

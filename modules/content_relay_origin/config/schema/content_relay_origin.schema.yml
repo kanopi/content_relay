@@ -3,39 +3,9 @@ content_relay_origin.settings:
   label: 'Content Relay Origin settings'
   mapping:
     bundles:
-      type: sequence
-      label: 'Synced bundles, by entity type'
-      sequence:
-        type: sequence
-        label: 'Bundles'
-        sequence:
-          type: string
-          label: 'Bundle'
+      type: content_relay_origin.sending.bundles
     delivery:
-      type: mapping
-      label: 'Delivery'
-      mapping:
-        batch_size:
-          type: integer
-          label: 'Events sent to one replica per queue run'
-        max_attempts:
-          type: integer
-          label: 'Attempts before an event is dead-lettered'
-        backoff_base:
-          type: integer
-          label: 'First retry delay, in seconds'
-        backoff_max:
-          type: integer
-          label: 'Longest retry delay, in seconds'
-        timeout:
-          type: integer
-          label: 'Request timeout, in seconds'
-        connect_timeout:
-          type: integer
-          label: 'Connection timeout, in seconds'
-        status_batch:
-          type: integer
-          label: 'Accepted events asked about per status request'
+      type: content_relay_origin.sending.delivery
     retention_days:
       type: integer
       label: 'Days to keep acknowledged events'
@@ -63,43 +33,136 @@ content_relay_origin.settings:
           type: boolean
           label: 'Hold events until an administrator approves a new replica'
     read_limit:
-      type: mapping
-      label: 'What one replica may read'
-      mapping:
-        items:
-          type: integer
-          label: 'Items a replica may read per window (items, hash listings, stream lookups); 0 for no limit'
-        window:
-          type: integer
-          label: 'The window, in seconds'
+      type: content_relay_origin.sending.read_limit
     reconcile:
-      type: mapping
-      label: 'Re-sending what replicas are missing'
-      mapping:
-        interval:
-          type: integer
-          label: 'Seconds between runs that re-send out of sync, never sent, failed and dead-lettered items; 0 to run only on demand'
-        max_items:
-          type: integer
-          label: 'Items re-sent directly per run, and per cron run from the queue; the rest wait in the queue'
+      type: content_relay_origin.sending.reconcile
     not_syncable:
-      type: mapping
-      label: 'Not syncable items'
-      mapping:
-        behavior:
-          type: string
-          label: 'What replicas that already have an item are told when it is marked not syncable'
-          constraints:
-            Choice:
-              - detach
-              - remove
+      type: content_relay_origin.sending.not_syncable
     files:
-      type: mapping
-      label: 'Files'
-      mapping:
-        link_lifetime:
-          type: integer
-          label: 'How long download links stay valid, in seconds'
+      type: content_relay_origin.sending.files
+
+content_relay_origin.sending.bundles:
+  type: sequence
+  label: 'Synced bundles, by entity type'
+  sequence:
+    type: sequence
+    label: 'Bundles'
+    sequence:
+      type: string
+      label: 'Bundle'
+
+content_relay_origin.sending.delivery:
+  type: mapping
+  label: 'Delivery'
+  mapping:
+    batch_size:
+      type: integer
+      label: 'Events sent to one replica per queue run'
+    max_attempts:
+      type: integer
+      label: 'Attempts before an event is dead-lettered'
+    backoff_base:
+      type: integer
+      label: 'First retry delay, in seconds'
+    backoff_max:
+      type: integer
+      label: 'Longest retry delay, in seconds'
+    timeout:
+      type: integer
+      label: 'Request timeout, in seconds'
+    connect_timeout:
+      type: integer
+      label: 'Connection timeout, in seconds'
+    status_batch:
+      type: integer
+      label: 'Accepted events asked about per status request'
+
+content_relay_origin.sending.read_limit:
+  type: mapping
+  label: 'What one replica may read'
+  mapping:
+    items:
+      type: integer
+      label: 'Items a replica may read per window (items, hash listings, stream lookups); 0 for no limit'
+    window:
+      type: integer
+      label: 'The window, in seconds'
+
+content_relay_origin.sending.reconcile:
+  type: mapping
+  label: 'Re-sending what replicas are missing'
+  mapping:
+    interval:
+      type: integer
+      label: 'Seconds between runs that re-send out of sync, never sent, failed and dead-lettered items; 0 to run only on demand'
+    max_items:
+      type: integer
+      label: 'Items re-sent directly per run, and per cron run from the queue; the rest wait in the queue'
+
+content_relay_origin.sending.not_syncable:
+  type: mapping
+  label: 'Not syncable items'
+  mapping:
+    behavior:
+      type: string
+      label: 'What replicas that already have an item are told when it is marked not syncable'
+      constraints:
+        Choice:
+          - detach
+          - remove
+
+content_relay_origin.sending.files:
+  type: mapping
+  label: 'Files'
+  mapping:
+    link_lifetime:
+      type: integer
+      label: 'How long download links stay valid, in seconds'
+
+content_relay_origin.sending.encryption:
+  type: mapping
+  label: 'Encryption'
+  mapping:
+    require:
+      type: boolean
+      label: 'Require encryption with this replica'
+    transition_window:
+      type: integer
+      label: 'Seconds after an encryption mode change during which messages in the previous mode are still accepted'
+
+content_relay_origin.sending:
+  type: mapping
+  label: 'How content is sent to one replica; what is left out follows the site-wide settings'
+  mapping:
+    bundles:
+      type: content_relay_origin.sending.bundles
+    delivery:
+      type: content_relay_origin.sending.delivery
+    read_limit:
+      type: content_relay_origin.sending.read_limit
+    not_syncable:
+      type: content_relay_origin.sending.not_syncable
+    files:
+      type: content_relay_origin.sending.files
+    encryption:
+      type: content_relay_origin.sending.encryption
+
+content_relay_origin.replica_pairing.*:
+  type: config_entity
+  label: 'Content Relay replica pairing'
+  mapping:
+    id:
+      type: machine_name
+      label: 'ID'
+    label:
+      type: label
+      label: 'Label'
+    replica_id:
+      type: string
+      label: 'The replica''s site ID'
+    settings:
+      type: content_relay_origin.sending
+      label: 'Sending settings'
 
 action.configuration.content_relay_not_syncable:*:
   type: action_configuration_default

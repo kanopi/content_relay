@@ -13,9 +13,13 @@ services:
     tags:
       - { name: content_relay_public_key_resolver }
 
+  content_relay_origin.sending_settings:
+    class: Drupal\content_relay_origin\SendingSettings
+    arguments: ['@config.factory', '@entity_type.manager', '@transliteration']
+
   content_relay_origin.sync_scope:
     class: Drupal\content_relay_origin\SyncScope
-    arguments: ['@config.factory', '@plugin.manager.content_relay_normalizer']
+    arguments: ['@config.factory', '@plugin.manager.content_relay_normalizer', '@content_relay_origin.sending_settings']
 
   content_relay_origin.hash_store:
     class: Drupal\content_relay_origin\HashStore
@@ -89,6 +93,7 @@ services:
       - '@config.factory'
       - '@datetime.time'
       - '@logger.channel.content_relay_origin'
+      - '@content_relay_origin.sending_settings'
 
   content_relay_origin.replay:
     class: Drupal\content_relay_origin\ReplayService
@@ -124,6 +129,7 @@ services:
       - '@datetime.time'
       - '@logger.channel.content_relay_origin'
       - '@content_relay_origin.replica_policy'
+      - '@content_relay_origin.sending_settings'
 
   content_relay_origin.pairing:
     class: Drupal\content_relay_origin\PairingService
@@ -137,6 +143,7 @@ services:
       - '@config.factory'
       - '@datetime.time'
       - '@logger.channel.content_relay_origin'
+      - '@content_relay_origin.sending_settings'
 
   content_relay_origin.replica_items:
     class: Drupal\content_relay_origin\ReplicaItems
@@ -162,6 +169,7 @@ services:
       - '@current_user'
       - '@logger.channel.content_relay_origin'
       - '@content_relay_origin.translation_blocks'
+      - '@content_relay_origin.sending_settings'
 
   content_relay_origin.manual_push:
     class: Drupal\content_relay_origin\ManualPush
@@ -244,7 +252,7 @@ services:
 
   content_relay_origin.file_links:
     class: Drupal\content_relay_origin\File\FileLinks
-    arguments: ['@content_relay.key_store', '@config.factory', '@datetime.time']
+    arguments: ['@content_relay.key_store', '@config.factory', '@datetime.time', '@content_relay_origin.sending_settings']
 
   content_relay_origin.file_access:
     class: Drupal\content_relay_origin\File\FileAccess
@@ -264,6 +272,7 @@ services:
       - '@state'
       - '@config.factory'
       - '@datetime.time'
+      - '@content_relay_origin.sending_settings'
     tags:
       - { name: content_relay_peer_policy }
 
@@ -295,6 +304,7 @@ services:
       - '@config.factory'
       - '@datetime.time'
       - '@logger.channel.content_relay_origin'
+      - '@content_relay_origin.sending_settings'
 
   content_relay_origin.replica_requests:
     class: Drupal\content_relay_origin\ReplicaRequests
@@ -306,6 +316,7 @@ services:
       - '@config.factory'
       - '@keyvalue.expirable'
       - '@datetime.time'
+      - '@content_relay_origin.sending_settings'
 
   content_relay_origin.hash_backfill:
     class: Drupal\content_relay_origin\HashBackfill

@@ -170,7 +170,7 @@ final class FileTest extends OriginTestBase {
     // A link signed correctly but in the past.
     $past = $this->createMock(TimeInterface::class);
     $past->method('getCurrentTime')->willReturn(time() - 7200);
-    $links = new FileLinks($this->container->get('content_relay.key_store'), $this->container->get('config.factory'), $past);
+    $links = new FileLinks($this->container->get('content_relay.key_store'), $this->container->get('config.factory'), $past, $this->container->get('content_relay_origin.sending_settings'));
     $expired = $links->build($file, $this->replica->siteId)['download'];
     $response = $this->get($expired);
     $this->assertSame(410, $response->getStatusCode());

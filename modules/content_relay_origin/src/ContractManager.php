@@ -69,6 +69,7 @@ class ContractManager {
     protected TimeInterface $time,
     protected LoggerInterface $logger,
     protected ReplicaPolicy $policy,
+    protected SendingSettings $sending,
   ) {}
 
   /**
@@ -91,9 +92,9 @@ class ContractManager {
     $replica_terms = ($replica_terms ?? $latest?->terms['replica_terms'] ?? []) + SubscriptionContract::defaultReplicaTerms();
     $origin_terms = ($origin_terms ?? $latest?->terms['origin_terms'] ?? []) + SubscriptionContract::defaultOriginTerms();
     // This site's own policy, whatever was proposed.
-    $origin_terms['require_encryption'] = (bool) $this->configFactory->get('content_relay.settings')->get('encryption.require');
+    $origin_terms['require_encryption'] = (bool) $this->sending->get('encryption.require', $replica_id);
     $origin_encryption_keys = $this->keyStore->getPublicKeys(KeyPurpose::Encryption);
-    $negotiated = $this->negotiator->negotiate($origin_terms, $replica_terms, $origin_encryption_keys !== [] && $replica->encryptionKeys !== []);
+    $negotiated = $this->negotiator->negotiate($origin_terms, $replica_terms, $origin_encryption_keys !== [] && $replica->encryptionKeys !== [], $replica_id);
     $version = ($latest?->version() ?? 0) + 1;
     $effective_from = $this->registry->peekSequence($replica_id);
 

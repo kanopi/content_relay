@@ -742,3 +742,18 @@ changes nothing. The origin that created an item owns it; another origin's
 events for it are refused as collisions. Reconciliation, language backfill
 and contract withdrawals only touch the pairing's own items. With several
 pairings, work that names none fails rather than guess.
+
+## 91. Sending settings belong to a pairing too
+
+How an origin sends to one replica (published bundles, delivery, read limit,
+not-syncable behavior, file link lifetime, encryption requirement and
+transition window) is a config entity per replica,
+`content_relay_replica_pairing`, keyed by the replica's site ID. A pairing
+starts with no settings of its own and follows the site-wide ones until it
+is given them, so changing a site-wide setting still reaches every replica
+that has not been set apart. The bundles the site publishes at all are the
+site-wide list plus every pairing's, so an item is tracked if any replica
+can receive it; each replica's contract is offered only its pairing's.
+Pairing creates the entity, named from the replica's label; replicas paired
+before get one on update. Reconciliation settings stay site-wide.
+

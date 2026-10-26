@@ -44,6 +44,7 @@ class ReplicaRequests {
     protected ConfigFactoryInterface $configFactory,
     protected KeyValueExpirableFactoryInterface $keyValueExpirable,
     protected TimeInterface $time,
+    protected SendingSettings $sending,
   ) {}
 
   /**
@@ -53,7 +54,7 @@ class ReplicaRequests {
    *   The number, or PHP_INT_MAX without a limit.
    */
   public function remaining(string $replica_id): int {
-    [$limit, $window] = $this->limit();
+    [$limit, $window] = $this->limit($replica_id);
     if ($limit <= 0) {
       return PHP_INT_MAX;
     }
@@ -69,7 +70,7 @@ class ReplicaRequests {
    * Counts items read by a replica against its budget.
    */
   public function consume(string $replica_id, int $count): void {
-    [$limit, $window] = $this->limit();
+    [$limit, $window] = $this->limit($replica_id);
     if ($limit <= 0 || $count <= 0) {
       return;
     }
@@ -87,7 +88,7 @@ class ReplicaRequests {
    * The refusal for a replica over its read budget.
    */
   public function overBudget(string $replica_id): JsonResponse {
-    [, $window] = $this->limit();
+    [, $window] = $this->limit($replica_id);
     $used = $this->keyValueExpirable->get('content_relay_origin.read_budget')->get($replica_id);
     $retry = is_array($used) ? max(1, $used['start'] + $window - $this->time->getCurrentTime()) : $window;
     $response = self::refuse(429, 'rate_limited', 'This replica has read as much as it may for now.');
@@ -101,9 +102,10 @@ class ReplicaRequests {
    * @return array{0: int, 1: int}
    *   Items (0 for no limit) and seconds.
    */
-  protected function limit(): array {
-    $config = $this->configFactory->get('content_relay_origin.settings');
-    return [(int) ($config->get('read_limit.items') ?? 0), max(1, (int) ($config->get('read_limit.window') ?? 60))];
+  protected function limit(string $replica_id): array {
+    $items = (int) ($this->sending->get('read_limit.items', $replica_id) ?? 0);
+    $window = max(1, (int) ($this->sending->get('read_limit.window', $replica_id) ?? 60));
+    return [$items, $window];
   }
 
   /**
