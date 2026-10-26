@@ -727,8 +727,9 @@ leaves out follows `content_relay_replica.settings`, which also seeds new
 pairings and keeps the settings that are not about one origin (webhook URL,
 retention, lock waits). The origin's identity, keys, contract and stream
 stay in the database. Pairing creates the entity; sites paired before get
-one, `default`, on update. While a site has one origin, the settings form
-edits both. See docs/multi-pairing.md for the rest of the plan.
+one, `default`, on update. While a site had one origin, the settings form
+edited both, until each origin had a settings form of its own (93). See
+docs/multi-pairing.md for the rest of the plan.
 
 ## 90. A replica can receive from several origins
 

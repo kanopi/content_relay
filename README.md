@@ -241,8 +241,9 @@ origin, which revokes it, so it can pair again with a new code.
 ## Replica
 
 Events arrive at `POST /content-relay/v1/events` as signed envelopes. The
-endpoint verifies the signature and that the sender is the paired origin,
-records the sequence (and any gap), and hands the event to
+endpoint verifies the signature and that the sender is one of the paired
+origins, works in that origin's pairing from then on, records the sequence
+(and any gap), and hands the event to
 `content_relay_replica.applier`, which every way of applying an event goes
 through. Its rules, in order:
 
@@ -422,8 +423,9 @@ pulling any item by UUID (`/admin/content/content-relay/pull`), and
 `drush content-relay:pull`.
 
 **Reconciliation** runs from cron (`reconcile.interval`, nightly by default,
-0 for never), from the Reconciliation page, or with
-`drush content-relay:replica-reconcile`. For every bundle this site receives it reads
+0 for never), from each origin's Reconciliation tab, or with
+`drush content-relay:replica-reconcile`. For every bundle this site receives
+from that origin it reads
 the origin's hashes a page at a time and:
 
 - pulls items whose hashes differ, and items missing here;
@@ -437,8 +439,8 @@ It never touches content without a sync state row, items detached here
 (except deletes with "follow deletes"), items in conflict, or items waiting
 for files or dependencies. Every change goes through the apply service with
 its locks and checks, so a run is safe to repeat and changes nothing when the
-sites agree. Each run is recorded with counts and problems on the
-Reconciliation page. Cron works through a run 30 seconds at a time.
+sites agree. Each run is recorded with counts and problems on the origin's
+Reconciliation tab; a run only ever touches that origin's items. Cron works through a run 30 seconds at a time.
 
 A run acts on at most `reconcile.max_items` items itself (100 by default);
 the rest go into a queue that cron works through at the same number per cron
@@ -491,7 +493,7 @@ Translations travel with their item, as one entity with one UUID.
   accept the origin's, or keep the local one, which detaches that translation.
 - **New languages on the origin** are announced to replicas. One receiving
   every language gets them at once; one receiving selected languages shows
-  them as pending, to add or ignore (on the subscription page, or
+  them as pending, to add or ignore (on the origin's Contract tab, or
   `drush content-relay:languages --add=` / `--ignore=`).
 - **Removed languages**, by the origin or by changing the subscription, leave
   their translations here as local translations, or delete them if chosen.
@@ -523,7 +525,8 @@ checks every received bundle.
 
 A **mapping** (Configuration › Content Relay replica › Mappings; a config
 entity, so it is exported and deployed) puts one origin bundle onto a bundle
-here, possibly of another entity type. Each origin field, or one of its
+here, possibly of another entity type. It is for every origin, or for one;
+one for the origin an event comes from is used first. Each origin field, or one of its
 properties (`body.value`), is mapped to a field or property here, with
 transforms between:
 
@@ -570,7 +573,7 @@ once; the replica holds the first until the second arrives.
 References to anything the replica does not subscribe to (users, when users
 are not synced; a bundle outside the contract) are listed in the event as
 external. The replica uses the local entity with that UUID if it has one, and
-otherwise a fallback set in `content_relay_replica.settings:external_references.fallbacks`:
+otherwise a fallback set in the origin's settings (`external_references.fallbacks`):
 by default, authors become the anonymous user and other references are left
 out. The copy is still verified against the origin's hash, with the same
 substitutions applied.
@@ -749,7 +752,7 @@ a batch, after fixing the cause. In Drush: `content-relay:failures`,
 | Permission | Side | Allows |
 | --- | --- | --- |
 | Administer Content Relay origin | origin | Settings: published bundles, delivery, pairing (restricted) |
-| Administer Content Relay replicas | origin | Replica list, approval, suspension, contracts, allowed addresses (restricted) |
+| Administer Content Relay replicas | origin | Replica list, approval, suspension, contracts, settings per replica, allowed addresses (restricted) |
 | Generate Content Relay pairing codes | origin | Pairing codes |
 | View the Content Relay event log | origin | The event log and its entries |
 | Replay Content Relay events | origin | Replay failed events |
@@ -757,7 +760,7 @@ a batch, after fixing the cause. In Drush: `content-relay:failures`,
 | Bulk push Content Relay items | origin | Push from the report, refresh it |
 | View the Content Relay status report | origin | The report and its CSV; validate on replicas |
 | Mark Content Relay items not syncable | origin | Not syncable flags |
-| Administer Content Relay replica | replica | Pairing, settings (restricted) |
+| Administer Content Relay replica | replica | Pairing, settings, each origin's settings, unpairing (restricted) |
 | Change the Content Relay subscription | replica | Propose contract changes (restricted) |
 | Detach and reattach Content Relay items | replica | Detach, reattach, in bulk too |
 | Pull Content Relay items and files | replica | Pull latest, pull by UUID, pull files, retry and dismiss save failures |
@@ -832,7 +835,8 @@ The replica asks, the origin decides.
    failed attempts (5 per IP per hour) and manual approval are settings.
 2. On the replica, create a Content Relay signing key (see Keys), then enter
    the origin's `https://` address, the code and the bundles wanted under
-   **Content Relay replica › Pairing**. Input ignores dashes, spaces and case.
+   **Content Relay replica › Pair with an origin**; a site already paired
+   also names the new pairing. Input ignores dashes, spaces and case.
 3. The replica sends its public keys, its endpoint and the requested terms,
    signed with the key it offers. The origin checks the code, registers the
    replica, proposes contract version 1 and answers with its public keys and
@@ -852,12 +856,14 @@ Anything else is answered `409 contract_mismatch`, and the origin sends its
 contract again and retries.
 
 - **Replica changes** (bundles, languages, processing mode, rate limit, pause)
-  are made under **Content Relay replica › Contract**. The replica sends a
+  are made on the origin's Contract tab under **Content Relay replica**.
+  The replica sends a
   signed `subscription_update`; the origin answers with the new version,
   which the replica stores and acknowledges. If the origin cannot be reached,
   the change is kept and retried by cron, and the old version stays in force.
-- **Origin changes** (which bundles a replica may receive) are made on the
-  replica's contract page on the origin. The new version is pushed to the
+- **Origin changes** (which bundles a replica may receive, whether
+  encryption is required) are made on the replica's Contract page or
+  Settings page on the origin. The new version is pushed to the
   replica, which acknowledges it in its response. Unacknowledged versions are
   pushed again by cron. Items of a withdrawn bundle are kept on the replica as
   "detached by origin", never deleted.

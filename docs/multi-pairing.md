@@ -1,9 +1,10 @@
 # Multiple pairings, each with its own configuration
 
-Status: proposal, not built.
+Status: built, in five phases (see the end). Decisions 89–94 in
+`docs/decisions.md` record the choices made on the way.
 
-Today a replica has one origin, and both roles keep their settings site-wide.
-This changes that: a replica can pair with several origins, an origin already
+Before this, a replica had one origin, and both roles kept their settings
+site-wide. This changed that: a replica can pair with several origins, an origin already
 pairs with several replicas, and every pairing, on either side, has its own
 settings, which can be edited, and can be ended.
 
@@ -11,7 +12,8 @@ settings, which can be edited, and can be ended.
 
 - **Unpairing** asks what to do with what was received: keep it as ordinary
   local content (sync state dropped; adopting can link it again after
-  re-pairing), or delete everything received from that origin.
+  re-pairing), or delete everything received from that origin. Detached
+  items are kept either way.
 - **Overlap**: the first origin to create an item on a replica owns it. Another
   origin's events for the same UUID are refused as collisions, as for content
   made locally, and listed as failures.
@@ -86,11 +88,15 @@ keep working.
 ## Phases
 
 1. Replica pairing entity and live-state tables keyed by pairing; settings
-   readers switched to the pairing; one pairing still enforced.
+   readers switched to the pairing; one pairing still enforced. Done.
 2. Several origins on a replica: endpoint routing by sender, ownership,
-   per-pairing reconciliation, files and failures; reports and Drush.
-3. Origin per-replica settings entity, with site-wide defaults.
-4. Edit and unpair on both sides, including the keep or delete choice.
+   per-pairing reconciliation, files and failures; reports and Drush. Done.
+3. Origin per-replica settings entity, following the site-wide settings
+   until given its own. Done.
+4. Edit and unpair on both sides, including the keep or delete choice;
+   report filter; mappings per origin. Done.
 5. Docs, decision records and the two Smalley sites moved to the new model.
+   Done, except where the origin's pairing for the China site is kept in
+   config, which is still open.
 
-Each phase ends with PHPCS, PHPStan, the full suite and a commit.
+Each phase ended with PHPCS, PHPStan, the full suite and a commit.

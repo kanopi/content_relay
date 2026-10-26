@@ -298,6 +298,20 @@ marks a class name used in both submodules.
 - **200.** Error summaries to the origin carry no stack traces, paths or secrets. Covered: `ApplyTest::testExceptionRollsBackEverything` (decision 16).
 - **201.** Stored failed payloads are encrypted at rest when encryption is on. Covered: `EncryptionTest::testFailedPayloadSealedAtRest` (sealed to this site's encryption key, and opened for retry).
 
+## Added after the specification
+
+Features asked for after the specification was built, and their tests.
+
+- **Adopting a copy's content** (decision 86). `AdoptTest::testAdopt`.
+- **Both roles on one site** (decision 88). `BothRolesTest::testRolesSideBySide`, `BothRolesTest::testReceivedContentIsPassedOn`, `BothRolesUiTest::testEnableBothRoles`, `UpdateTest::testRepairsBothRoles`.
+- **References to unpublished content and restricted text formats** (decisions 83 and 87). `ApplyTest::testReferenceToUnpublishedContent`, `ApplyTest::testRestrictedTextFormat`.
+- **Receiving settings per origin** (decision 89). `ReceivingSettingsTest::testPairingSettings`, `ReceivingSettingsTest::testUpdate`, `ReplicaAdminTest::testSettingsForm`, `OriginsUiTest::testOrigins`.
+- **Several origins on a replica** (decision 90). `MultiOriginTest::testEachOriginItsOwnPairing`, `MultiOriginTest::testFirstOriginOwnsItem`, `MultiOriginTest::testReconcileLeavesOtherOriginsAlone`, `MultiOriginTest::testPairingMustBeChosen`, `SubscriptionTest::testFurtherPairings`, `ReplicaAdminTest::testPairing`.
+- **Sending settings per replica** (decision 91). `SendingSettingsTest::testPairingFollowsSiteWide`, `SendingSettingsTest::testSettingsPerReplica`, `SendingSettingsTest::testContractPerReplica`, `SendingSettingsTest::testPostUpdate`, `OriginAdminTest::testReplicaSettings`.
+- **Unpairing** (decision 92). `UnpairTest::testKeep`, `UnpairTest::testDelete`, `UnpairTest::testQueuedWorkOfEndedPairing`, `OriginsUiTest::testUnpair`, `OriginsUiTest::testDrushUnpair`, `PairingTest::testReplicaUnpairs`.
+- **Pages per origin, report filter** (decision 93). `OriginsUiTest::testOrigins`, `ReplicaAdminTest::testPermissions`, `ReceivingSettingsTest::testReportUpdate`.
+- **Mappings per origin** (decision 94). `MultiOriginTest::testMappingPerOrigin`.
+
 ## Checking on real sites
 
 Every scenario has an automated test. These procedures repeat some of them on
@@ -309,7 +323,7 @@ M1 sets the sites up; the others assume it.
 1. Create two DDEV projects from this codebase, for example `cr-origin` and `cr-replica`, each with its own database, and install Drupal on both.
 2. Let each web container reach the other's HTTPS name through the DDEV router: on the origin add `.ddev/docker-compose.peer.yaml` with `services: {web: {external_links: ["ddev-router:cr-replica.ddev.site"]}}`, on the replica the same with `cr-origin.ddev.site`, then `ddev restart` both.
 3. Origin: `ddev drush en content_relay_origin`, then `ddev drush content-relay:generate-key signing origin_signing ../private/origin_signing.key` and `ddev drush content-relay:rotate-key signing origin_signing` to make it primary. Under Content Relay origin › Settings publish Article and Basic page, then generate a code under Pairing code.
-4. Replica: `ddev drush en content_relay_replica`, create its signing key the same way, then under Content Relay replica › Pairing enter `https://cr-origin.ddev.site`, the code and the bundles. Expect "Paired. Contract version 1 is in place."
+4. Replica: `ddev drush en content_relay_replica`, create its signing key the same way, then under Content Relay replica › Pair with an origin enter `https://cr-origin.ddev.site`, the code and the bundles. Expect "Paired. Contract version 1 is in place."
 5. Run cron on both every minute during the procedures, for example `ddev exec 'while true; do drush cron; sleep 60; done'`.
 
 ### M2. Origin outage and recovery (scenario 20, `OutageTest`)
