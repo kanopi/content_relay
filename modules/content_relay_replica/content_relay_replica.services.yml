@@ -174,8 +174,10 @@ services:
     tags:
       - { name: content_relay_peer_policy }
 
-  content_relay.key_announcer:
+  content_relay_replica.key_announcer:
     class: Drupal\content_relay_replica\Crypto\OriginKeyAnnouncer
+    tags:
+      - { name: content_relay.key_announcer }
     arguments:
       - '@content_relay_replica.subscription'
       - '@content_relay_replica.origin'

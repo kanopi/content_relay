@@ -177,7 +177,7 @@ final class ReplicaItemUiTest extends BrowserTestBase {
       'view content relay replica report',
     ]));
 
-    $this->drupalGet('admin/reports/content-relay');
+    $this->drupalGet('admin/reports/content-relay/received');
     $this->assertSession()->pageTextContains('From the origin');
     $this->assertSession()->pageTextContains('Synced');
 
@@ -214,7 +214,7 @@ final class ReplicaItemUiTest extends BrowserTestBase {
   public function testBulkDetach(): void {
     $second = $this->receive('Second');
     $this->drupalLogin($this->drupalCreateUser(['detach content relay items', 'view content relay replica report']));
-    $this->drupalGet('admin/reports/content-relay');
+    $this->drupalGet('admin/reports/content-relay/received');
     $this->submitForm([
       'content_relay_bulk_detach[0]' => TRUE,
       'content_relay_bulk_detach[1]' => TRUE,
@@ -226,7 +226,7 @@ final class ReplicaItemUiTest extends BrowserTestBase {
     $this->assertSame(SyncStatus::DETACHED_BY_REPLICA, $this->syncStatus($second));
 
     $this->editLocally($second, 'Changed');
-    $this->drupalGet('admin/reports/content-relay');
+    $this->drupalGet('admin/reports/content-relay/received');
     $this->submitForm([
       'content_relay_bulk_detach[0]' => TRUE,
       'content_relay_bulk_detach[1]' => TRUE,
@@ -252,14 +252,14 @@ final class ReplicaItemUiTest extends BrowserTestBase {
     $this->assertSession()->statusCodeEquals(403);
     $this->drupalGet('admin/content');
     $this->assertSession()->linkByHrefNotExists("admin/content/content-relay/node/{$this->uuid}/detach");
-    $this->drupalGet('admin/reports/content-relay');
+    $this->drupalGet('admin/reports/content-relay/received');
     $this->assertSession()->buttonNotExists('Apply to selected items');
 
     // Each page needs its permission.
     $pages = [
-      'admin/reports/content-relay' => 'view content relay replica report',
-      'admin/reports/content-relay/failures' => 'view content relay replica report',
-      'admin/reports/content-relay/reconciliation' => 'reconcile content relay items',
+      'admin/reports/content-relay/received' => 'view content relay replica report',
+      'admin/reports/content-relay/received/failures' => 'view content relay replica report',
+      'admin/reports/content-relay/received/reconciliation' => 'reconcile content relay items',
       'admin/config/services/content-relay/replica/mappings' => 'administer content relay mappings',
       'admin/config/services/content-relay/replica/settings' => 'administer content relay replica',
       "admin/content/content-relay/node/{$this->uuid}/pull" => 'pull content relay items',
@@ -387,12 +387,12 @@ final class ReplicaItemUiTest extends BrowserTestBase {
     $this->drush('content-relay:pull', ['node', '9a4a4f0e-3b8e-4e8c-9d2c-2c6f8f4b1a01'], [], NULL, NULL, 1);
 
     // Validate: in sync with what the origin serves, then not.
-    $this->drush('content-relay:validate', ['node', $this->uuid]);
+    $this->drush('content-relay:replica-validate', ['node', $this->uuid]);
     $this->assertStringContainsString('Origin: in sync at revision 3', $this->getErrorOutput());
     $this->serve($this->articleEvent('Newer on the origin', $this->uuid, 4));
-    $this->drush('content-relay:validate', ['node', $this->uuid], [], NULL, NULL, 1);
+    $this->drush('content-relay:replica-validate', ['node', $this->uuid], [], NULL, NULL, 1);
     $this->assertStringContainsString('Origin: out of sync. The origin has revision 4, this site received 3', $this->getErrorOutput());
-    $this->drush('content-relay:validate', ['node', '9a4a4f0e-3b8e-4e8c-9d2c-2c6f8f4b1a01'], [], NULL, NULL, 1);
+    $this->drush('content-relay:replica-validate', ['node', '9a4a4f0e-3b8e-4e8c-9d2c-2c6f8f4b1a01'], [], NULL, NULL, 1);
 
     // Reconcile pulls what the hash listing says is newer.
     $event = $this->articleEvent('Newer on the origin', $this->uuid, 4);
@@ -409,16 +409,16 @@ final class ReplicaItemUiTest extends BrowserTestBase {
         ],
       ];
     });
-    $this->drush('content-relay:reconcile');
+    $this->drush('content-relay:replica-reconcile');
     $this->assertStringContainsString('pulled: 1', $this->getErrorOutput());
     $reset();
     $this->assertSame('Newer on the origin', $title());
-    $this->drush('content-relay:reconcile');
+    $this->drush('content-relay:replica-reconcile');
     $this->assertStringContainsString('in_sync: 1', $this->getErrorOutput());
     $this->updateFakeOrigin(function (array &$config): void {
       $config['down'] = TRUE;
     });
-    $this->drush('content-relay:reconcile', [], [], NULL, NULL, 1);
+    $this->drush('content-relay:replica-reconcile', [], [], NULL, NULL, 1);
     $this->drush('content-relay:check-schema', [], [], NULL, NULL, 1);
     $this->updateFakeOrigin(function (array &$config): void {
       $config['down'] = FALSE;
@@ -632,10 +632,10 @@ final class ReplicaItemUiTest extends BrowserTestBase {
   public function testFailures(): void {
     $this->receive(str_repeat('Too long ', 40), FALSE);
     $this->drupalLogin($this->drupalCreateUser(['view content relay replica report', 'pull content relay items']));
-    $this->drupalGet('admin/reports/content-relay');
+    $this->drupalGet('admin/reports/content-relay/received');
     $this->assertSession()->pageTextContains('1 synced item failed to save.');
 
-    $this->drupalGet('admin/reports/content-relay/failures');
+    $this->drupalGet('admin/reports/content-relay/received/failures');
     $this->assertSession()->pageTextContains('validation_failed');
     $this->clickLink(mb_substr(str_repeat('Too long ', 40), 0, 20), 0);
     $this->assertSession()->pageTextContains('Field values that failed validation');
@@ -652,12 +652,12 @@ final class ReplicaItemUiTest extends BrowserTestBase {
     $this->assertSession()->pageTextContains('No failures match.');
     $failure = $this->container->get('content_relay_replica.failed_events')->find(['status' => 'dismissed'])[0];
     $this->assertSame('Titles are short here', $failure['dismiss_reason']);
-    $this->drupalGet('admin/reports/content-relay');
+    $this->drupalGet('admin/reports/content-relay/received');
     $this->assertSession()->pageTextNotContains('failed to save');
 
     // In bulk, through a batch.
     $this->receive(str_repeat('Also too long ', 30), FALSE);
-    $this->drupalGet('admin/reports/content-relay/failures');
+    $this->drupalGet('admin/reports/content-relay/received/failures');
     $this->submitForm([], 'Retry all matching the filters');
     $this->assertSession()->pageTextContains('0 applied, 1 still failing');
 

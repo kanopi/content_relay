@@ -79,7 +79,7 @@ function content_relay_replica_help(string $route_name, RouteMatchInterface $rou
       ':pair' => Url::fromRoute('content_relay_replica.pair')->toString(),
       ':subscription' => Url::fromRoute('content_relay_replica.subscription')->toString(),
       ':settings' => Url::fromRoute('content_relay_replica.settings')->toString(),
-      ':report' => Url::fromUserInput('/admin/reports/content-relay')->toString(),
+      ':report' => Url::fromUserInput('/admin/reports/content-relay/received')->toString(),
     ]) . '</p>',
     'content_relay_replica.subscription' => '<p>' . t('Changes are proposed to the origin, which answers with a new contract version. Until it confirms, the current contract stays in force.') . '</p>',
     'content_relay_replica.settings' => '<p>' . t('How received content is applied here. What is received is set on the subscription page.') . '</p>',

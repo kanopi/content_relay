@@ -6,8 +6,10 @@ namespace Drupal\content_relay_origin;
 
 use Drupal\content_relay\Event\Operation;
 use Drupal\content_relay_origin\Report\ReportIndex;
+use Drupal\content_relay_replica\OriginPeer;
 use Drupal\Core\Entity\ContentEntityInterface;
 use Drupal\Core\Entity\EntityInterface;
+use Drupal\Core\Entity\SynchronizableInterface;
 
 /**
  * Turns entity saves and deletes into outbox rows.
@@ -35,7 +37,23 @@ class EntityChangeRecorder {
     protected ReportIndex $report,
     protected ReplicaItems $items,
     protected TranslationBlocks $translationBlocks,
+    protected ?OriginPeer $upstream = NULL,
   ) {}
+
+  /**
+   * The replica a change came from, which must not get it back.
+   *
+   * On a site that is also a replica, content saved by sync came from that
+   * site's origin. When the origin is one of this site's replicas too, as
+   * when two sites sync both ways, the change is not sent back to it; a
+   * change made here goes to every replica.
+   */
+  protected function source(EntityInterface $entity): ?string {
+    if ($this->upstream === NULL || !$entity instanceof SynchronizableInterface || !$entity->isSyncing()) {
+      return NULL;
+    }
+    return $this->upstream->getSiteId();
+  }
 
   /**
    * Replicas that have an item following its referrers, such as a file.
@@ -46,7 +64,7 @@ class EntityChangeRecorder {
   protected function holders(EntityInterface $entity): array {
     $ids = [];
     foreach ($this->registry->getAll() as $replica) {
-      if ($replica->receivesEvents() && $this->items->isKnown($replica->id, $entity->getEntityTypeId(), (string) $entity->uuid())) {
+      if ($replica->receivesEvents() && $replica->id !== $this->source($entity) && $this->items->isKnown($replica->id, $entity->getEntityTypeId(), (string) $entity->uuid())) {
         $ids[] = $replica->id;
       }
     }
@@ -56,13 +74,22 @@ class EntityChangeRecorder {
   /**
    * Replicas whose contract, in force or pending, covers an item.
    *
+   * @param string $entity_type_id
+   *   The entity type.
+   * @param string $bundle
+   *   The bundle.
+   * @param string $uuid
+   *   The UUID.
+   * @param string|null $except
+   *   A replica the change came from.
+   *
    * @return string[]
    *   Replica IDs.
    */
-  protected function recipients(string $entity_type_id, string $bundle, string $uuid): array {
+  protected function recipients(string $entity_type_id, string $bundle, string $uuid, ?string $except = NULL): array {
     $ids = [];
     foreach ($this->registry->getAll() as $replica) {
-      if ($replica->receivesEvents() && $this->contracts->coversBundle($replica->id, $entity_type_id, $bundle) && !$this->flags->isBlocked($entity_type_id, $uuid, $replica->id)) {
+      if ($replica->receivesEvents() && $replica->id !== $except && $this->contracts->coversBundle($replica->id, $entity_type_id, $bundle) && !$this->flags->isBlocked($entity_type_id, $uuid, $replica->id)) {
         $ids[] = $replica->id;
       }
     }
@@ -86,7 +113,7 @@ class EntityChangeRecorder {
     }
     assert($entity instanceof ContentEntityInterface);
     ['revision' => $revision] = $this->hashStore->record($entity);
-    $rows = $this->outbox->enqueue($is_new ? Operation::Create : Operation::Update, $entity->getEntityTypeId(), $entity->bundle(), $entity->uuid(), $revision, $this->recipients($entity->getEntityTypeId(), $entity->bundle(), (string) $entity->uuid()));
+    $rows = $this->outbox->enqueue($is_new ? Operation::Create : Operation::Update, $entity->getEntityTypeId(), $entity->bundle(), $entity->uuid(), $revision, $this->recipients($entity->getEntityTypeId(), $entity->bundle(), (string) $entity->uuid(), $this->source($entity)));
     $this->scheduler->schedule(array_keys($rows));
     $this->report->refreshEntity($entity);
   }
@@ -105,7 +132,7 @@ class EntityChangeRecorder {
     }
     $latest = $this->hashStore->latest($entity->getEntityTypeId(), (string) $entity->uuid());
     $revision = $entity instanceof ContentEntityInterface && $entity->getEntityType()->isRevisionable() ? (int) $entity->getRevisionId() : ($latest['revision'] ?? 0);
-    $rows = $this->outbox->enqueue(Operation::Delete, $entity->getEntityTypeId(), $entity->bundle(), (string) $entity->uuid(), $revision, $this->recipients($entity->getEntityTypeId(), $entity->bundle(), (string) $entity->uuid()));
+    $rows = $this->outbox->enqueue(Operation::Delete, $entity->getEntityTypeId(), $entity->bundle(), (string) $entity->uuid(), $revision, $this->recipients($entity->getEntityTypeId(), $entity->bundle(), (string) $entity->uuid(), $this->source($entity)));
     $this->hashStore->forget($entity->getEntityTypeId(), (string) $entity->uuid());
     $this->report->remove($entity->getEntityTypeId(), (string) $entity->uuid());
     $this->flags->clear($entity->getEntityTypeId(), (string) $entity->uuid());

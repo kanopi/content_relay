@@ -703,3 +703,16 @@ anonymous, so text in Full HTML or any restricted format would be refused.
 As with references (decision 83), the replica accepts a format that exists
 here; who may use it was decided on the origin. A format this site does not
 have is still refused.
+
+## 88. One site can have both roles
+
+A site can be a replica of one site and the origin of others. The roles keep
+apart what they name alike: the replica's contract table is
+`content_relay_replica_contract`, its report and pages are under
+`admin/reports/content-relay/received`, and the commands both roles have are
+`content-relay:origin-status`, `-reconcile` and `-validate` and their
+`replica-` counterparts. Each role tags its key announcer, and key rotation
+tells every peer, requiring confirmation only where that role does (a
+replica's origin). Content saved by sync, deletes included, is passed on to
+this site's replicas but not back to its own origin, so two sites can sync
+both ways without echoing.

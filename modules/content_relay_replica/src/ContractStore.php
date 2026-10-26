@@ -18,7 +18,7 @@ use Drupal\Core\Database\Connection;
  */
 class ContractStore {
 
-  public const TABLE = 'content_relay_contract';
+  public const TABLE = 'content_relay_replica_contract';
 
   public function __construct(
     protected Connection $database,

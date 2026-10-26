@@ -7,9 +7,9 @@ namespace Drupal\content_relay\Key;
 /**
  * Tells this site's peers about its current public keys.
  *
- * Each role module provides one as content_relay.key_announcer: the origin
- * through a new contract version for each replica, a replica through a
- * subscription update to its origin.
+ * Each role module provides one, tagged content_relay.key_announcer: the
+ * origin through a new contract version for each replica, a replica through a
+ * subscription update to its origin. A site with both roles has both.
  */
 interface KeyAnnouncerInterface {
 

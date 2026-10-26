@@ -294,7 +294,7 @@ final class ReplicaCommands extends DrushCommands {
   /**
    * Compares this site with the origin, pulling and deleting to match.
    */
-  #[CLI\Command(name: 'content-relay:reconcile', aliases: ['cr-reconcile'])]
+  #[CLI\Command(name: 'content-relay:replica-reconcile', aliases: ['cr-replica-reconcile'])]
   public function reconcile(): int {
     try {
       $run = $this->reconciler->run('drush');
@@ -367,7 +367,7 @@ final class ReplicaCommands extends DrushCommands {
   /**
    * Recomputes an item's hashes here and on the origin, and compares them.
    */
-  #[CLI\Command(name: 'content-relay:validate', aliases: ['cr-validate'])]
+  #[CLI\Command(name: 'content-relay:replica-validate', aliases: ['cr-replica-validate'])]
   #[CLI\Argument(name: 'entity_type', description: 'Entity type ID on the origin.')]
   #[CLI\Argument(name: 'uuid', description: 'UUID of the synced item.')]
   public function validate(string $entity_type, string $uuid): int {
@@ -466,7 +466,7 @@ final class ReplicaCommands extends DrushCommands {
   /**
    * Shows how this replica stands with its origin.
    */
-  #[CLI\Command(name: 'content-relay:status', aliases: ['cr-status'])]
+  #[CLI\Command(name: 'content-relay:replica-status', aliases: ['cr-replica-status'])]
   public function status(): int {
     $origin = $this->origin->get();
     if ($origin === NULL) {

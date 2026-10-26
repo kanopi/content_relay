@@ -520,22 +520,22 @@ final class OriginItemUiTest extends BrowserTestBase {
     $node = $this->drupalCreateNode(['type' => 'article', 'title' => 'Will fail']);
     $this->container->get('content_relay_origin.delivery')->deliver(self::REPLICA);
     // Dead letters make the status command fail.
-    $this->drush('content-relay:status', [], [], NULL, NULL, 1);
+    $this->drush('content-relay:origin-status', [], [], NULL, NULL, 1);
     $this->assertStringContainsString('dead_letter', $this->getOutput());
     $this->drush('content-relay:replay', [(string) $this->outbox($node)[0]['id']]);
     $this->drush('content-relay:replay', ['999999'], [], NULL, NULL, 1);
     $this->drush('content-relay:backfill-hashes');
-    $this->drush('content-relay:reconcile');
+    $this->drush('content-relay:origin-reconcile');
 
     // Validate: a replica that cannot answer fails the command, an item kept
     // from every replica does not.
     $checked = $this->drupalCreateNode(['type' => 'article', 'title' => 'Checked']);
-    $this->drush('content-relay:validate', ['node', (string) $checked->id()], [], NULL, NULL, 1);
+    $this->drush('content-relay:origin-validate', ['node', (string) $checked->id()], [], NULL, NULL, 1);
     $this->assertStringContainsString('Mirror (' . self::REPLICA . '): Could not be asked', $this->getOutput());
     $this->drush('content-relay:not-syncable', ['node', $checked->uuid()]);
-    $this->drush('content-relay:validate', ['node', $checked->uuid()]);
+    $this->drush('content-relay:origin-validate', ['node', $checked->uuid()]);
     $this->assertStringContainsString('Mirror (' . self::REPLICA . '): Not syncable', $this->getOutput());
-    $this->drush('content-relay:validate', ['node', '999999'], [], NULL, NULL, 1);
+    $this->drush('content-relay:origin-validate', ['node', '999999'], [], NULL, NULL, 1);
   }
 
 }

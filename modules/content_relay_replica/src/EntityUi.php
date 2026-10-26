@@ -46,13 +46,13 @@ class EntityUi {
       ];
     }
     if ($this->currentUser->hasPermission('view content relay replica report')) {
-      $operations['content_relay_validate'] = [
-        'title' => $this->t('Validate'),
+      $operations['content_relay_replica_validate'] = [
+        'title' => $this->t('Validate against origin'),
         'url' => Url::fromRoute('content_relay_replica.validate', [
           'entity_type_id' => $entity->getEntityTypeId(),
           'uuid' => $entity->uuid(),
         ]),
-        'weight' => 62,
+        'weight' => 63,
       ];
     }
     if ($this->currentUser->hasPermission('pull content relay items')) {

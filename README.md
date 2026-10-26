@@ -17,7 +17,8 @@ covered.
 | `content_relay_origin` | Publishes changes to replicas: event log, delivery, hash store, pairing, contracts, status report, read endpoints |
 | `content_relay_replica` | Receives and applies changes: endpoint, apply, conflicts, mapping, reconciliation, languages, failures |
 
-A site enables one of the two submodules, never both.
+A site enables one of the two submodules, or both: see "Both roles on one
+site" below.
 
 ## Requirements
 
@@ -297,6 +298,30 @@ outcomes as if they had been immediate, sends unknown events again, and sends
 the contract again when the versions differ. No callbacks from the replica
 are needed.
 
+### Adopting what a copy already has
+
+A replica set up from a copy of the origin's database has the origin's items
+under the same UUIDs, but made outside sync, so sync refuses them as
+collisions. **Reports › Content Relay synced items › Reconciliation ›
+Adopt existing content** (or `drush content-relay:adopt`) compares each item
+the contract covers with the origin's hashes: identical ones are marked in
+sync without a new revision; ones that differ become conflicts, resolved like
+any edit made here. It can run at any time, also once sync is under way:
+items already synced are skipped, events refused before an item was adopted
+are retried after, and differences nobody has resolved are compared again, so
+a copy put right since (missing files copied over, say) is adopted then.
+
+### Both roles on one site
+
+A site can be a replica of one site and the origin of others, with both
+submodules enabled. Each role keeps its own tables, settings, report and
+Drush commands: the origin's report is at `admin/reports/content-relay`, the
+replica's at `admin/reports/content-relay/received`, and the commands both
+roles have are named `content-relay:origin-…` and `content-relay:replica-…`.
+Content received from the origin is passed on to this site's replicas like
+any change, but never back to the site it came from, so two sites can also
+sync both ways. A new key is announced to the origin and to every replica.
+
 ## Read endpoints
 
 Replicas read from the origin with their short-lived JWT; answers are signed
@@ -368,7 +393,7 @@ pulling any item by UUID (`/admin/content/content-relay/pull`), and
 
 **Reconciliation** runs from cron (`reconcile.interval`, nightly by default,
 0 for never), from the Reconciliation page, or with
-`drush content-relay:reconcile`. For every bundle this site receives it reads
+`drush content-relay:replica-reconcile`. For every bundle this site receives it reads
 the origin's hashes a page at a time and:
 
 - pulls items whose hashes differ, and items missing here;
@@ -394,7 +419,7 @@ A new run does not start while the queue still has items.
 **On the origin**, reconciliation re-sends to each replica what the status
 report shows as out of sync, never sent, failed or dead-lettered, as a bulk
 push would. It runs from cron (`reconcile.interval`, nightly by default) or
-`drush content-relay:reconcile [--replica=]`; at most `reconcile.max_items`
+`drush content-relay:origin-reconcile [--replica=]`; at most `reconcile.max_items`
 (200 by default) are recorded for sending in the run, the rest are queued
 and sent by cron at the same rate.
 
@@ -403,7 +428,7 @@ the gap is recorded. On cron (or `drush content-relay:fill-gaps`) the replica
 asks the stream endpoint what the missing events were about and settles each
 item as reconciliation would.
 
-**Validate** (an operation per item, and `drush content-relay:validate`)
+**Validate** (an operation per item, and `drush content-relay:replica-validate`)
 hashes the copy here again and compares it with what it should be, and asks
 the origin for its latest hashes to compare with what was received. A copy
 changed behind sync's back is marked as an error.
@@ -663,7 +688,7 @@ can be replayed: the item's current version is sent again as a new entry,
 and the old one is marked replayed (`drush content-relay:replay <entry>`).
 
 "Validate on replicas", an operation on every published item (and
-`drush content-relay:validate <type> <id>`), hashes the item again here,
+`drush content-relay:origin-validate <type> <id>`), hashes the item again here,
 replacing a stored hash that no longer matches, and asks each replica that
 gets it, in a signed `hash_request`, what it last received and whether its
 copy is unchanged. Each answer is shown (in sync, behind, changed on the
@@ -730,20 +755,21 @@ address change is logged with the user who did it.
 | `content-relay:check-schema` | replica |
 | `content-relay:reapply-mapping <mapping>` | replica |
 | `content-relay:pull <type> <uuid> [--accept-origin]` | replica |
-| `content-relay:reconcile` | replica |
+| `content-relay:replica-reconcile` | replica |
 | `content-relay:languages [--add=] [--ignore=]` | replica |
 | `content-relay:move-language <from> <to>` | replica |
 | `content-relay:fill-gaps` | replica |
-| `content-relay:validate <type> <uuid>` | replica |
+| `content-relay:adopt` | replica |
+| `content-relay:replica-validate <type> <uuid>` | replica |
 | `content-relay:backfill-hashes [--all]` | origin |
-| `content-relay:reconcile [--replica=]` | origin |
+| `content-relay:origin-reconcile [--replica=]` | origin |
 | `content-relay:replay <entry>` | origin |
 | `content-relay:replicas` | origin |
 | `content-relay:pairing-code [--bundles=]` | origin |
-| `content-relay:status` | origin |
-| `content-relay:validate <type> <id or uuid>` | origin |
+| `content-relay:origin-status` | origin |
+| `content-relay:origin-validate <type> <id or uuid>` | origin |
 | `content-relay:pair <origin url> <code> [--bundles=]` | replica |
-| `content-relay:status` | replica |
+| `content-relay:replica-status` | replica |
 | `content-relay:failures [--status=] [--bundle=]` | replica |
 | `content-relay:retry <ids> \| --all [--bundle=]` | replica |
 | `content-relay:dismiss <id> --reason=` | replica |
@@ -815,7 +841,7 @@ when it applies and a history of every version with what changed.
 
 ## Troubleshooting
 
-- **Nothing arrives on the replica.** On the origin, `drush content-relay:status`
+- **Nothing arrives on the replica.** On the origin, `drush content-relay:origin-status`
   shows each replica's state and event counts; the event log shows the
   replica's answers. A replica that is pending approval, suspended, or has not
   acknowledged a contract gets nothing. Check that cron runs.
@@ -834,11 +860,11 @@ when it applies and a history of every version with what changed.
   fields can take such fields out of the comparison.
 - **Save failures.** Reports » Content Relay save failures shows why; fix the
   field, language or mapping, then retry.
-- **Gaps in the stream.** `drush content-relay:status` on the replica lists
+- **Gaps in the stream.** `drush content-relay:replica-status` on the replica lists
   them; cron fills them, or `drush content-relay:fill-gaps`.
 - **Out of sync after an outage.** Run reconciliation (`drush
-  content-relay:reconcile` on the replica, and on the origin to re-send what
-  failed).
+  content-relay:replica-reconcile` on the replica, and `drush
+  content-relay:origin-reconcile` on the origin to re-send what failed).
 - **Slow signing or file encryption.** The status report says whether the
   sodium extension is missing.
 

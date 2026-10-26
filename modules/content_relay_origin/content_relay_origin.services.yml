@@ -51,6 +51,8 @@ services:
       - '@content_relay_origin.report'
       - '@content_relay_origin.replica_items'
       - '@content_relay_origin.translation_blocks'
+      # Present when this site is also a replica.
+      - '@?content_relay_replica.origin'
 
   content_relay_origin.event_builder:
     class: Drupal\content_relay_origin\EventBuilder
@@ -265,8 +267,10 @@ services:
     tags:
       - { name: content_relay_peer_policy }
 
-  content_relay.key_announcer:
+  content_relay_origin.key_announcer:
     class: Drupal\content_relay_origin\Crypto\ReplicaKeyAnnouncer
+    tags:
+      - { name: content_relay.key_announcer }
     arguments:
       - '@content_relay_origin.replica_registry'
       - '@content_relay_origin.contract_manager'

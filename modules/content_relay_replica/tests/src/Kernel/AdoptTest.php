@@ -182,7 +182,9 @@ final class AdoptTest extends ReplicaTestBase {
 
     // Adopting again changes nothing: the conflict above was resolved by the
     // origin's update.
-    $this->assertSame(['already_synced' => 4, 'missing' => 1], $this->container->get('content_relay_replica.adopter')->run());
+    $counts = $this->container->get('content_relay_replica.adopter')->run();
+    ksort($counts);
+    $this->assertSame(['already_synced' => 4, 'missing' => 1], $counts);
   }
 
 }

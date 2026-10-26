@@ -283,7 +283,7 @@ final class OriginCommands extends DrushCommands {
    * At most reconcile.max_items are recorded for sending now; the rest are
    * queued and sent by cron at the same rate.
    */
-  #[CLI\Command(name: 'content-relay:reconcile', aliases: ['cr-reconcile'])]
+  #[CLI\Command(name: 'content-relay:origin-reconcile', aliases: ['cr-origin-reconcile'])]
   #[CLI\Option(name: 'replica', description: 'One replica ID. Defaults to every replica.')]
   public function reconcile(array $options = ['replica' => NULL]): int {
     $result = $this->reconciler->run('drush', $options['replica'] ?: NULL);
@@ -369,7 +369,7 @@ final class OriginCommands extends DrushCommands {
   /**
    * Shows each replica's delivery state.
    */
-  #[CLI\Command(name: 'content-relay:status', aliases: ['cr-status'])]
+  #[CLI\Command(name: 'content-relay:origin-status', aliases: ['cr-origin-status'])]
   public function status(): int {
     $replicas = $this->registry->getAll();
     if ($replicas === []) {
@@ -397,7 +397,7 @@ final class OriginCommands extends DrushCommands {
   /**
    * Checks an item's hashes here and on every replica that gets it.
    */
-  #[CLI\Command(name: 'content-relay:validate', aliases: ['cr-validate'])]
+  #[CLI\Command(name: 'content-relay:origin-validate', aliases: ['cr-origin-validate'])]
   #[CLI\Argument(name: 'entity_type', description: 'Entity type ID.')]
   #[CLI\Argument(name: 'id', description: 'Entity ID or UUID.')]
   public function validate(string $entity_type, string $id): int {

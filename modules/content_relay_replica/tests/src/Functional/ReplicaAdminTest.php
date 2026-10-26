@@ -220,11 +220,11 @@ final class ReplicaAdminTest extends BrowserTestBase {
    * Pairing and status from Drush, with exit codes.
    */
   public function testDrush(): void {
-    $this->drush('content-relay:status', [], [], NULL, NULL, 1);
+    $this->drush('content-relay:replica-status', [], [], NULL, NULL, 1);
     $this->drush('content-relay:pair', ['http://' . FakeOrigin::HOST, self::CODE], ['bundles' => 'node:article'], NULL, NULL, 1);
     $this->drush('content-relay:pair', ['https://' . FakeOrigin::HOST, self::CODE], ['bundles' => 'node:article']);
     $this->assertStringContainsString('Paired', $this->getErrorOutput());
-    $this->drush('content-relay:status');
+    $this->drush('content-relay:replica-status');
     $this->assertStringContainsString('Contract: 1', $this->getOutput());
     $this->drush('content-relay:languages');
   }

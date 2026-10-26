@@ -476,7 +476,7 @@ display:
     position: 1
     display_options:
       display_extenders: {  }
-      path: admin/reports/content-relay
+      path: admin/reports/content-relay/received
       menu:
         type: normal
         title: 'Content Relay synced items'

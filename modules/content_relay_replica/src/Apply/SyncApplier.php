@@ -688,6 +688,9 @@ class SyncApplier {
     $transaction = $this->database->startTransaction();
     try {
       $this->eventDispatcher->dispatch(new ApplyEvent($event, $entity), ContentRelayEvents::PRE_APPLY);
+      // A delete by sync, as saves are, so a site that is also an origin
+      // does not send it back.
+      $entity->setSyncing(TRUE);
       $entity->delete();
       $this->syncState->delete($event->entityType, $event->entityUuid);
       if ($entity instanceof FileInterface) {

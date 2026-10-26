@@ -68,7 +68,7 @@ services:
       - '@content_relay.key_store'
       - '@logger.channel.content_relay'
       - '@current_user'
-      - '@?content_relay.key_announcer'
+      - !tagged_iterator content_relay.key_announcer
 
   # Role modules add resolvers for their peers by tagging a service with
   # content_relay_public_key_resolver.

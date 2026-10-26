@@ -27,13 +27,37 @@ use Psr\Log\LoggerInterface;
  */
 class KeyRotation {
 
+  /**
+   * Announcers, one for each role this site has.
+   *
+   * @var \Drupal\content_relay\Key\KeyAnnouncerInterface[]
+   */
+  protected array $announcers;
+
+  /**
+   * Constructs the service.
+   *
+   * @param \Drupal\Core\Entity\EntityTypeManagerInterface $entityTypeManager
+   *   The entity type manager.
+   * @param \Drupal\content_relay\Key\KeyStore $keyStore
+   *   The key store.
+   * @param \Psr\Log\LoggerInterface $logger
+   *   The logger.
+   * @param \Drupal\Core\Session\AccountInterface $currentUser
+   *   The current user.
+   * @param iterable<\Drupal\content_relay\Key\KeyAnnouncerInterface> $announcers
+   *   Services tagged content_relay.key_announcer: one for each role this
+   *   site has, as origin and as replica.
+   */
   public function __construct(
     protected EntityTypeManagerInterface $entityTypeManager,
     protected KeyStore $keyStore,
     protected LoggerInterface $logger,
     protected AccountInterface $currentUser,
-    protected ?KeyAnnouncerInterface $announcer = NULL,
-  ) {}
+    iterable $announcers = [],
+  ) {
+    $this->announcers = is_array($announcers) ? array_values($announcers) : iterator_to_array($announcers, FALSE);
+  }
 
   /**
    * Creates a new key, written to a file, with status active.
@@ -101,9 +125,15 @@ class KeyRotation {
       throw new \RuntimeException(sprintf('Key "%s" must be active to become primary; it is %s.', $key_id, KeyStore::statusOf($key)));
     }
     $current = $this->primaryEntity($purpose);
-    $results = $this->announce();
-    if ($this->announcer?->requiresAll() && in_array(FALSE, $results, TRUE)) {
-      throw new \RuntimeException(sprintf('Not every peer confirmed the new key (%s); nothing was changed.', implode(', ', array_keys(array_filter($results, fn ($ok) => !$ok)))));
+    $results = [];
+    foreach ($this->announcers as $announcer) {
+      $answers = $announcer->announce();
+      // Peers that must have the key before it is used, such as a replica's
+      // origin.
+      if ($announcer->requiresAll() && in_array(FALSE, $answers, TRUE)) {
+        throw new \RuntimeException(sprintf('Not every peer confirmed the new key (%s); nothing was changed.', implode(', ', array_keys(array_filter($answers, fn ($ok) => !$ok)))));
+      }
+      $results += $answers;
     }
     if ($current !== NULL) {
       $this->setStatus($current, KeyStore::ACTIVE);
@@ -151,7 +181,11 @@ class KeyRotation {
    *   By peer, whether it confirmed.
    */
   protected function announce(): array {
-    return $this->announcer?->announce() ?? [];
+    $results = [];
+    foreach ($this->announcers as $announcer) {
+      $results += $announcer->announce();
+    }
+    return $results;
   }
 
   /**

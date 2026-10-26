@@ -57,7 +57,7 @@ content_relay_replica.reattach:
     _admin_route: TRUE
 
 content_relay_replica.bulk_detach:
-  path: '/admin/reports/content-relay/{operation}'
+  path: '/admin/reports/content-relay/received/{operation}'
   defaults:
     _form: '\Drupal\content_relay_replica\Form\BulkDetachConfirmForm'
     _title: 'Detach or reattach items'
@@ -118,7 +118,7 @@ content_relay_replica.mapping_reapply:
         type: entity:content_relay_mapping
 
 content_relay_replica.reconcile:
-  path: '/admin/reports/content-relay/reconciliation'
+  path: '/admin/reports/content-relay/received/reconciliation'
   defaults:
     _form: '\Drupal\content_relay_replica\Form\ReconcileForm'
     _title: 'Reconciliation'
@@ -126,7 +126,7 @@ content_relay_replica.reconcile:
     _permission: 'reconcile content relay items'
 
 content_relay_replica.failures:
-  path: '/admin/reports/content-relay/failures'
+  path: '/admin/reports/content-relay/received/failures'
   defaults:
     _form: '\Drupal\content_relay_replica\Form\FailuresForm'
     _title: 'Content Relay save failures'
@@ -134,7 +134,7 @@ content_relay_replica.failures:
     _permission: 'view content relay replica report'
 
 content_relay_replica.failure:
-  path: '/admin/reports/content-relay/failures/{failure_id}'
+  path: '/admin/reports/content-relay/received/failures/{failure_id}'
   defaults:
     _form: '\Drupal\content_relay_replica\Form\FailureForm'
     _title: 'Save failure'

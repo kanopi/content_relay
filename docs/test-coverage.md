@@ -318,7 +318,7 @@ M1 sets the sites up; the others assume it.
 1. Stop the origin's cron loop, then create, edit and delete about 20 articles on the origin.
 2. `ddev stop` the origin for at least 10 minutes. The replica keeps running.
 3. `ddev start` the origin and restart its cron loop.
-4. Check: `ddev drush content-relay:status` on the origin shows no queued or failed events after a few runs, the event log lists the events applied in sequence order, and the replica's synced items report matches the origin's content.
+4. Check: `ddev drush content-relay:origin-status` on the origin shows no queued or failed events after a few runs, the event log lists the events applied in sequence order, and the replica's synced items report matches the origin's content.
 
 ### M3. Replica outage for several hours (scenario 21, `OutageTest`)
 
