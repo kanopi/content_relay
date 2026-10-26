@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Drupal\content_relay_replica\Drush\Commands;
 
 use Consolidation\OutputFormatters\StructuredData\RowsOfFields;
+use Drupal\content_relay_replica\Adopter;
 use Drupal\content_relay_replica\Apply\ApplyResult;
 use Drupal\content_relay_replica\Apply\SyncApplier;
 use Drupal\content_relay_replica\ContractStore;
@@ -74,6 +75,8 @@ final class ReplicaCommands extends DrushCommands {
     private readonly FailedEventStore $failures,
     #[Autowire(service: 'content_relay_replica.applier')]
     private readonly SyncApplier $applier,
+    #[Autowire(service: 'content_relay_replica.adopter')]
+    private readonly Adopter $adopter,
   ) {
     parent::__construct();
   }
@@ -316,6 +319,39 @@ final class ReplicaCommands extends DrushCommands {
     ]));
     $failed = ($run['counts']['failed'] ?? 0) + ($run['counts']['failed_bundles'] ?? 0) + ($run['counts']['contract_mismatch'] ?? 0);
     return $failed === 0 ? self::EXIT_SUCCESS : self::EXIT_FAILURE;
+  }
+
+  /**
+   * Takes over content this site already has, for a replica made from a copy.
+   *
+   * Items identical to the origin's are marked in sync; items that differ
+   * become conflicts to review. Safe to run again: adopted items are skipped.
+   */
+  #[CLI\Command(name: 'content-relay:adopt', aliases: ['cr-adopt'])]
+  public function adopt(): int {
+    try {
+      $counts = $this->adopter->run(function (string $entity_type_id, string $bundle, array $counts): void {
+        $this->logger()->info(dt('@type @bundle: @counts', [
+          '@type' => $entity_type_id,
+          '@bundle' => $bundle,
+          '@counts' => json_encode($counts),
+        ]));
+      });
+    }
+    catch (SubscriptionException $e) {
+      $this->logger()->error(dt('@message Run the command again to carry on.', ['@message' => $e->getMessage()]));
+      return self::EXIT_FAILURE;
+    }
+    ksort($counts);
+    $lines = [];
+    foreach ($counts as $outcome => $number) {
+      $lines[] = $outcome . ': ' . $number;
+    }
+    $this->logger()->success(dt('Adopted existing content. @counts.', ['@counts' => $lines === [] ? dt('Nothing to adopt') : implode(', ', $lines)]));
+    if (($counts['adopted_edited'] ?? 0) > 0) {
+      $this->logger()->warning(dt('@count item(s) differ from the origin and are listed as conflicts in the status report.', ['@count' => $counts['adopted_edited']]));
+    }
+    return self::EXIT_SUCCESS;
   }
 
   /**

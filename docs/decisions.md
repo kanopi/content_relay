@@ -680,3 +680,15 @@ rather than by sorting every row. Status, "any translation out of sync" and
 bundle, the filters bulk push leans on, have indexes ending in `changed` for
 the same reason. A text search reads every label, as any "contains" search
 does; at 100,000 items it still takes a fraction of a second.
+
+## 86. A replica made from a copy adopts what it already has
+
+Sync leaves alone an item it finds under the same UUID but did not create
+(decision 14's collision rule), so a replica set up from a copy of the
+origin's database would refuse everything. Adopting, from the
+reconciliation page or `drush content-relay:adopt`, compares each such item
+with the origin's hashes: identical ones are marked in sync without a new
+revision, differing ones become conflicts, resolved as any local edit
+(decision 57). It can run at any time, also once sync is under way: items
+already synced are skipped, and events refused before an item was adopted
+are retried after. Ordinary syncing still refuses unadopted items.

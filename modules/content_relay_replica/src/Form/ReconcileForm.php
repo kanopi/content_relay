@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Drupal\content_relay_replica\Form;
 
+use Drupal\content_relay_replica\Adopter;
 use Drupal\content_relay_replica\Reconciler;
 use Drupal\content_relay_replica\SubscriptionException;
 use Drupal\Core\Datetime\DateFormatterInterface;
@@ -20,6 +21,7 @@ final class ReconcileForm extends FormBase {
 
   public function __construct(
     protected Reconciler $reconciler,
+    protected Adopter $adopter,
     protected DateFormatterInterface $dateFormatter,
     protected EntityTypeManagerInterface $entityTypeManager,
   ) {}
@@ -30,6 +32,7 @@ final class ReconcileForm extends FormBase {
   public static function create(ContainerInterface $container): self {
     return new self(
       $container->get('content_relay_replica.reconciler'),
+      $container->get('content_relay_replica.adopter'),
       $container->get('date.formatter'),
       $container->get('entity_type.manager'),
     );
@@ -51,6 +54,17 @@ final class ReconcileForm extends FormBase {
     ];
     $form['actions'] = ['#type' => 'actions'];
     $form['actions']['run'] = ['#type' => 'submit', '#value' => $this->t('Run reconciliation now')];
+    $form['adopt'] = [
+      '#type' => 'details',
+      '#title' => $this->t('Adopt existing content'),
+      '#description' => $this->t("For a site set up from a copy of the origin's database: items that are already here, under the same UUIDs, are left alone by sync until adopted. Adopting marks those identical to the origin's as in sync and lists those that differ as conflicts to review. Items already synced are skipped, so it can be run again."),
+    ];
+    $form['adopt']['submit'] = [
+      '#type' => 'submit',
+      '#value' => $this->t('Adopt existing content'),
+      '#name' => 'adopt',
+      '#submit' => ['::adopt'],
+    ];
 
     $rows = [];
     foreach ($this->reconciler->history() as $run) {
@@ -103,6 +117,55 @@ final class ReconcileForm extends FormBase {
       'operations' => [[[self::class, 'batchStep'], [$run_id]]],
       'finished' => [self::class, 'batchFinished'],
     ]);
+  }
+
+  /**
+   * Submit handler: adopts existing content, a page at a time.
+   */
+  public function adopt(array &$form, FormStateInterface $form_state): void {
+    try {
+      $bundles = $this->adopter->bundles();
+    }
+    catch (SubscriptionException $e) {
+      $this->messenger()->addError($e->getMessage());
+      return;
+    }
+    batch_set([
+      'title' => $this->t('Adopting existing content'),
+      'operations' => array_map(fn (array $pair) => [[self::class, 'adoptStep'], $pair], $bundles),
+      'finished' => [self::class, 'adoptFinished'],
+    ]);
+  }
+
+  /**
+   * Batch operation: adopts one bundle, a page per request.
+   */
+  public static function adoptStep(string $entity_type_id, string $bundle, &$context): void {
+    $page = \Drupal::service('content_relay_replica.adopter')->adoptPage($entity_type_id, $bundle, $context['sandbox']['after'] ?? '');
+    foreach ($page['counts'] as $outcome => $number) {
+      $context['results'][$outcome] = ($context['results'][$outcome] ?? 0) + $number;
+    }
+    $context['sandbox']['after'] = $page['next'];
+    $context['message'] = new TranslatableMarkup('Adopting @type @bundle.', [
+      '@type' => $entity_type_id,
+      '@bundle' => $bundle,
+    ]);
+    $context['finished'] = $page['next'] === NULL ? 1 : 0.5;
+  }
+
+  /**
+   * Batch finished callback for adopting.
+   */
+  public static function adoptFinished(bool $success, array $results): void {
+    if (!$success) {
+      \Drupal::messenger()->addError(new TranslatableMarkup('Adopting did not finish; run it again to carry on.'));
+      return;
+    }
+    \Drupal::messenger()->addStatus(new TranslatableMarkup('Adopted @adopted item(s) as in sync; @edited differ from the origin and are listed as conflicts; @missing are not here yet and come with the next reconciliation.', [
+      '@adopted' => $results['adopted'] ?? 0,
+      '@edited' => $results['adopted_edited'] ?? 0,
+      '@missing' => $results['missing'] ?? 0,
+    ]));
   }
 
   /**

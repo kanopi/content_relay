@@ -280,6 +280,23 @@ services:
       - '@logger.channel.content_relay_replica'
       - '@queue'
 
+  content_relay_replica.adopter:
+    class: Drupal\content_relay_replica\Adopter
+    arguments:
+      - '@content_relay_replica.origin_client'
+      - '@content_relay_replica.origin'
+      - '@content_relay_replica.contracts'
+      - '@content_relay_replica.sync_state'
+      - '@content_relay_replica.local_changes'
+      - '@content_relay_replica.mappings'
+      - '@content_relay_replica.language_map'
+      - '@entity.repository'
+      - '@entity_type.manager'
+      - '@content_relay_replica.failed_events'
+      - '@content_relay_replica.applier'
+      - '@datetime.time'
+      - '@logger.channel.content_relay_replica'
+
   content_relay_replica.validator:
     class: Drupal\content_relay_replica\Validator
     arguments:

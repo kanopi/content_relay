@@ -424,6 +424,17 @@ final class ReplicaItemUiTest extends BrowserTestBase {
       $config['down'] = FALSE;
     });
 
+    // Adopting: the synced item is skipped, and the command can run again.
+    $this->drush('content-relay:adopt');
+    $this->assertStringContainsString('already_synced: 1', $this->getErrorOutput());
+    $this->updateFakeOrigin(function (array &$config): void {
+      $config['down'] = TRUE;
+    });
+    $this->drush('content-relay:adopt', [], [], NULL, NULL, 1);
+    $this->updateFakeOrigin(function (array &$config): void {
+      $config['down'] = FALSE;
+    });
+
     // Gaps: none to fill.
     $this->drush('content-relay:fill-gaps');
     $this->assertStringContainsString('Gaps filled', $this->getErrorOutput());
