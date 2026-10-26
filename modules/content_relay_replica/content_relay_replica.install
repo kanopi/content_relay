@@ -374,3 +374,24 @@ function content_relay_replica_schema(): array {
   ];
   return $schema;
 }
+
+/**
+ * Renames the contract table, and creates tables a failed install left out.
+ *
+ * The contract table was content_relay_contract, as the origin's is, so a site
+ * could not have both roles; an install of the second role stopped there.
+ */
+function content_relay_replica_update_10001(): string {
+  $schema = \Drupal::database()->schema();
+  if (!$schema->tableExists(ContractStore::TABLE) && $schema->tableExists('content_relay_contract') && !$schema->fieldExists('content_relay_contract', 'replica_id')) {
+    $schema->renameTable('content_relay_contract', ContractStore::TABLE);
+  }
+  $created = [];
+  foreach (content_relay_replica_schema() as $table => $definition) {
+    if (!$schema->tableExists($table)) {
+      $schema->createTable($table, $definition);
+      $created[] = $table;
+    }
+  }
+  return $created === [] ? (string) t('The replica keeps its contracts in their own table.') : (string) t('Created missing tables: @tables.', ['@tables' => implode(', ', $created)]);
+}

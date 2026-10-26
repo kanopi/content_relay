@@ -392,3 +392,29 @@ function content_relay_origin_schema(): array {
   ];
   return $schema;
 }
+
+/**
+ * Implements hook_update_dependencies().
+ */
+function content_relay_origin_update_dependencies(): array {
+  // The replica first moves its contract table out of the origin's way.
+  return ['content_relay_origin' => [10001 => ['content_relay_replica' => 10001]]];
+}
+
+/**
+ * Creates tables a failed install left out.
+ *
+ * Installing the origin on a replica stopped at the contract table, which
+ * both roles named alike.
+ */
+function content_relay_origin_update_10001(): string {
+  $schema = \Drupal::database()->schema();
+  $created = [];
+  foreach (content_relay_origin_schema() as $table => $definition) {
+    if (!$schema->tableExists($table)) {
+      $schema->createTable($table, $definition);
+      $created[] = $table;
+    }
+  }
+  return $created === [] ? (string) t('Nothing to do.') : (string) t('Created missing tables: @tables.', ['@tables' => implode(', ', $created)]);
+}
