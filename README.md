@@ -18,7 +18,9 @@ covered.
 | `content_relay_replica` | Receives and applies changes: endpoint, apply, conflicts, mapping, reconciliation, languages, failures |
 
 A site enables one of the two submodules, or both: see "Both roles on one
-site" below.
+site" below. **Configuration › Web services › Content Relay**
+(`admin/config/services/content-relay`) links to each enabled role's
+settings and reports.
 
 ## Requirements
 

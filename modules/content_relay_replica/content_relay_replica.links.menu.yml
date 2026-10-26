@@ -2,4 +2,11 @@ content_relay_replica.subscription:
   title: 'Content Relay replica'
   description: 'Receive content from a Content Relay origin.'
   route_name: content_relay_replica.subscription
-  parent: system.admin_config_services
+  parent: content_relay.admin
+  weight: 10
+content_relay_replica.report:
+  title: 'Content Relay synced items'
+  description: 'What this site received from its origin, with detach and pull.'
+  route_name: view.content_relay_replica_report.page_1
+  parent: content_relay.admin
+  weight: 11

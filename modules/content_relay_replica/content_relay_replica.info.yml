@@ -4,6 +4,7 @@ description: 'Receives content from a Content Relay origin and applies it to thi
 package: Content Relay
 core_version_requirement: ^10.3 || ^11
 php: 8.3
+configure: content_relay_replica.subscription
 dependencies:
   - content_relay:content_relay
   - drupal:file

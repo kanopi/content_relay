@@ -4,6 +4,7 @@ description: 'Shared foundation for syncing content between Drupal sites: event 
 package: Content Relay
 core_version_requirement: ^10.3 || ^11
 php: 8.3
+configure: content_relay.admin
 
 # Private keys are read through the Key module so they never live in exported
 # configuration. See \Drupal\content_relay\Key\KeyStore for which key providers

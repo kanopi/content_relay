@@ -2,4 +2,17 @@ content_relay_origin.settings:
   title: 'Content Relay origin'
   description: 'Publish content to Content Relay replicas.'
   route_name: content_relay_origin.settings
-  parent: system.admin_config_services
+  parent: content_relay.admin
+  weight: 0
+content_relay_origin.report:
+  title: 'Content Relay status'
+  description: 'What each replica has of every published item, with bulk push.'
+  route_name: view.content_relay_origin_report.page_1
+  parent: content_relay.admin
+  weight: 1
+content_relay_origin.events:
+  title: 'Content Relay event log'
+  description: 'Events sent to replicas, with replay of failed ones.'
+  route_name: view.content_relay_origin_events.page_1
+  parent: content_relay.admin
+  weight: 2

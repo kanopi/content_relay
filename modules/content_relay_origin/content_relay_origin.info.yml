@@ -4,6 +4,7 @@ description: 'Publishes content changes from this site to Content Relay replicas
 package: Content Relay
 core_version_requirement: ^10.3 || ^11
 php: 8.3
+configure: content_relay_origin.settings
 dependencies:
   - content_relay:content_relay
   - drupal:file

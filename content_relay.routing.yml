@@ -1,0 +1,9 @@
+# The Content Relay section of Configuration › Web services: links to each
+# role's settings and reports, shown to whoever may use at least one.
+content_relay.admin:
+  path: '/admin/config/services/content-relay'
+  defaults:
+    _controller: '\Drupal\system\Controller\SystemController::systemAdminMenuBlockPage'
+    _title: 'Content Relay'
+  requirements:
+    _access_admin_menu_block_page: 'TRUE'

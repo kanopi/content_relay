@@ -51,7 +51,34 @@ final class BothRolesUiTest extends BrowserTestBase {
     $this->assertTrue($installed->moduleExists('content_relay_origin'));
     $this->assertTrue($installed->moduleExists('content_relay_replica'));
 
-    $this->drupalLogin($this->drupalCreateUser(['view content relay status report', 'view content relay replica report']));
+    $this->drupalLogin($this->drupalCreateUser([
+      'administer modules',
+      'access administration pages',
+      'administer content relay origin',
+      'change content relay subscription',
+      'view content relay status report',
+      'view content relay event log',
+      'view content relay replica report',
+    ]));
+    // Each module links to its configuration from the Extend page.
+    $this->drupalGet('admin/modules');
+    foreach (['content-relay', 'content-relay/origin', 'content-relay/replica'] as $path) {
+      $this->assertSession()->linkByHrefExists("admin/config/services/$path");
+    }
+    // Configuration › Web services › Content Relay lists both roles' pages.
+    $this->drupalGet('admin/config/services');
+    $this->assertSession()->linkExists('Content Relay');
+    $this->drupalGet('admin/config/services/content-relay');
+    foreach ([
+      'Content Relay origin',
+      'Content Relay status',
+      'Content Relay event log',
+      'Content Relay replica',
+      'Content Relay synced items',
+    ] as $link) {
+      $this->assertSession()->linkExists($link);
+    }
+
     $this->drupalGet('admin/reports/content-relay');
     $this->assertSession()->statusCodeEquals(200);
     $this->assertSession()->pageTextContains('Content Relay status');

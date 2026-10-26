@@ -1,0 +1,5 @@
+content_relay.admin:
+  title: 'Content Relay'
+  description: 'Sync content between Drupal sites: publish as an origin, receive as a replica, or both.'
+  route_name: content_relay.admin
+  parent: system.admin_config_services
