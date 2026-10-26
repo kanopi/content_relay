@@ -690,5 +690,7 @@ reconciliation page or `drush content-relay:adopt`, compares each such item
 with the origin's hashes: identical ones are marked in sync without a new
 revision, differing ones become conflicts, resolved as any local edit
 (decision 57). It can run at any time, also once sync is under way: items
-already synced are skipped, and events refused before an item was adopted
-are retried after. Ordinary syncing still refuses unadopted items.
+already synced are skipped, events refused before an item was adopted are
+retried after, and items adopted as differing that nobody has resolved are
+compared again, so a copy put right since (missing files copied over, say)
+is adopted as in sync. Ordinary syncing still refuses unadopted items.

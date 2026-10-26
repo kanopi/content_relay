@@ -140,6 +140,27 @@ final class AdoptTest extends ReplicaTestBase {
     $this->assertSame('Already synced', $this->local($already->uuid())->label());
     $this->assertNull($this->state($missing['uuid']));
 
+    // Put right here, an unresolved difference is adopted as in sync when
+    // adopting again.
+    $fixed = $this->copied('Fixed later', 'Pareil');
+    $origin_fixed = $this->snapshot($fixed);
+    $fixed->getTranslation('fr')->setTitle('Pas encore')->save();
+    $this->onOrigin([
+      [$this->snapshot($same), 3],
+      [$origin_changed, 4],
+      [$this->snapshot($already), 1],
+      [$missing, 1],
+      [$origin_fixed, 2],
+    ]);
+    // The earlier difference is compared again too, and still differs.
+    $counts = $this->container->get('content_relay_replica.adopter')->run();
+    ksort($counts);
+    $this->assertSame(['adopted_edited' => 2, 'already_synced' => 2, 'missing' => 1], $counts);
+    $fixed->getTranslation('fr')->setTitle('Pareil')->save();
+    $counts = $this->container->get('content_relay_replica.adopter')->run();
+    $this->assertSame(1, $counts['adopted'] ?? 0);
+    $this->assertSame(SyncStatus::SYNCED, $this->state($fixed->uuid())['status']);
+
     // Adopted, the identical copy follows the origin like any synced item.
     $updated = $this->snapshot($same);
     $updated['translations']['en']['title'][0]['value'] = 'Same, updated';
@@ -159,8 +180,9 @@ final class AdoptTest extends ReplicaTestBase {
     $this->assertInstanceOf(NodeInterface::class, $kept);
     $this->assertSame('Pareil aussi', $kept->getTranslation('fr')->label());
 
-    // Adopting again changes nothing.
-    $this->assertSame(['already_synced' => 3, 'missing' => 1], $this->container->get('content_relay_replica.adopter')->run());
+    // Adopting again changes nothing: the conflict above was resolved by the
+    // origin's update.
+    $this->assertSame(['already_synced' => 4, 'missing' => 1], $this->container->get('content_relay_replica.adopter')->run());
   }
 
 }

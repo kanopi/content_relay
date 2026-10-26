@@ -26,7 +26,8 @@ use Psr\Log\LoggerInterface;
  * Only items the contract subscribes to, as they are (not mapped), are
  * adopted; items already synced, missing here or kept from this site are
  * left as they are. Adopting can be done at any time, also once sync has been
- * running: events refused before an item was adopted are retried after.
+ * running: events refused before an item was adopted are retried after, and
+ * items adopted as differing that nobody has resolved are compared again.
  */
 class Adopter {
 
@@ -121,8 +122,9 @@ class Adopter {
     $languages = $this->contracts->getCurrent()?->languagesFor($entity_type_id, $bundle);
     $counts = [];
     foreach ($page['items'] as $item) {
+      $state = $this->syncState->get($entity_type_id, $item['uuid']);
       $outcome = match (TRUE) {
-        $this->syncState->get($entity_type_id, $item['uuid']) !== NULL => 'already_synced',
+        $state !== NULL && !self::unresolved($state) => 'already_synced',
         $item['not_syncable'] || $item['no_languages'] => 'kept',
         $mapped => 'mapped',
         default => $this->adoptItem($entity_type_id, $bundle, $item, $languages),
@@ -133,6 +135,16 @@ class Adopter {
       }
     }
     return ['counts' => $counts, 'next' => $page['next']];
+  }
+
+  /**
+   * Whether an item was adopted as differing and is still unresolved.
+   *
+   * Such an item is compared again, as the copy may have been put right since,
+   * for example by copying files it uses. Anything else synced is left alone.
+   */
+  protected static function unresolved(array $state): bool {
+    return isset($state['notes']['adopted']) && $state['status'] === SyncStatus::CONFLICT && $state['conflict_revision'] === NULL && $state['last_event_id'] === NULL;
   }
 
   /**
