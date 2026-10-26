@@ -20,6 +20,7 @@ class Puller {
     protected OriginClient $originClient,
     protected OriginPeer $origin,
     protected SyncApplier $applier,
+    protected ActivePairing $active,
   ) {}
 
   /**
@@ -40,6 +41,10 @@ class Puller {
    *   When the origin cannot be asked or does not give the item.
    */
   public function pull(string $entity_type_id, string $uuid, bool $force = FALSE, bool $accept = FALSE): ApplyResult {
+    // Done with the origin the item came from.
+    if (($pairing = $this->active->switchFor($entity_type_id, $uuid)) !== NULL) {
+      return $this->active->run($pairing, fn () => $this->pull($entity_type_id, $uuid, $force, $accept));
+    }
     $event = $this->originClient->item($entity_type_id, $uuid);
     return $this->applier->apply($event, (string) $this->origin->getSiteId(), FALSE, $force || $accept, $accept ? SyncApplier::CONFLICT_ACCEPT : SyncApplier::CONFLICT_REJECT);
   }

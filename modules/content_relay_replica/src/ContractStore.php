@@ -23,6 +23,7 @@ class ContractStore {
   public function __construct(
     protected Connection $database,
     protected TimeInterface $time,
+    protected ActivePairing $active,
   ) {}
 
   /**
@@ -36,6 +37,7 @@ class ContractStore {
       return FALSE;
     }
     $this->database->insert(self::TABLE)->fields([
+      'pairing' => $this->active->id(),
       'version' => $contract->version(),
       'terms' => json_encode($contract->toArray(), \JSON_THROW_ON_ERROR),
       'received' => $this->time->getCurrentTime(),
@@ -62,7 +64,7 @@ class ContractStore {
    * A version.
    */
   public function get(int $version): ?SubscriptionContract {
-    $terms = $this->database->select(self::TABLE, 'c')->fields('c', ['terms'])->condition('version', $version)->execute()->fetchField();
+    $terms = $this->database->select(self::TABLE, 'c')->fields('c', ['terms'])->condition('pairing', $this->active->id())->condition('version', $version)->execute()->fetchField();
     return $terms ? SubscriptionContract::fromArray(json_decode($terms, TRUE)) : NULL;
   }
 
@@ -87,7 +89,7 @@ class ContractStore {
   public function history(): array {
     $history = [];
     $current = $this->getCurrent()?->version();
-    foreach ($this->database->select(self::TABLE, 'c')->fields('c')->orderBy('version', 'DESC')->execute() as $row) {
+    foreach ($this->database->select(self::TABLE, 'c')->fields('c')->condition('pairing', $this->active->id())->orderBy('version', 'DESC')->execute() as $row) {
       $contract = SubscriptionContract::fromArray(json_decode($row->terms, TRUE));
       $history[(int) $row->version] = [
         'contract' => $contract,
@@ -105,7 +107,7 @@ class ContractStore {
    * Loads the version at an offset from the newest.
    */
   protected function load(string $direction, int $offset): ?SubscriptionContract {
-    $terms = $this->database->select(self::TABLE, 'c')->fields('c', ['terms'])->orderBy('version', $direction)->range($offset, 1)->execute()->fetchField();
+    $terms = $this->database->select(self::TABLE, 'c')->fields('c', ['terms'])->condition('pairing', $this->active->id())->orderBy('version', $direction)->range($offset, 1)->execute()->fetchField();
     return $terms ? SubscriptionContract::fromArray(json_decode($terms, TRUE)) : NULL;
   }
 

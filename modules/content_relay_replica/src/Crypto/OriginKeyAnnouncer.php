@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Drupal\content_relay_replica\Crypto;
 
 use Drupal\content_relay\Key\KeyAnnouncerInterface;
+use Drupal\content_relay_replica\ActivePairing;
 use Drupal\content_relay_replica\OriginPeer;
 use Drupal\content_relay_replica\SubscriptionManager;
 use Drupal\Core\Session\AccountInterface;
@@ -21,18 +22,19 @@ class OriginKeyAnnouncer implements KeyAnnouncerInterface {
     protected SubscriptionManager $subscription,
     protected OriginPeer $origin,
     protected AccountInterface $currentUser,
+    protected ActivePairing $active,
   ) {}
 
   /**
    * {@inheritdoc}
    */
   public function announce(): array {
-    $origin = $this->origin->getSiteId();
-    if ($origin === NULL) {
-      return [];
+    $results = [];
+    // Every origin this site receives from.
+    foreach ($this->origin->all() as $pairing => $origin) {
+      $results[$origin['site_id']] = $this->active->run($pairing, fn () => $this->subscription->propose($this->subscription->getReplicaTerms(), (int) $this->currentUser->id()) !== NULL);
     }
-    $contract = $this->subscription->propose($this->subscription->getReplicaTerms(), (int) $this->currentUser->id());
-    return [$origin => $contract !== NULL];
+    return $results;
   }
 
   /**

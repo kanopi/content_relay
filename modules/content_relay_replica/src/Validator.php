@@ -20,6 +20,7 @@ class Validator {
     protected SyncStateStore $syncState,
     protected LocalChanges $localChanges,
     protected OriginClient $originClient,
+    protected ActivePairing $active,
   ) {}
 
   /**
@@ -38,6 +39,10 @@ class Validator {
    *   When the item is not synced here.
    */
   public function validate(string $entity_type_id, string $uuid): array {
+    // Done with the origin the item came from.
+    if (($pairing = $this->active->switchFor($entity_type_id, $uuid)) !== NULL) {
+      return $this->active->run($pairing, fn () => $this->validate($entity_type_id, $uuid));
+    }
     $state = $this->syncState->get($entity_type_id, $uuid) ?? throw new \InvalidArgumentException('The item is not synced to this site.');
     ['local' => $local, 'expected' => $expected, 'actual' => $actual] = $this->checkLocal($entity_type_id, $uuid, $state);
 

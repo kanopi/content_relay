@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Drupal\content_relay_replica\Controller;
 
+use Drupal\content_relay\Crypto\Message;
 use Drupal\content_relay\Crypto\MessageSigner;
 use Drupal\content_relay\Crypto\MessageVerifier;
 use Drupal\content_relay\Crypto\VerificationException;
@@ -11,9 +12,9 @@ use Drupal\content_relay\Event\ProcessingMode;
 use Drupal\content_relay\Event\SyncEvent;
 use Drupal\content_relay\Exception\InvalidEventException;
 use Drupal\content_relay\Http\IpAllowlist;
+use Drupal\content_relay_replica\ActivePairing;
 use Drupal\content_relay_replica\Apply\SyncApplier;
 use Drupal\content_relay_replica\LanguageSubscription;
-use Drupal\content_relay_replica\OriginPeer;
 use Drupal\content_relay_replica\ProcessedEvents;
 use Drupal\content_relay_replica\Processing\ProcessingPolicy;
 use Drupal\content_relay_replica\Processing\ReceivedEvents;
@@ -46,7 +47,6 @@ final class EventReceiverController implements ContainerInjectionInterface {
 
   public function __construct(
     private readonly MessageVerifier $verifier,
-    private readonly OriginPeer $origin,
     private readonly StreamTracker $stream,
     private readonly SyncApplier $applier,
     private readonly SubscriptionManager $subscription,
@@ -60,6 +60,7 @@ final class EventReceiverController implements ContainerInjectionInterface {
     private readonly LanguageSubscription $languages,
     private readonly Validator $validator,
     private readonly ReceivingSettings $receiving,
+    private readonly ActivePairing $active,
   ) {}
 
   /**
@@ -68,7 +69,6 @@ final class EventReceiverController implements ContainerInjectionInterface {
   public static function create(ContainerInterface $container): self {
     return new self(
       $container->get('content_relay.message_verifier'),
-      $container->get('content_relay_replica.origin'),
       $container->get('content_relay_replica.stream'),
       $container->get('content_relay_replica.applier'),
       $container->get('content_relay_replica.subscription'),
@@ -82,6 +82,7 @@ final class EventReceiverController implements ContainerInjectionInterface {
       $container->get('content_relay_replica.language_subscription'),
       $container->get('content_relay_replica.validator'),
       $container->get('content_relay_replica.receiving_settings'),
+      $container->get('content_relay_replica.active_pairing'),
     );
   }
 
@@ -104,9 +105,18 @@ final class EventReceiverController implements ContainerInjectionInterface {
       ]);
       return $this->refuse($e->reason === VerificationException::MALFORMED ? 400 : 403, $e->reason, $e->getMessage());
     }
-    if ($message->sender !== $this->origin->getSiteId()) {
+    $pairing = $this->active->forSite($message->sender);
+    if ($pairing === NULL) {
       return $this->refuse(403, 'unknown_sender', 'This replica does not receive from that site.');
     }
+    // Everything that follows is about that origin.
+    return $this->active->run($pairing, fn () => $this->handle($request, $message));
+  }
+
+  /**
+   * Handles a verified message from a paired origin, in its pairing.
+   */
+  private function handle(Request $request, Message $message): JsonResponse {
     if (!IpAllowlist::allows($request->getClientIp(), $this->receiving->get('origin_allowed_ips') ?? [])) {
       $this->logger->warning('Refused a message from the origin at @ip, which is not on the allowlist.', ['@ip' => $request->getClientIp()]);
       return $this->refuse(403, 'address_not_allowed', 'Messages are not accepted from this address.');

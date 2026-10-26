@@ -39,6 +39,7 @@ class ReceivingSettings {
   public function __construct(
     protected ConfigFactoryInterface $configFactory,
     protected EntityTypeManagerInterface $entityTypeManager,
+    protected ActivePairing $active,
   ) {}
 
   /**
@@ -47,7 +48,7 @@ class ReceivingSettings {
    * @param string $path
    *   Dotted path, such as "conflicts.on_event".
    * @param string|null $pairing
-   *   The pairing; NULL for this site's pairing, while it has one origin.
+   *   The pairing; NULL for the active one.
    */
   public function get(string $path, ?string $pairing = NULL): mixed {
     $entity = $this->pairing($pairing);
@@ -61,21 +62,15 @@ class ReceivingSettings {
   }
 
   /**
-   * A pairing, or this site's pairing when it has one origin.
+   * A pairing, or the active one.
    */
   public function pairing(?string $id = NULL): ?ContentRelayOriginPairing {
-    $storage = $this->entityTypeManager->getStorage('content_relay_origin_pairing');
-    if ($id !== NULL) {
-      $pairing = $storage->load($id);
-      return $pairing instanceof ContentRelayOriginPairing ? $pairing : NULL;
-    }
-    $pairings = $storage->loadMultiple();
-    $pairing = count($pairings) === 1 ? reset($pairings) : ($pairings[ContentRelayOriginPairing::DEFAULT] ?? NULL);
+    $pairing = $this->entityTypeManager->getStorage('content_relay_origin_pairing')->load($id ?? $this->active->id());
     return $pairing instanceof ContentRelayOriginPairing ? $pairing : NULL;
   }
 
   /**
-   * This site's pairing with its origin, made when missing.
+   * The active pairing's settings, made when missing.
    *
    * @param string $label
    *   The origin's label, for a new pairing.
@@ -84,7 +79,7 @@ class ReceivingSettings {
     $pairing = $this->pairing();
     if ($pairing === NULL) {
       $pairing = ContentRelayOriginPairing::create([
-        'id' => ContentRelayOriginPairing::DEFAULT,
+        'id' => $this->active->id(),
         'label' => $label,
         'settings' => $this->defaults(),
       ]);
@@ -94,7 +89,7 @@ class ReceivingSettings {
   }
 
   /**
-   * Copies the site-wide receiving settings into this site's pairing.
+   * Copies the site-wide receiving settings into the active pairing.
    *
    * While a site has one origin, its settings form edits both.
    */

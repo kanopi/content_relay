@@ -6,6 +6,7 @@ namespace Drupal\content_relay_replica\Schema;
 
 use Drupal\Component\Datetime\TimeInterface;
 use Drupal\content_relay\Schema\SchemaDescriber;
+use Drupal\content_relay_replica\ActivePairing;
 use Drupal\content_relay_replica\ContractStore;
 use Drupal\content_relay_replica\Mapping\MappingRepository;
 use Drupal\content_relay_replica\OriginClient;
@@ -34,6 +35,7 @@ class SchemaWatcher {
     protected StateInterface $state,
     protected TimeInterface $time,
     protected LoggerInterface $logger,
+    protected ActivePairing $active,
   ) {}
 
   /**
@@ -48,7 +50,7 @@ class SchemaWatcher {
   public function check(): array {
     $answer = $this->originClient->schemaAndLanguages();
     $schema = $answer['bundles'];
-    $previous = $this->state->get(self::STATE, []);
+    $previous = $this->state->get($this->active->stateKey(self::STATE), []);
     $results = [];
     $contract = $this->contracts->getCurrent();
     foreach ($contract?->effectiveBundles() ?? [] as $entity_type_id => $bundles) {
@@ -93,7 +95,7 @@ class SchemaWatcher {
         }
       }
     }
-    $this->state->set(self::STATE, $results + [
+    $this->state->set($this->active->stateKey(self::STATE), $results + [
       '_checked' => $this->time->getCurrentTime(),
       '_languages' => $answer['languages'],
     ]);
@@ -104,7 +106,7 @@ class SchemaWatcher {
    * Checks if a day has passed since the last check. For cron.
    */
   public function checkIfDue(int $interval = 86400): void {
-    $last = (int) ($this->state->get(self::STATE, [])['_checked'] ?? 0);
+    $last = (int) ($this->state->get($this->active->stateKey(self::STATE), [])['_checked'] ?? 0);
     if ($this->time->getCurrentTime() - $last < $interval) {
       return;
     }
@@ -123,7 +125,7 @@ class SchemaWatcher {
    *   Languages; empty before the first check.
    */
   public function originLanguages(): array {
-    return $this->state->get(self::STATE, [])['_languages'] ?? [];
+    return $this->state->get($this->active->stateKey(self::STATE), [])['_languages'] ?? [];
   }
 
   /**
@@ -134,7 +136,7 @@ class SchemaWatcher {
    */
   public function problems(): array {
     $problems = [];
-    foreach ($this->state->get(self::STATE, []) as $key => $result) {
+    foreach ($this->state->get($this->active->stateKey(self::STATE), []) as $key => $result) {
       if (!str_starts_with((string) $key, '_') && is_array($result) && !empty($result['problems'])) {
         $problems[$key] = $result['problems'];
       }

@@ -8,6 +8,7 @@ use Drupal\Component\Datetime\TimeInterface;
 use Drupal\content_relay\Crypto\EncryptionMode;
 use Drupal\content_relay\Crypto\PeerPolicyInterface;
 use Drupal\content_relay\Key\PeerKeys;
+use Drupal\content_relay_replica\ActivePairing;
 use Drupal\content_relay_replica\ContractStore;
 use Drupal\content_relay_replica\OriginPeer;
 use Drupal\Core\Config\ConfigFactoryInterface;
@@ -34,24 +35,27 @@ class OriginPolicy implements PeerPolicyInterface {
     protected StateInterface $state,
     protected ConfigFactoryInterface $configFactory,
     protected TimeInterface $time,
+    protected ActivePairing $active,
   ) {}
 
   /**
    * {@inheritdoc}
    */
   public function sendMode(string $peer): ?EncryptionMode {
-    if ($peer !== $this->origin->getSiteId()) {
+    $pairing = $this->active->forSite($peer);
+    if ($pairing === NULL) {
       return NULL;
     }
-    return EncryptionMode::tryFrom($this->contracts->getCurrent()?->encryption() ?? 'none') ?? EncryptionMode::None;
+    return $this->active->run($pairing, fn () => EncryptionMode::tryFrom($this->contracts->getCurrent()?->encryption() ?? 'none') ?? EncryptionMode::None);
   }
 
   /**
    * {@inheritdoc}
    */
   public function peerEncryptionKey(string $peer): ?array {
-    $origin = $this->origin->get();
-    return $origin !== NULL && $origin['site_id'] === $peer ? PeerKeys::preferred($origin['encryption_keys']) : NULL;
+    $pairing = $this->active->forSite($peer);
+    $origin = $pairing === NULL ? NULL : $this->origin->get($pairing);
+    return $origin === NULL ? NULL : PeerKeys::preferred($origin['encryption_keys']);
   }
 
   /**
@@ -67,23 +71,26 @@ class OriginPolicy implements PeerPolicyInterface {
    * {@inheritdoc}
    */
   public function allowsUnencrypted(string $peer): ?bool {
-    if ($peer !== $this->origin->getSiteId()) {
+    $pairing = $this->active->forSite($peer);
+    if ($pairing === NULL) {
       return NULL;
     }
-    $contract = $this->contracts->getCurrent();
-    if ($contract === NULL || $contract->encryption() === EncryptionMode::None->value) {
-      return TRUE;
-    }
-    $changed = $this->state->get(self::STATE_CHANGED);
-    $window = max(0, (int) $this->configFactory->get('content_relay.settings')->get('encryption.transition_window'));
-    return $changed !== NULL && $this->time->getCurrentTime() - (int) $changed <= $window;
+    return $this->active->run($pairing, function (): bool {
+      $contract = $this->contracts->getCurrent();
+      if ($contract === NULL || $contract->encryption() === EncryptionMode::None->value) {
+        return TRUE;
+      }
+      $changed = $this->state->get($this->active->stateKey(self::STATE_CHANGED));
+      $window = max(0, (int) $this->configFactory->get('content_relay.settings')->get('encryption.transition_window'));
+      return $changed !== NULL && $this->time->getCurrentTime() - (int) $changed <= $window;
+    });
   }
 
   /**
-   * Records that the current contract switched encryption on.
+   * Records that the active pairing's contract switched encryption on.
    */
   public function recordChange(): void {
-    $this->state->set(self::STATE_CHANGED, $this->time->getCurrentTime());
+    $this->state->set($this->active->stateKey(self::STATE_CHANGED), $this->time->getCurrentTime());
   }
 
 }

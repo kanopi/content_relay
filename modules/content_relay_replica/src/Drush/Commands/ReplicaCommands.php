@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Drupal\content_relay_replica\Drush\Commands;
 
 use Consolidation\OutputFormatters\StructuredData\RowsOfFields;
+use Drupal\content_relay_replica\ActivePairing;
 use Drupal\content_relay_replica\Adopter;
 use Drupal\content_relay_replica\Apply\ApplyResult;
 use Drupal\content_relay_replica\Apply\SyncApplier;
@@ -77,6 +78,8 @@ final class ReplicaCommands extends DrushCommands {
     private readonly SyncApplier $applier,
     #[Autowire(service: 'content_relay_replica.adopter')]
     private readonly Adopter $adopter,
+    #[Autowire(service: 'content_relay_replica.active_pairing')]
+    private readonly ActivePairing $active,
   ) {
     parent::__construct();
   }
@@ -120,10 +123,7 @@ final class ReplicaCommands extends DrushCommands {
   public function reattach(
     string $entity_type,
     string $uuid,
-    array $options = [
-      'accept-origin' => FALSE,
-      'langcode' => self::REQ,
-    ],
+    array $options = ['accept-origin' => FALSE, 'langcode' => self::REQ],
   ): int {
     $state = $this->syncState->get($entity_type, $uuid);
     if ($options['langcode']) {
@@ -166,12 +166,20 @@ final class ReplicaCommands extends DrushCommands {
   /**
    * Fetches missing or altered files: of one item, or of every synced file.
    */
+  #[CLI\Option(name: 'origin', description: 'The origin pairing, when this site receives from several.')]
   #[CLI\Command(name: 'content-relay:pull-missing-files', aliases: ['cr-pull-missing'])]
   #[CLI\Argument(name: 'entity_type', description: 'Entity type ID of a synced item.')]
   #[CLI\Argument(name: 'uuid', description: 'UUID of the item.')]
   #[CLI\Option(name: 'all', description: 'Check every synced file instead.')]
   #[CLI\Usage(name: 'drush content-relay:pull-missing-files --all', description: 'Fetch every synced file that is missing or altered.')]
-  public function pullMissingFiles(?string $entity_type = NULL, ?string $uuid = NULL, array $options = ['all' => FALSE]): int {
+  public function pullMissingFiles(
+    ?string $entity_type = NULL,
+    ?string $uuid = NULL,
+    array $options = ['all' => FALSE, 'origin' => self::REQ],
+  ): int {
+    if (($pairing = $this->pairingFor($options)) !== NULL) {
+      return $this->active->run($pairing, fn () => $this->pullMissingFiles($entity_type, $uuid, ['origin' => NULL] + $options));
+    }
     if ($options['all']) {
       $uuids = $this->files->verifyAll();
     }
@@ -198,8 +206,12 @@ final class ReplicaCommands extends DrushCommands {
   /**
    * Checks every received bundle against the origin's schema.
    */
+  #[CLI\Option(name: 'origin', description: 'The origin pairing, when this site receives from several.')]
   #[CLI\Command(name: 'content-relay:check-schema', aliases: ['cr-check-schema'])]
-  public function checkSchema(): int {
+  public function checkSchema(array $options = ['origin' => self::REQ]): int {
+    if (($pairing = $this->pairingFor($options)) !== NULL) {
+      return $this->active->run($pairing, fn () => $this->checkSchema(['origin' => NULL] + $options));
+    }
     try {
       $results = $this->schemaWatcher->check();
     }
@@ -224,9 +236,13 @@ final class ReplicaCommands extends DrushCommands {
   /**
    * Pulls every synced item of a mapping's origin bundle and applies it again.
    */
+  #[CLI\Option(name: 'origin', description: 'The origin pairing, when this site receives from several.')]
   #[CLI\Command(name: 'content-relay:reapply-mapping', aliases: ['cr-reapply-mapping'])]
   #[CLI\Argument(name: 'mapping', description: 'Mapping ID, such as node__article.')]
-  public function reapplyMapping(string $mapping): int {
+  public function reapplyMapping(string $mapping, array $options = ['origin' => self::REQ]): int {
+    if (($pairing = $this->pairingFor($options)) !== NULL) {
+      return $this->active->run($pairing, fn () => $this->reapplyMapping($mapping, ['origin' => NULL] + $options));
+    }
     /** @var \Drupal\content_relay_replica\Entity\ContentRelayMapping|null $entity */
     $entity = $this->entityTypeManager->getStorage('content_relay_mapping')->load($mapping);
     if ($entity === NULL) {
@@ -237,6 +253,7 @@ final class ReplicaCommands extends DrushCommands {
       ->fields('s', ['uuid'])
       ->condition('entity_type', $entity->getSourceEntityType())
       ->condition('bundle', $entity->getSourceBundle())
+      ->condition('source_site', (string) $this->origin->getSiteId())
       ->isNull('detached_at')
       ->execute()
       ->fetchCol();
@@ -262,11 +279,19 @@ final class ReplicaCommands extends DrushCommands {
    *
    * An item edited here is left as it is unless --accept-origin is given.
    */
+  #[CLI\Option(name: 'origin', description: 'The origin pairing, when this site receives from several.')]
   #[CLI\Command(name: 'content-relay:pull', aliases: ['cr-pull'])]
   #[CLI\Argument(name: 'entity_type', description: 'Entity type ID on the origin.')]
   #[CLI\Argument(name: 'uuid', description: 'UUID of the item.')]
   #[CLI\Option(name: 'accept-origin', description: 'Replace edits made here with the origin\'s version.')]
-  public function pull(string $entity_type, string $uuid, array $options = ['accept-origin' => FALSE]): int {
+  public function pull(
+    string $entity_type,
+    string $uuid,
+    array $options = ['accept-origin' => FALSE, 'origin' => self::REQ],
+  ): int {
+    if (($pairing = $this->pairingFor($options)) !== NULL) {
+      return $this->active->run($pairing, fn () => $this->pull($entity_type, $uuid, ['origin' => NULL] + $options));
+    }
     try {
       $result = $this->puller->pull($entity_type, $uuid, FALSE, (bool) $options['accept-origin']);
     }
@@ -294,8 +319,12 @@ final class ReplicaCommands extends DrushCommands {
   /**
    * Compares this site with the origin, pulling and deleting to match.
    */
+  #[CLI\Option(name: 'origin', description: 'The origin pairing, when this site receives from several.')]
   #[CLI\Command(name: 'content-relay:replica-reconcile', aliases: ['cr-replica-reconcile'])]
-  public function reconcile(): int {
+  public function reconcile(array $options = ['origin' => self::REQ]): int {
+    if (($pairing = $this->pairingFor($options)) !== NULL) {
+      return $this->active->run($pairing, fn () => $this->reconcile(['origin' => NULL] + $options));
+    }
     try {
       $run = $this->reconciler->run('drush');
     }
@@ -327,8 +356,12 @@ final class ReplicaCommands extends DrushCommands {
    * Items identical to the origin's are marked in sync; items that differ
    * become conflicts to review. Safe to run again: adopted items are skipped.
    */
+  #[CLI\Option(name: 'origin', description: 'The origin pairing, when this site receives from several.')]
   #[CLI\Command(name: 'content-relay:adopt', aliases: ['cr-adopt'])]
-  public function adopt(): int {
+  public function adopt(array $options = ['origin' => self::REQ]): int {
+    if (($pairing = $this->pairingFor($options)) !== NULL) {
+      return $this->active->run($pairing, fn () => $this->adopt(['origin' => NULL] + $options));
+    }
     try {
       $counts = $this->adopter->run(function (string $entity_type_id, string $bundle, array $counts): void {
         $this->logger()->info(dt('@type @bundle: @counts', [
@@ -357,8 +390,12 @@ final class ReplicaCommands extends DrushCommands {
   /**
    * Fills gaps in the event stream from the origin.
    */
+  #[CLI\Option(name: 'origin', description: 'The origin pairing, when this site receives from several.')]
   #[CLI\Command(name: 'content-relay:fill-gaps', aliases: ['cr-fill-gaps'])]
-  public function fillGaps(): int {
+  public function fillGaps(array $options = ['origin' => self::REQ]): int {
+    if (($pairing = $this->pairingFor($options)) !== NULL) {
+      return $this->active->run($pairing, fn () => $this->fillGaps(['origin' => NULL] + $options));
+    }
     $counts = $this->reconciler->fillGaps();
     $this->logger()->notice(dt('Gaps filled: @counts.', ['@counts' => $counts === [] ? dt('none') : json_encode($counts)]));
     return ($counts['failed'] ?? 0) === 0 ? self::EXIT_SUCCESS : self::EXIT_FAILURE;
@@ -400,10 +437,14 @@ final class ReplicaCommands extends DrushCommands {
   /**
    * Lists languages the origin added, or adds or ignores one.
    */
+  #[CLI\Option(name: 'origin', description: 'The origin pairing, when this site receives from several.')]
   #[CLI\Command(name: 'content-relay:languages', aliases: ['cr-languages'])]
   #[CLI\Option(name: 'add', description: 'Start receiving this pending language.')]
   #[CLI\Option(name: 'ignore', description: 'Ignore this pending language for good.')]
-  public function languages(array $options = ['add' => self::REQ, 'ignore' => self::REQ]): int {
+  public function languages(array $options = ['add' => self::REQ, 'ignore' => self::REQ, 'origin' => self::REQ]): int {
+    if (($pairing = $this->pairingFor($options)) !== NULL) {
+      return $this->active->run($pairing, fn () => $this->languages(['origin' => NULL] + $options));
+    }
     $langcode = (string) ($options['add'] ?: $options['ignore']);
     if ($langcode === '') {
       $pending = $this->languages->pending();
@@ -423,10 +464,14 @@ final class ReplicaCommands extends DrushCommands {
   /**
    * Moves synced translations to another langcode, after a mapping change.
    */
+  #[CLI\Option(name: 'origin', description: 'The origin pairing, when this site receives from several.')]
   #[CLI\Command(name: 'content-relay:move-language', aliases: ['cr-move-language'])]
   #[CLI\Argument(name: 'from', description: 'The langcode translations have here now.')]
   #[CLI\Argument(name: 'to', description: 'The langcode they move to, as the new mapping says.')]
-  public function moveLanguage(string $from, string $to): int {
+  public function moveLanguage(string $from, string $to, array $options = ['origin' => self::REQ]): int {
+    if (($pairing = $this->pairingFor($options)) !== NULL) {
+      return $this->active->run($pairing, fn () => $this->moveLanguage($from, $to, ['origin' => NULL] + $options));
+    }
     $this->languages->move($from, $to);
     $this->logger()->success(dt('Queued; cron moves them a chunk at a time.'));
     return self::EXIT_SUCCESS;
@@ -435,11 +480,16 @@ final class ReplicaCommands extends DrushCommands {
   /**
    * Pairs this site with an origin, using a code generated there.
    */
+  #[CLI\Option(name: 'pairing', description: 'A machine name for this pairing; needed for every origin after the first.')]
   #[CLI\Command(name: 'content-relay:pair', aliases: ['cr-pair'])]
   #[CLI\Argument(name: 'origin_url', description: 'The origin\'s base URL, HTTPS.')]
   #[CLI\Argument(name: 'code', description: 'The pairing code.')]
   #[CLI\Option(name: 'bundles', description: 'What to receive, as entity_type:bundle pairs, comma-separated.')]
-  public function pair(string $origin_url, string $code, array $options = ['bundles' => self::REQ]): int {
+  public function pair(
+    string $origin_url,
+    string $code,
+    array $options = ['bundles' => self::REQ, 'pairing' => self::REQ],
+  ): int {
     $bundles = [];
     foreach (array_filter(array_map('trim', explode(',', (string) $options['bundles']))) as $pair) {
       [$entity_type_id, $bundle] = explode(':', $pair, 2) + [1 => ''];
@@ -450,13 +500,14 @@ final class ReplicaCommands extends DrushCommands {
       $bundles[$entity_type_id][] = $bundle;
     }
     try {
-      $result = $this->subscription->pair($origin_url, $code, ['bundles' => $bundles]);
+      $result = $this->subscription->pair($origin_url, $code, ['bundles' => $bundles], NULL, ((string) $options['pairing']) ?: NULL);
     }
     catch (SubscriptionException $e) {
       $this->logger()->error($e->getMessage());
       return self::EXIT_FAILURE;
     }
-    $this->logger()->success(dt('Paired. Contract version @version@approval.', [
+    $this->logger()->success(dt('Paired as "@pairing". Contract version @version@approval.', [
+      '@pairing' => $result['pairing'],
       '@version' => $result['contract']->version(),
       '@approval' => $result['approval_required'] ? dt('; the origin holds events until an administrator there approves this site') : '',
     ]));
@@ -466,14 +517,18 @@ final class ReplicaCommands extends DrushCommands {
   /**
    * Shows how this replica stands with its origin.
    */
+  #[CLI\Option(name: 'origin', description: 'The origin pairing, when this site receives from several.')]
   #[CLI\Command(name: 'content-relay:replica-status', aliases: ['cr-replica-status'])]
-  public function status(): int {
+  public function status(array $options = ['origin' => self::REQ]): int {
+    if (($pairing = $this->pairingFor($options)) !== NULL) {
+      return $this->active->run($pairing, fn () => $this->status(['origin' => NULL] + $options));
+    }
     $origin = $this->origin->get();
     if ($origin === NULL) {
       $this->logger()->warning(dt('This site is not paired with an origin.'));
       return self::EXIT_FAILURE;
     }
-    $counts = $this->database->select(SyncStateStore::TABLE, 's')->fields('s', ['status']);
+    $counts = $this->database->select(SyncStateStore::TABLE, 's')->fields('s', ['status'])->condition('source_site', $origin['site_id']);
     $counts->addExpression('COUNT(*)', 'total');
     $by_status = $counts->groupBy('s.status')->execute()->fetchAllKeyed();
     ksort($by_status);
@@ -578,6 +633,31 @@ final class ReplicaCommands extends DrushCommands {
     $this->failures->dismiss($id, 0, trim((string) $options['reason']));
     $this->logger()->success(dt('Dismissed.'));
     return self::EXIT_SUCCESS;
+  }
+
+  /**
+   * The pairing a command's --origin names, when it has to switch to it.
+   *
+   * @throws \InvalidArgumentException
+   *   When the site has several origins and none was named, or the name is
+   *   not a pairing.
+   */
+  private function pairingFor(array $options): ?string {
+    $origin = (string) ($options['origin'] ?? '');
+    $ids = $this->active->ids();
+    if ($origin === '') {
+      if ($this->active->current() === NULL && count($ids) > 1) {
+        throw new \InvalidArgumentException(dt('This site receives from several origins (@ids); say which with --origin.', ['@ids' => implode(', ', $ids)]));
+      }
+      return NULL;
+    }
+    if (!in_array($origin, $ids, TRUE)) {
+      throw new \InvalidArgumentException(dt('There is no origin pairing "@origin"; pairings: @ids.', [
+        '@origin' => $origin,
+        '@ids' => implode(', ', $ids),
+      ]));
+    }
+    return $this->active->current() === $origin ? NULL : $origin;
   }
 
 }

@@ -104,6 +104,7 @@ class Reconciler {
     protected LoggerInterface $logger,
     protected QueueFactory $queueFactory,
     protected ReceivingSettings $receiving,
+    protected ActivePairing $active,
   ) {}
 
   /**
@@ -142,6 +143,7 @@ class Reconciler {
       }
     }
     return (int) $this->database->insert(self::TABLE)->fields([
+      'pairing' => $this->active->id(),
       'started' => $this->time->getCurrentTime(),
       'trigger' => $trigger,
       'uid' => in_array($trigger, ['cron', 'backfill'], TRUE) ? NULL : (int) $this->currentUser->id(),
@@ -254,15 +256,16 @@ class Reconciler {
     $interval = (int) ($this->receiving->get('reconcile.interval') ?? 86400);
     $run_id = $this->database->select(self::TABLE, 'r')
       ->fields('r', ['id'])
+      ->condition('pairing', $this->active->id())
       ->condition('status', 'running')
       ->orderBy('id', 'DESC')
       ->range(0, 1)
       ->execute()
       ->fetchField();
     if ($run_id === FALSE) {
-      $last = (int) $this->state->get('content_relay_replica.reconciled', 0);
+      $last = (int) $this->state->get($this->active->stateKey('content_relay_replica.reconciled'), 0);
       // A backfill for languages just added does not wait for the interval.
-      $backfill = (bool) $this->state->get(LanguageSubscription::BACKFILL, FALSE);
+      $backfill = (bool) $this->state->get($this->active->stateKey(LanguageSubscription::BACKFILL), FALSE);
       if (!$backfill && ($interval <= 0 || $this->time->getCurrentTime() - $last < $interval)) {
         return;
       }
@@ -272,8 +275,8 @@ class Reconciler {
       catch (SubscriptionException) {
         return;
       }
-      $this->state->delete(LanguageSubscription::BACKFILL);
-      $this->state->set('content_relay_replica.reconciled', $this->time->getCurrentTime());
+      $this->state->delete($this->active->stateKey(LanguageSubscription::BACKFILL));
+      $this->state->set($this->active->stateKey('content_relay_replica.reconciled'), $this->time->getCurrentTime());
     }
     $until = microtime(TRUE) + $budget;
     while (microtime(TRUE) < $until && $this->step((int) $run_id) === self::MORE) {
@@ -305,7 +308,7 @@ class Reconciler {
    *   Rows, decoded as load() does.
    */
   public function history(int $limit = 50): array {
-    $ids = $this->database->select(self::TABLE, 'r')->fields('r', ['id'])->orderBy('id', 'DESC')->range(0, $limit)->execute()->fetchCol();
+    $ids = $this->database->select(self::TABLE, 'r')->fields('r', ['id'])->condition('pairing', $this->active->id())->orderBy('id', 'DESC')->range(0, $limit)->execute()->fetchCol();
     return array_values(array_filter(array_map(fn ($id) => $this->load((int) $id), $ids)));
   }
 
@@ -420,7 +423,7 @@ class Reconciler {
    *   TRUE if there may be more.
    */
   protected function deleteMissing(int $run_id, string $entity_type_id, string $bundle, array &$counts, array &$messages, int &$acted): bool {
-    $uuids = $this->syncState->notReconciled($entity_type_id, $bundle, $run_id, self::PAGE);
+    $uuids = $this->syncState->notReconciled($entity_type_id, $bundle, $run_id, self::PAGE, (string) $this->origin->getSiteId());
     foreach ($uuids as $uuid) {
       $this->act($entity_type_id, $bundle, $uuid, 'gone', $counts, $messages, $acted, $run_id);
     }
@@ -585,6 +588,7 @@ class Reconciler {
       'current' => $current,
       'queued' => $this->time->getCurrentTime(),
       'run' => $run_id,
+      'pairing' => $this->active->id(),
     ];
     if ($acted < $this->maxItems()) {
       $acted++;

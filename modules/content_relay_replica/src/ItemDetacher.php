@@ -33,6 +33,7 @@ class ItemDetacher {
     protected AccountInterface $currentUser,
     protected TimeInterface $time,
     protected LoggerInterface $logger,
+    protected ActivePairing $active,
   ) {}
 
   /**
@@ -42,6 +43,10 @@ class ItemDetacher {
    *   FALSE if it is not synced or already detached here.
    */
   public function detach(string $entity_type_id, string $uuid): bool {
+    // Done with the origin the item came from.
+    if (($pairing = $this->active->switchFor($entity_type_id, $uuid)) !== NULL) {
+      return $this->active->run($pairing, fn () => $this->detach($entity_type_id, $uuid));
+    }
     $state = $this->syncState->get($entity_type_id, $uuid);
     if ($state === NULL || $state['detached_at'] !== NULL) {
       return FALSE;
@@ -82,6 +87,10 @@ class ItemDetacher {
    *   FALSE if the item is not synced, or the translation already detached.
    */
   public function detachTranslation(string $entity_type_id, string $uuid, string $langcode): bool {
+    // Done with the origin the item came from.
+    if (($pairing = $this->active->switchFor($entity_type_id, $uuid)) !== NULL) {
+      return $this->active->run($pairing, fn () => $this->detachTranslation($entity_type_id, $uuid, $langcode));
+    }
     $state = $this->syncState->get($entity_type_id, $uuid);
     if ($state === NULL || in_array($langcode, $state['detached_translations'], TRUE)) {
       return FALSE;
@@ -128,6 +137,10 @@ class ItemDetacher {
    *   TRUE if it was reattached.
    */
   public function reattachTranslation(string $entity_type_id, string $uuid, string $langcode, bool $accept_origin = TRUE): bool {
+    // Done with the origin the item came from.
+    if (($pairing = $this->active->switchFor($entity_type_id, $uuid)) !== NULL) {
+      return $this->active->run($pairing, fn () => $this->reattachTranslation($entity_type_id, $uuid, $langcode, $accept_origin));
+    }
     $state = $this->syncState->get($entity_type_id, $uuid);
     if ($state === NULL || !in_array($langcode, $state['detached_translations'], TRUE)) {
       return FALSE;
@@ -191,6 +204,10 @@ class ItemDetacher {
    *   TRUE if the item was reattached.
    */
   public function reattach(string $entity_type_id, string $uuid, bool $accept_origin = TRUE): bool {
+    // Done with the origin the item came from.
+    if (($pairing = $this->active->switchFor($entity_type_id, $uuid)) !== NULL) {
+      return $this->active->run($pairing, fn () => $this->reattach($entity_type_id, $uuid, $accept_origin));
+    }
     $state = $this->syncState->get($entity_type_id, $uuid);
     if ($state === NULL || $state['detached_at'] === NULL) {
       return FALSE;

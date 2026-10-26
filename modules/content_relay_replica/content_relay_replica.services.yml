@@ -3,13 +3,17 @@ services:
     parent: logger.channel_base
     arguments: ['content_relay_replica']
 
+  content_relay_replica.active_pairing:
+    class: Drupal\content_relay_replica\ActivePairing
+    arguments: ['@entity_type.manager', '@state', '@database']
+
   content_relay_replica.origin:
     class: Drupal\content_relay_replica\OriginPeer
-    arguments: ['@state']
+    arguments: ['@state', '@content_relay_replica.active_pairing']
 
   content_relay_replica.public_key_resolver:
     class: Drupal\content_relay_replica\OriginPublicKeyResolver
-    arguments: ['@content_relay_replica.origin']
+    arguments: ['@content_relay_replica.origin', '@content_relay_replica.active_pairing']
     tags:
       - { name: content_relay_public_key_resolver }
 
@@ -59,10 +63,11 @@ services:
       - '@content_relay_replica.language_map'
       - '@content_relay_replica.moderation'
       - '@content_relay_replica.receiving_settings'
+      - '@content_relay_replica.active_pairing'
 
   content_relay_replica.contracts:
     class: Drupal\content_relay_replica\ContractStore
-    arguments: ['@database', '@datetime.time']
+    arguments: ['@database', '@datetime.time', '@content_relay_replica.active_pairing']
 
   content_relay_replica.subscription:
     class: Drupal\content_relay_replica\SubscriptionManager
@@ -82,6 +87,7 @@ services:
       - '@content_relay_replica.origin_policy'
       - '@content_relay_replica.language_subscription'
       - '@content_relay_replica.receiving_settings'
+      - '@content_relay_replica.active_pairing'
 
   content_relay_replica.local_changes:
     class: Drupal\content_relay_replica\LocalChanges
@@ -111,6 +117,7 @@ services:
       - '@logger.channel.content_relay_replica'
       - '@content_relay.pull_authenticator'
       - '@content_relay.message_verifier'
+      - '@content_relay_replica.active_pairing'
 
   content_relay_replica.detacher:
     class: Drupal\content_relay_replica\ItemDetacher
@@ -122,6 +129,7 @@ services:
       - '@current_user'
       - '@datetime.time'
       - '@logger.channel.content_relay_replica'
+      - '@content_relay_replica.active_pairing'
 
   content_relay_replica.entity_ui:
     class: Drupal\content_relay_replica\EntityUi
@@ -155,6 +163,7 @@ services:
       - '@datetime.time'
       - '@logger.channel.content_relay_replica'
       - '@content_relay_replica.receiving_settings'
+      - '@content_relay_replica.active_pairing'
 
   content_relay_replica.fetch_on_miss:
     class: Drupal\content_relay_replica\EventSubscriber\FetchOnMiss
@@ -175,6 +184,7 @@ services:
       - '@state'
       - '@config.factory'
       - '@datetime.time'
+      - '@content_relay_replica.active_pairing'
     tags:
       - { name: content_relay_peer_policy }
 
@@ -186,6 +196,7 @@ services:
       - '@content_relay_replica.subscription'
       - '@content_relay_replica.origin'
       - '@current_user'
+      - '@content_relay_replica.active_pairing'
 
   content_relay_replica.received_events:
     class: Drupal\content_relay_replica\Processing\ReceivedEvents
@@ -242,6 +253,7 @@ services:
       - '@state'
       - '@datetime.time'
       - '@logger.channel.content_relay_replica'
+      - '@content_relay_replica.active_pairing'
 
   content_relay_replica.puller:
     class: Drupal\content_relay_replica\Puller
@@ -249,6 +261,7 @@ services:
       - '@content_relay_replica.origin_client'
       - '@content_relay_replica.origin'
       - '@content_relay_replica.applier'
+      - '@content_relay_replica.active_pairing'
 
   content_relay_replica.conflicts:
     class: Drupal\content_relay_replica\Conflicts
@@ -266,6 +279,7 @@ services:
       - '@datetime.time'
       - '@logger.channel.content_relay_replica'
       - '@content_relay_replica.language_map'
+      - '@content_relay_replica.active_pairing'
 
   content_relay_replica.reconciler:
     class: Drupal\content_relay_replica\Reconciler
@@ -287,12 +301,14 @@ services:
       - '@logger.channel.content_relay_replica'
       - '@queue'
       - '@content_relay_replica.receiving_settings'
+      - '@content_relay_replica.active_pairing'
 
   content_relay_replica.receiving_settings:
     class: Drupal\content_relay_replica\ReceivingSettings
     arguments:
       - '@config.factory'
       - '@entity_type.manager'
+      - '@content_relay_replica.active_pairing'
 
   content_relay_replica.adopter:
     class: Drupal\content_relay_replica\Adopter
@@ -317,6 +333,7 @@ services:
       - '@content_relay_replica.sync_state'
       - '@content_relay_replica.local_changes'
       - '@content_relay_replica.origin_client'
+      - '@content_relay_replica.active_pairing'
 
   content_relay_replica.language_map:
     class: Drupal\content_relay_replica\LanguageMap
@@ -336,6 +353,8 @@ services:
       - '@datetime.time'
       - '@logger.channel.content_relay_replica'
       - '@content_relay_replica.receiving_settings'
+      - '@content_relay_replica.active_pairing'
+      - '@content_relay_replica.origin'
 
   content_relay_replica.moderation:
     class: Drupal\content_relay_replica\Moderation

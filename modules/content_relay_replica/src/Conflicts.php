@@ -48,6 +48,7 @@ class Conflicts {
     protected TimeInterface $time,
     protected LoggerInterface $logger,
     protected LanguageMap $languageMap,
+    protected ActivePairing $active,
   ) {}
 
   /**
@@ -67,6 +68,10 @@ class Conflicts {
    *   When the origin's latest version cannot be fetched.
    */
   public function diff(string $entity_type_id, string $uuid): array {
+    // Done with the origin the item came from.
+    if (($pairing = $this->active->switchFor($entity_type_id, $uuid)) !== NULL) {
+      return $this->active->run($pairing, fn () => $this->diff($entity_type_id, $uuid));
+    }
     [$state, $entity] = $this->item($entity_type_id, $uuid);
     if ($state['conflict_revision'] !== NULL && ($edit = $this->revision($entity, (int) $state['conflict_revision'])) !== NULL) {
       $local = $edit;
@@ -117,6 +122,10 @@ class Conflicts {
    *   When the origin cannot be asked.
    */
   public function acceptOrigin(string $entity_type_id, string $uuid): ?ApplyResult {
+    // Done with the origin the item came from.
+    if (($pairing = $this->active->switchFor($entity_type_id, $uuid)) !== NULL) {
+      return $this->active->run($pairing, fn () => $this->acceptOrigin($entity_type_id, $uuid));
+    }
     $state = $this->syncState->get($entity_type_id, $uuid) ?? throw new \InvalidArgumentException('The item is not synced.');
     $this->logger->notice('@user accepted the origin version of @type @uuid.', [
       '@user' => $this->currentUser->getAccountName(),
@@ -153,6 +162,11 @@ class Conflicts {
    *   version and keeps syncing.
    */
   public function keepLocal(string $entity_type_id, string $uuid, ?string $langcode = NULL): void {
+    // Done with the origin the item came from.
+    if (($pairing = $this->active->switchFor($entity_type_id, $uuid)) !== NULL) {
+      $this->active->run($pairing, fn () => $this->keepLocal($entity_type_id, $uuid, $langcode));
+      return;
+    }
     [$state, $entity] = $this->item($entity_type_id, $uuid);
     $edit = $state['conflict_revision'] === NULL ? NULL : $this->revision($entity, (int) $state['conflict_revision']);
     if ($edit !== NULL) {

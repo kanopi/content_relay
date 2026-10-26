@@ -7,11 +7,12 @@ namespace Drupal\content_relay_replica;
 use Drupal\Core\State\StateInterface;
 
 /**
- * The origin this replica receives from.
+ * An origin this replica receives from: one per pairing.
  *
  * Kept in state, not configuration: pairing happens on one environment, and a
  * config import from another must not change who this site trusts. Nothing
- * here is secret; it is the origin's address and public keys.
+ * here is secret; it is the origin's address and public keys. Without a
+ * pairing given, the methods work on the active one; see ActivePairing.
  */
 class OriginPeer {
 
@@ -19,6 +20,7 @@ class OriginPeer {
 
   public function __construct(
     protected StateInterface $state,
+    protected ActivePairing $active,
   ) {}
 
   /**
@@ -27,23 +29,23 @@ class OriginPeer {
    * @return array{site_id: string, label: string, url: string, signing_keys: array<string, array{public_key: string, status: string}>, encryption_keys: array}|null
    *   The origin.
    */
-  public function get(): ?array {
-    $origin = $this->state->get(self::STATE_KEY);
+  public function get(?string $pairing = NULL): ?array {
+    $origin = $this->state->get($this->active->stateKey(self::STATE_KEY, $pairing));
     return is_array($origin) && isset($origin['site_id']) ? $origin : NULL;
   }
 
   /**
    * The origin's site ID, or NULL before pairing.
    */
-  public function getSiteId(): ?string {
-    return $this->get()['site_id'] ?? NULL;
+  public function getSiteId(?string $pairing = NULL): ?string {
+    return $this->get($pairing)['site_id'] ?? NULL;
   }
 
   /**
    * The origin's label, for revision log messages.
    */
-  public function getLabel(): string {
-    $origin = $this->get();
+  public function getLabel(?string $pairing = NULL): string {
+    $origin = $this->get($pairing);
     return $origin['label'] ?? $origin['site_id'] ?? 'origin';
   }
 
@@ -62,7 +64,7 @@ class OriginPeer {
     }
     $origin['signing_keys'] = $signing_keys;
     $origin['encryption_keys'] = $encryption_keys;
-    $this->state->set(self::STATE_KEY, $origin);
+    $this->state->set($this->active->stateKey(self::STATE_KEY), $origin);
   }
 
   /**
@@ -70,13 +72,41 @@ class OriginPeer {
    *
    * @param array $origin
    *   With site_id, label, url, signing_keys and encryption_keys.
+   * @param string|null $pairing
+   *   The pairing; NULL for the active one.
    */
-  public function set(array $origin): void {
+  public function set(array $origin, ?string $pairing = NULL): void {
     if (empty($origin['site_id']) || !isset($origin['url']) || !str_starts_with(strtolower($origin['url']), 'https://')) {
       throw new \InvalidArgumentException('An origin needs a site ID and an HTTPS URL.');
     }
     $origin += ['label' => $origin['site_id'], 'signing_keys' => [], 'encryption_keys' => []];
-    $this->state->set(self::STATE_KEY, $origin);
+    $this->state->set($this->active->stateKey(self::STATE_KEY, $pairing), $origin);
+  }
+
+  /**
+   * Forgets an origin.
+   *
+   * @param string|null $pairing
+   *   The pairing; NULL for the active one.
+   */
+  public function delete(?string $pairing = NULL): void {
+    $this->state->delete($this->active->stateKey(self::STATE_KEY, $pairing));
+  }
+
+  /**
+   * Every origin, by pairing.
+   *
+   * @return array<string, array>
+   *   Origins.
+   */
+  public function all(): array {
+    $origins = [];
+    foreach ($this->active->ids() as $pairing) {
+      if ($origin = $this->get($pairing)) {
+        $origins[$pairing] = $origin;
+      }
+    }
+    return $origins;
   }
 
 }

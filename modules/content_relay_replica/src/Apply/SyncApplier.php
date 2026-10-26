@@ -16,6 +16,7 @@ use Drupal\content_relay\Plugin\ContentRelay\Normalizer\GenericContentEntityNorm
 use Drupal\content_relay\Serialization\DenormalizationContext;
 use Drupal\content_relay\Serialization\EntitySerializer;
 use Drupal\content_relay\Serialization\LatestRevision;
+use Drupal\content_relay_replica\ActivePairing;
 use Drupal\content_relay_replica\ContractStore;
 use Drupal\content_relay_replica\Entity\ContentRelayMapping;
 use Drupal\content_relay_replica\FailedEventStore;
@@ -126,6 +127,7 @@ class SyncApplier {
     protected LanguageMap $languageMap,
     protected Moderation $moderation,
     protected ReceivingSettings $receiving,
+    protected ActivePairing $active,
   ) {}
 
   /**
@@ -146,6 +148,16 @@ class SyncApplier {
    *   constants, or NULL for the conflicts.on_event setting.
    */
   public function apply(SyncEvent $event, string $source_site, bool $is_retry = FALSE, bool $force = FALSE, ?string $on_conflict = NULL): ApplyResult {
+    // Applied in the sender's pairing: its contract, settings and state.
+    $pairing = $this->active->forSite($source_site);
+    $work = fn () => $this->applyFromPairing($event, $source_site, $is_retry, $force, $on_conflict);
+    return $pairing === NULL ? $work() : $this->active->run($pairing, $work);
+  }
+
+  /**
+   * Applies an event in its sender's pairing; see apply().
+   */
+  protected function applyFromPairing(SyncEvent $event, string $source_site, bool $is_retry, bool $force, ?string $on_conflict): ApplyResult {
     if (!$is_retry && !$force && ($record = $this->processed->get($event->eventId))) {
       return ApplyResult::fromRecord($record);
     }
@@ -213,6 +225,11 @@ class SyncApplier {
     // Drafts included: sync works on the latest revision.
     $entity = $entity instanceof ContentEntityInterface ? LatestRevision::of($entity, $this->entityTypeManager) : NULL;
 
+    // The origin that created an item here owns it; another may not change
+    // it, as long as the owner is paired.
+    if ($state !== NULL && $state['source_site'] !== $source_site && $this->active->forSite((string) $state['source_site']) !== NULL) {
+      return $this->fail($event, $source_site, FailedEventStore::PERMANENT, 'uuid_collision', sprintf('The item came from origin %s, which owns it here; other origins cannot change it.', $this->origin->getLabel((string) $this->active->forSite((string) $state['source_site']))));
+    }
     if ($event->operation === Operation::Detach || $event->operation === Operation::Attach) {
       return $this->applyDetachment($event, $state, $entity);
     }

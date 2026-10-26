@@ -6,6 +6,7 @@ namespace Drupal\Tests\content_relay_replica\Functional;
 
 use Drupal\Component\Uuid\Php as PhpUuid;
 use Drupal\content_relay\Event\SyncEvent;
+use Drupal\content_relay_replica\Entity\ContentRelayOriginPairing;
 use Drupal\content_relay_replica\File\FileSync;
 use Drupal\content_relay_replica\LanguageSubscription;
 use Drupal\content_relay_replica\SyncStatus;
@@ -465,6 +466,23 @@ final class ReplicaItemUiTest extends BrowserTestBase {
     ])->save();
     $this->drush('content-relay:reapply-mapping', ['node__article']);
     $this->assertStringContainsString('1 item(s) re-applied, 0 failed', $this->getErrorOutput());
+
+    // With a second origin, commands for one origin need --origin.
+    $this->container->get('content_relay_replica.origin')->set([
+      'site_id' => 'second-origin',
+      'label' => 'Second',
+      'url' => 'https://second.example.com',
+    ], 'second');
+    $second = ContentRelayOriginPairing::create(['id' => 'second', 'label' => 'Second', 'settings' => []]);
+    $second->save();
+    $this->drush('content-relay:fill-gaps', [], [], NULL, NULL, 1);
+    $this->assertStringContainsString('say which with --origin', $this->getErrorOutput());
+    $this->drush('content-relay:fill-gaps', [], ['origin' => 'default']);
+    $this->assertStringContainsString('Gaps filled', $this->getErrorOutput());
+    $this->drush('content-relay:fill-gaps', [], ['origin' => 'nope'], NULL, NULL, 1);
+    $this->assertStringContainsString('There is no origin pairing "nope"', $this->getErrorOutput());
+    $this->container->get('content_relay_replica.origin')->delete('second');
+    $second->delete();
 
     // Moving a language queues the work.
     $this->drush('content-relay:move-language', ['en', 'fr']);

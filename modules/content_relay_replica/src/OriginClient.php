@@ -38,6 +38,7 @@ class OriginClient {
     protected LoggerInterface $logger,
     protected PullAuthenticatorInterface $authenticator,
     protected MessageVerifier $verifier,
+    protected ActivePairing $active,
   ) {}
 
   /**
@@ -247,14 +248,14 @@ class OriginClient {
    */
   public function notify(string $type, array $body): bool {
     $key = $body['entity_type'] . ':' . $body['uuid'];
-    $pending = $this->state->get(self::STATE_PENDING, []);
+    $pending = $this->state->get($this->active->stateKey(self::STATE_PENDING), []);
     unset($pending[$key]);
     if ($this->send($type, $body)) {
-      $this->state->set(self::STATE_PENDING, $pending);
+      $this->state->set($this->active->stateKey(self::STATE_PENDING), $pending);
       return TRUE;
     }
     $pending[$key] = ['type' => $type, 'body' => $body];
-    $this->state->set(self::STATE_PENDING, $pending);
+    $this->state->set($this->active->stateKey(self::STATE_PENDING), $pending);
     return FALSE;
   }
 
@@ -265,13 +266,13 @@ class OriginClient {
    *   How many are still waiting.
    */
   public function sendPending(): int {
-    $pending = $this->state->get(self::STATE_PENDING, []);
+    $pending = $this->state->get($this->active->stateKey(self::STATE_PENDING), []);
     foreach ($pending as $key => $notice) {
       if ($this->send($notice['type'], $notice['body'])) {
         unset($pending[$key]);
       }
     }
-    $this->state->set(self::STATE_PENDING, $pending);
+    $this->state->set($this->active->stateKey(self::STATE_PENDING), $pending);
     return count($pending);
   }
 
@@ -282,7 +283,7 @@ class OriginClient {
    *   Notices.
    */
   public function getPending(): array {
-    return $this->state->get(self::STATE_PENDING, []);
+    return $this->state->get($this->active->stateKey(self::STATE_PENDING), []);
   }
 
   /**

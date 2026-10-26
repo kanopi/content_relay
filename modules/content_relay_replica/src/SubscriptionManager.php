@@ -15,8 +15,9 @@ use Drupal\content_relay\Crypto\VerificationException;
 use Drupal\content_relay\Key\KeyPurpose;
 use Drupal\content_relay\Key\KeyStore;
 use Drupal\content_relay\Key\PeerKeys;
-use Drupal\content_relay_replica\Crypto\OriginPolicy;
 use Drupal\content_relay\SiteIdentity;
+use Drupal\content_relay_replica\Crypto\OriginPolicy;
+use Drupal\content_relay_replica\Entity\ContentRelayOriginPairing;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Database\Connection;
 use Drupal\Core\State\StateInterface;
@@ -69,6 +70,7 @@ class SubscriptionManager {
     protected OriginPolicy $policy,
     protected LanguageSubscription $languages,
     protected ReceivingSettings $receiving,
+    protected ActivePairing $active,
   ) {}
 
   /**
@@ -82,21 +84,38 @@ class SubscriptionManager {
    *   The terms requested, at least the bundles.
    * @param int|null $uid
    *   The user pairing.
+   * @param string|null $pairing
+   *   A machine name for the pairing; needed for every origin after the
+   *   first, which is "default".
    *
-   * @return array{contract: \Drupal\content_relay\Contract\SubscriptionContract, approval_required: bool, acknowledged: bool}
+   * @return array{contract: \Drupal\content_relay\Contract\SubscriptionContract, approval_required: bool, acknowledged: bool, pairing: string}
    *   The outcome.
    *
    * @throws \Drupal\content_relay_replica\SubscriptionException
    *   When pairing fails.
    */
-  public function pair(string $origin_url, string $code, array $replica_terms, ?int $uid = NULL): array {
+  public function pair(string $origin_url, string $code, array $replica_terms, ?int $uid = NULL, ?string $pairing = NULL): array {
     $origin_url = rtrim(trim($origin_url), '/');
     if (!str_starts_with(strtolower($origin_url), 'https://') || !filter_var($origin_url, \FILTER_VALIDATE_URL)) {
       throw new SubscriptionException('Content Relay pairs only over HTTPS. Enter the origin\'s https:// address.');
     }
-    if ($this->origin->get() !== NULL) {
-      throw new SubscriptionException('This site is already paired with an origin.');
+    if ($pairing === NULL && $this->origin->all() !== []) {
+      throw new SubscriptionException('This site already receives from an origin. Name the new pairing to add another.');
     }
+    $pairing ??= ContentRelayOriginPairing::DEFAULT;
+    if (preg_match('/^[a-z0-9_]{1,64}$/', $pairing) !== 1) {
+      throw new SubscriptionException('A pairing name is lowercase letters, digits and underscores.');
+    }
+    if ($this->origin->get($pairing) !== NULL) {
+      throw new SubscriptionException(sprintf('The pairing "%s" is already paired with an origin.', $pairing));
+    }
+    return $this->active->run($pairing, fn () => $this->pairAs($pairing, $origin_url, $code, $replica_terms, $uid));
+  }
+
+  /**
+   * Pairs, in the pairing being made; see pair().
+   */
+  protected function pairAs(string $pairing, string $origin_url, string $code, array $replica_terms, ?int $uid): array {
     $webhook = $this->getWebhookUrl();
     if (!str_starts_with(strtolower($webhook), 'https://')) {
       throw new SubscriptionException(sprintf('This site\'s endpoint (%s) is not HTTPS, so the origin would refuse it. Serve the site over HTTPS or set the webhook URL in settings.', $webhook));
@@ -125,6 +144,10 @@ class SubscriptionManager {
       throw new SubscriptionException(sprintf('The origin refused to pair: %s', $body['message'] ?? sprintf('HTTP %d', $status)));
     }
 
+    $paired_as = $this->active->forSite((string) $body['origin']['site_id']);
+    if ($paired_as !== NULL) {
+      throw new SubscriptionException(sprintf('This site already receives from that origin, as the pairing "%s".', $paired_as));
+    }
     // The origin is trusted from here on because HTTPS authenticated it and
     // it accepted the code; its keys verify everything that follows.
     $this->origin->set([
@@ -138,7 +161,7 @@ class SubscriptionManager {
       $contract = $this->accept($body['contract'], $uid);
     }
     catch (SubscriptionException $e) {
-      $this->state->delete(OriginPeer::STATE_KEY);
+      $this->origin->delete();
       throw $e;
     }
     // How content from this origin is received: the site-wide settings to
@@ -150,6 +173,7 @@ class SubscriptionManager {
       '@version' => $contract->version(),
     ]);
     return [
+      'pairing' => $pairing,
       'contract' => $contract,
       'approval_required' => (bool) ($body['approval_required'] ?? FALSE),
       'acknowledged' => $this->acknowledge($contract->version()),
@@ -171,7 +195,7 @@ class SubscriptionManager {
   public function propose(array $replica_terms, ?int $uid = NULL): ?SubscriptionContract {
     $replica_terms['webhook_url'] = $this->getWebhookUrl();
     $replica_terms['require_encryption'] = $this->requiresEncryption();
-    $this->state->set(self::PENDING_PROPOSAL, [
+    $this->state->set($this->active->stateKey(self::PENDING_PROPOSAL), [
       'terms' => $replica_terms,
       'uid' => $uid,
       'attempts' => 0,
@@ -185,13 +209,13 @@ class SubscriptionManager {
    * Sends the kept proposal, if any. Called by propose() and by cron.
    */
   public function sendPendingProposal(): ?SubscriptionContract {
-    $pending = $this->state->get(self::PENDING_PROPOSAL);
+    $pending = $this->state->get($this->active->stateKey(self::PENDING_PROPOSAL));
     $origin = $this->origin->get();
     if (!is_array($pending) || $origin === NULL) {
       return NULL;
     }
     $pending['attempts']++;
-    $this->state->set(self::PENDING_PROPOSAL, $pending);
+    $this->state->set($this->active->stateKey(self::PENDING_PROPOSAL), $pending);
 
     $envelope = $this->signer->sign($origin['site_id'], 'subscription_update', [
       'replica_terms' => $pending['terms'],
@@ -214,7 +238,7 @@ class SubscriptionManager {
       ]);
       return NULL;
     }
-    $this->state->delete(self::PENDING_PROPOSAL);
+    $this->state->delete($this->active->stateKey(self::PENDING_PROPOSAL));
     $this->acknowledge($contract->version());
     return $contract;
   }
@@ -223,7 +247,7 @@ class SubscriptionManager {
    * Whether a proposal is waiting to reach the origin.
    */
   public function hasPendingProposal(): bool {
-    return is_array($this->state->get(self::PENDING_PROPOSAL));
+    return is_array($this->state->get($this->active->stateKey(self::PENDING_PROPOSAL)));
   }
 
   /**
@@ -353,6 +377,7 @@ class SubscriptionManager {
             ->fields(['status' => SyncStatus::DETACHED_BY_ORIGIN, 'last_error' => self::WITHDRAWN])
             ->condition('entity_type', $entity_type_id)
             ->condition('bundle', $bundle)
+            ->condition('source_site', (string) $this->origin->getSiteId())
             ->condition('status', [SyncStatus::DETACHED_BY_ORIGIN, SyncStatus::DETACHED_BY_REPLICA], 'NOT IN')
             ->execute();
         }
@@ -366,6 +391,7 @@ class SubscriptionManager {
           ->fields(['status' => SyncStatus::SYNCED, 'last_error' => NULL])
           ->condition('entity_type', $entity_type_id)
           ->condition('bundle', $bundle)
+          ->condition('source_site', (string) $this->origin->getSiteId())
           ->condition('status', SyncStatus::DETACHED_BY_ORIGIN)
           ->condition('last_error', self::WITHDRAWN)
           ->execute();

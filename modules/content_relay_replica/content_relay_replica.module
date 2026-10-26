@@ -17,14 +17,20 @@ use Drupal\Core\Url;
  * Implements hook_cron().
  */
 function content_relay_replica_cron(): void {
-  \Drupal::service('content_relay_replica.subscription')->sendPendingProposal();
+  // What is kept for each origin, one after the other.
+  $active = \Drupal::service('content_relay_replica.active_pairing');
+  foreach (array_keys(\Drupal::service('content_relay_replica.origin')->all()) as $pairing) {
+    $active->run($pairing, function (): void {
+      \Drupal::service('content_relay_replica.subscription')->sendPendingProposal();
+      \Drupal::service('content_relay_replica.origin_client')->sendPending();
+      \Drupal::service('content_relay_replica.schema_watcher')->checkIfDue();
+      $reconciler = \Drupal::service('content_relay_replica.reconciler');
+      $reconciler->fillGaps();
+      $reconciler->cron();
+    });
+  }
   \Drupal::service('content_relay_replica.failed_events')->scheduleDueRetries();
   \Drupal::service('content_relay_replica.processed_events')->prune();
-  \Drupal::service('content_relay_replica.origin_client')->sendPending();
-  \Drupal::service('content_relay_replica.schema_watcher')->checkIfDue();
-  $reconciler = \Drupal::service('content_relay_replica.reconciler');
-  $reconciler->fillGaps();
-  $reconciler->cron();
   // Queued events whose queue item went missing, after an hour.
   \Drupal::service('content_relay_replica.received_events')->requeueStale(3600);
   $files = \Drupal::service('content_relay_replica.file_sync');

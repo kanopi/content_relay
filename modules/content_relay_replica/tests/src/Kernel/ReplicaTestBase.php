@@ -181,10 +181,10 @@ abstract class ReplicaTestBase extends KernelTestBase {
   }
 
   /**
-   * Applies an event as the origin's.
+   * Applies an event as the paired origin's.
    */
   protected function apply(SyncEvent $event): ApplyResult {
-    return $this->container->get('content_relay_replica.applier')->apply($event, self::ORIGIN);
+    return $this->container->get('content_relay_replica.applier')->apply($event, $this->container->get('content_relay_replica.origin')->getSiteId() ?? self::ORIGIN);
   }
 
   /**

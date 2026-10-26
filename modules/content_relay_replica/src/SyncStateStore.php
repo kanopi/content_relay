@@ -118,16 +118,28 @@ class SyncStateStore {
   }
 
   /**
-   * Items of a bundle a reconciliation run did not find on the origin.
+   * Items of a bundle a reconciliation run did not find on their origin.
+   *
+   * @param string $entity_type_id
+   *   Entity type.
+   * @param string $bundle
+   *   Bundle.
+   * @param int $run
+   *   The run.
+   * @param int $limit
+   *   Most UUIDs to return.
+   * @param string $source_site
+   *   The origin reconciled: only its items are looked at.
    *
    * @return string[]
    *   UUIDs, at most $limit.
    */
-  public function notReconciled(string $entity_type_id, string $bundle, int $run, int $limit): array {
+  public function notReconciled(string $entity_type_id, string $bundle, int $run, int $limit, string $source_site): array {
     $query = $this->database->select(self::TABLE, 's')
       ->fields('s', ['uuid'])
       ->condition('entity_type', $entity_type_id)
       ->condition('bundle', $bundle)
+      ->condition('source_site', $source_site)
       ->orderBy('uuid')
       ->range(0, $limit);
     $query->condition($query->orConditionGroup()

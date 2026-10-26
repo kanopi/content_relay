@@ -195,6 +195,32 @@ final class SubscriptionTest extends KernelTestBase {
   }
 
   /**
+   * Another origin needs a pairing name, and an origin pairs only once.
+   */
+  public function testFurtherPairings(): void {
+    $this->assertSame('default', $this->pair()['pairing']);
+    $attempts = [
+      [NULL, 'Name the new pairing to add another.'],
+      ['Second one', 'lowercase letters, digits and underscores'],
+      ['default', 'The pairing "default" is already paired'],
+      // The same origin again, under another name.
+      ['second', 'already receives from that origin, as the pairing "default"'],
+    ];
+    foreach ($attempts as [$name, $message]) {
+      try {
+        $this->subscription->pair(self::ORIGIN_URL, self::CODE, ['bundles' => ['node' => ['article']]], 1, $name);
+        $this->fail('Pairing was not refused: ' . $message);
+      }
+      catch (SubscriptionException $e) {
+        $this->assertStringContainsString($message, $e->getMessage());
+      }
+    }
+    // Nothing is left of the refused pairing.
+    $this->assertNull($this->container->get('content_relay_replica.origin')->get('second'));
+    $this->assertSame(['default'], $this->container->get('content_relay_replica.active_pairing')->ids());
+  }
+
+  /**
    * An origin address that is not HTTPS is refused before anything is sent.
    */
   public function testHttpOriginIsRefused(): void {

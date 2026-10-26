@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Drupal\content_relay_replica\Plugin\QueueWorker;
 
+use Drupal\content_relay_replica\ActivePairing;
+use Drupal\content_relay_replica\Entity\ContentRelayOriginPairing;
 use Drupal\content_relay_replica\LanguageSubscription;
 use Drupal\Core\Plugin\ContainerFactoryPluginInterface;
 use Drupal\Core\Queue\Attribute\QueueWorker;
@@ -28,6 +30,7 @@ final class LanguageWorker extends QueueWorkerBase implements ContainerFactoryPl
     $plugin_definition,
     protected readonly LanguageSubscription $languages,
     protected readonly QueueFactory $queueFactory,
+    protected readonly ActivePairing $active,
   ) {
     parent::__construct($configuration, $plugin_id, $plugin_definition);
   }
@@ -42,6 +45,7 @@ final class LanguageWorker extends QueueWorkerBase implements ContainerFactoryPl
       $plugin_definition,
       $container->get('content_relay_replica.language_subscription'),
       $container->get('queue'),
+      $container->get('content_relay_replica.active_pairing'),
     );
   }
 
@@ -52,12 +56,14 @@ final class LanguageWorker extends QueueWorkerBase implements ContainerFactoryPl
     if (!is_array($data) || !is_string($data['entity_type'] ?? NULL) || !is_string($data['bundle'] ?? NULL)) {
       return;
     }
-    $next = $this->languages->processQueued($data + [
+    // Items queued before pairings had names are the first pairing's.
+    $data += ['pairing' => ContentRelayOriginPairing::DEFAULT];
+    $next = $this->active->run($data['pairing'], fn () => $this->languages->processQueued($data + [
       'langcodes' => NULL,
       'wanted' => NULL,
       'mode' => 'keep',
       'after' => '',
-    ]);
+    ]));
     if ($next !== NULL) {
       $this->queueFactory->get(LanguageSubscription::QUEUE)->createItem($next);
     }

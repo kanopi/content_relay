@@ -729,3 +729,16 @@ retention, lock waits). The origin's identity, keys, contract and stream
 stay in the database. Pairing creates the entity; sites paired before get
 one, `default`, on update. While a site has one origin, the settings form
 edits both. See docs/multi-pairing.md for the rest of the plan.
+
+## 90. A replica can receive from several origins
+
+Each origin pairing keeps its own origin record, contract, stream position,
+reconciliation runs, pending proposals and notices, schema checks and file
+links. Work for one origin runs in its pairing (ActivePairing): the endpoint
+by the sender, cron and queues by the pairing they recorded, Drush by
+`--origin`, and anything about one item by the origin that owns it. The
+first pairing keeps the state keys it always had, so a site with one origin
+changes nothing. The origin that created an item owns it; another origin's
+events for it are refused as collisions. Reconciliation, language backfill
+and contract withdrawals only touch the pairing's own items. With several
+pairings, work that names none fails rather than guess.

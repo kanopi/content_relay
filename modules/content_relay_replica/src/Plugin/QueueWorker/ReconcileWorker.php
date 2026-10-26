@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Drupal\content_relay_replica\Plugin\QueueWorker;
 
+use Drupal\content_relay_replica\ActivePairing;
+use Drupal\content_relay_replica\Entity\ContentRelayOriginPairing;
 use Drupal\content_relay_replica\RateLimitedException;
 use Drupal\content_relay_replica\Reconciler;
 use Drupal\Core\Plugin\ContainerFactoryPluginInterface;
@@ -33,6 +35,7 @@ final class ReconcileWorker extends QueueWorkerBase implements ContainerFactoryP
     $plugin_id,
     $plugin_definition,
     protected readonly Reconciler $reconciler,
+    protected readonly ActivePairing $active,
   ) {
     parent::__construct($configuration, $plugin_id, $plugin_definition);
   }
@@ -46,6 +49,7 @@ final class ReconcileWorker extends QueueWorkerBase implements ContainerFactoryP
       $plugin_id,
       $plugin_definition,
       $container->get('content_relay_replica.reconciler'),
+      $container->get('content_relay_replica.active_pairing'),
     );
   }
 
@@ -56,12 +60,18 @@ final class ReconcileWorker extends QueueWorkerBase implements ContainerFactoryP
     if (!is_array($data) || !is_string($data['entity_type'] ?? NULL) || !is_string($data['uuid'] ?? NULL) || !is_string($data['current'] ?? NULL)) {
       return;
     }
-    if ($this->processed >= $this->reconciler->maxItems()) {
+    // Items queued before pairings had names are the first pairing's.
+    $data += ['pairing' => ContentRelayOriginPairing::DEFAULT];
+    if ($this->processed >= $this->active->run($data['pairing'], fn () => $this->reconciler->maxItems())) {
       throw new SuspendQueueException('Reached the reconciliation limit for this run.');
     }
     $this->processed++;
     try {
-      $this->reconciler->processQueued($data + ['bundle' => '', 'queued' => 0, 'run' => NULL]);
+      $this->active->run($data['pairing'], fn () => $this->reconciler->processQueued($data + [
+        'bundle' => '',
+        'queued' => 0,
+        'run' => NULL,
+      ]));
     }
     catch (RateLimitedException $e) {
       // The origin's read limit: the item and the rest wait.

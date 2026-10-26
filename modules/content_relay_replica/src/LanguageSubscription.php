@@ -63,6 +63,8 @@ class LanguageSubscription {
     protected TimeInterface $time,
     protected LoggerInterface $logger,
     protected ReceivingSettings $receiving,
+    protected ActivePairing $active,
+    protected OriginPeer $origin,
   ) {}
 
   /**
@@ -103,7 +105,7 @@ class LanguageSubscription {
         }
       }
     }
-    $this->state->set(self::PENDING, $pending);
+    $this->state->set($this->active->stateKey(self::PENDING), $pending);
   }
 
   /**
@@ -113,7 +115,7 @@ class LanguageSubscription {
    *   Pending languages.
    */
   public function pending(): array {
-    return $this->state->get(self::PENDING, []);
+    return $this->state->get($this->active->stateKey(self::PENDING), []);
   }
 
   /**
@@ -141,7 +143,7 @@ class LanguageSubscription {
     }
     $pending = $this->pending();
     unset($pending[$langcode]);
-    $this->state->set(self::PENDING, $pending);
+    $this->state->set($this->active->stateKey(self::PENDING), $pending);
     return $terms;
   }
 
@@ -152,7 +154,7 @@ class LanguageSubscription {
    *   What to do with them: keep or delete.
    */
   public function setRemovalMode(string $mode): void {
-    $this->state->set(self::REMOVAL, $mode === 'delete' ? 'delete' : 'keep');
+    $this->state->set($this->active->stateKey(self::REMOVAL), $mode === 'delete' ? 'delete' : 'keep');
   }
 
   /**
@@ -160,7 +162,7 @@ class LanguageSubscription {
    */
   public function contractChanged(?SubscriptionContract $previous, SubscriptionContract $contract): void {
     $mode = $this->removalMode();
-    $this->state->delete(self::REMOVAL);
+    $this->state->delete($this->active->stateKey(self::REMOVAL));
     $backfill = FALSE;
     foreach ($contract->effectiveBundles() as $entity_type_id => $bundles) {
       foreach ($bundles as $bundle) {
@@ -181,7 +183,7 @@ class LanguageSubscription {
       }
     }
     if ($backfill) {
-      $this->state->set(self::BACKFILL, TRUE);
+      $this->state->set($this->active->stateKey(self::BACKFILL), TRUE);
       $this->logger->notice('Contract version @version adds languages; a backfill will pull existing translations in them.', ['@version' => $contract->version()]);
     }
   }
@@ -208,6 +210,7 @@ class LanguageSubscription {
       'wanted' => $wanted,
       'mode' => $mode,
       'after' => '',
+      'pairing' => $this->active->id(),
     ]);
   }
 
@@ -225,6 +228,7 @@ class LanguageSubscription {
           'bundle' => (string) $bundle,
           'move' => ['from' => $from, 'to' => $to],
           'after' => '',
+          'pairing' => $this->active->id(),
         ]);
       }
     }
@@ -242,6 +246,7 @@ class LanguageSubscription {
       ->fields('s', ['uuid'])
       ->condition('entity_type', $item['entity_type'])
       ->condition('bundle', $item['bundle'])
+      ->condition('source_site', (string) $this->origin->getSiteId())
       ->condition('uuid', $item['after'], '>')
       ->orderBy('uuid')
       ->range(0, self::CHUNK)
@@ -384,7 +389,7 @@ class LanguageSubscription {
    * What to do with translations of dropped languages.
    */
   protected function removalMode(): string {
-    return $this->state->get(self::REMOVAL) ?? ($this->receiving->get('languages.removed') ?? 'keep');
+    return $this->state->get($this->active->stateKey(self::REMOVAL)) ?? ($this->receiving->get('languages.removed') ?? 'keep');
   }
 
 }

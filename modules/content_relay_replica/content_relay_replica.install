@@ -165,6 +165,13 @@ function content_relay_replica_schema(): array {
   $schema[Reconciler::TABLE] = [
     'description' => 'Reconciliation runs: comparing this site with the origin.',
     'fields' => [
+      'pairing' => [
+        'type' => 'varchar_ascii',
+        'length' => 64,
+        'not null' => TRUE,
+        'default' => 'default',
+        'description' => 'The origin pairing.',
+      ],
       'id' => ['type' => 'serial', 'unsigned' => TRUE, 'not null' => TRUE],
       'started' => ['type' => 'int', 'size' => 'big', 'not null' => TRUE],
       'finished' => ['type' => 'int', 'size' => 'big', 'not null' => FALSE],
@@ -290,6 +297,13 @@ function content_relay_replica_schema(): array {
   $schema[ContractStore::TABLE] = [
     'description' => 'Every version of this replica\'s subscription contract, as received from the origin.',
     'fields' => [
+      'pairing' => [
+        'type' => 'varchar_ascii',
+        'length' => 64,
+        'not null' => TRUE,
+        'default' => 'default',
+        'description' => 'The origin pairing.',
+      ],
       'version' => ['type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE],
       'terms' => ['type' => 'blob', 'size' => 'big', 'not null' => TRUE, 'description' => 'The contract, as JSON.'],
       'received' => ['type' => 'int', 'size' => 'big', 'not null' => TRUE],
@@ -300,7 +314,7 @@ function content_relay_replica_schema(): array {
         'description' => 'The local user whose proposal produced it, if any.',
       ],
     ],
-    'primary key' => ['version'],
+    'primary key' => ['pairing', 'version'],
   ];
   $schema[ReceivedEvents::TABLE] = [
     'description' => 'Verified events accepted for queued processing, until applied.',
@@ -320,6 +334,13 @@ function content_relay_replica_schema(): array {
   $schema[FileSync::TABLE] = [
     'description' => 'Files received from the origin and the state of their binaries.',
     'fields' => [
+      'pairing' => [
+        'type' => 'varchar_ascii',
+        'length' => 64,
+        'not null' => TRUE,
+        'default' => 'default',
+        'description' => 'The origin pairing.',
+      ],
       'uuid' => ['type' => 'varchar_ascii', 'length' => 128, 'not null' => TRUE, 'description' => 'File entity UUID.'],
       'uri' => ['type' => 'text', 'not null' => TRUE, 'description' => 'Where the binary goes here.'],
       'origin_uri' => ['type' => 'text', 'not null' => TRUE],
@@ -405,4 +426,31 @@ function content_relay_replica_update_10002(): string {
     $manager->installEntityType(\Drupal::entityTypeManager()->getDefinition('content_relay_origin_pairing'));
   }
   return (string) t('Each origin a site receives from now has its own receiving settings.');
+}
+
+/**
+ * Keeps each origin pairing's contracts apart.
+ */
+function content_relay_replica_update_10003(): string {
+  $schema = \Drupal::database()->schema();
+  if (!$schema->fieldExists(ContractStore::TABLE, 'pairing')) {
+    $schema->addField(ContractStore::TABLE, 'pairing', content_relay_replica_schema()[ContractStore::TABLE]['fields']['pairing']);
+    $schema->dropPrimaryKey(ContractStore::TABLE);
+    $schema->addPrimaryKey(ContractStore::TABLE, ['pairing', 'version']);
+  }
+  return (string) t('Contracts are kept per origin pairing.');
+}
+
+/**
+ * Records which origin pairing reconciliation runs and files belong to.
+ */
+function content_relay_replica_update_10004(): string {
+  $schema = \Drupal::database()->schema();
+  $definitions = content_relay_replica_schema();
+  foreach ([Reconciler::TABLE, FileSync::TABLE] as $table) {
+    if (!$schema->fieldExists($table, 'pairing')) {
+      $schema->addField($table, 'pairing', $definitions[$table]['fields']['pairing']);
+    }
+  }
+  return (string) t('Reconciliation runs and files record their origin pairing.');
 }

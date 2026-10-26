@@ -10,6 +10,7 @@ use Drupal\content_relay\File\FileChecksums;
 use Drupal\content_relay\File\FileUrlMapper;
 use Drupal\content_relay\Serialization\EntitySerializer;
 use Drupal\content_relay\Serialization\NormalizationContext;
+use Drupal\content_relay_replica\ActivePairing;
 use Drupal\content_relay_replica\LocalChanges;
 use Drupal\content_relay_replica\OriginClient;
 use Drupal\content_relay_replica\OriginPeer;
@@ -72,6 +73,7 @@ class FileSync {
     protected TimeInterface $time,
     protected LoggerInterface $logger,
     protected ReceivingSettings $receiving,
+    protected ActivePairing $active,
   ) {}
 
   /**
@@ -90,6 +92,7 @@ class FileSync {
     $this->database->merge(self::TABLE)
       ->keys(['uuid' => (string) $file->uuid()])
       ->fields([
+        'pairing' => $this->active->id(),
         'uri' => $file->getFileUri(),
         'origin_uri' => (string) ($meta['uri'] ?? $file->getFileUri()),
         'sha256' => (string) $meta['sha256'],
@@ -162,6 +165,11 @@ class FileSync {
    *   The file's status afterwards.
    */
   public function process(string $uuid): string {
+    // Fetched from the origin the file came from.
+    $pairing = $this->get($uuid)['pairing'] ?? NULL;
+    if ($pairing !== NULL && $this->active->current() !== $pairing) {
+      return $this->active->run($pairing, fn () => $this->process($uuid));
+    }
     $record = $this->get($uuid);
     if ($record === NULL) {
       return self::ERROR;
@@ -226,6 +234,11 @@ class FileSync {
    *   The file's status afterwards.
    */
   public function pull(string $uuid): string {
+    // Fetched from the origin the file came from.
+    $pairing = $this->get($uuid)['pairing'] ?? NULL;
+    if ($pairing !== NULL && $this->active->current() !== $pairing) {
+      return $this->active->run($pairing, fn () => $this->pull($uuid));
+    }
     if ($this->get($uuid) === NULL) {
       /** @var \Drupal\Core\Entity\EntityInterface|null $file */
       $file = $this->entityRepository->loadEntityByUuid('file', $uuid);
@@ -234,6 +247,7 @@ class FileSync {
       }
       // Synced before files were tracked: start a record from the origin.
       $this->database->insert(self::TABLE)->fields([
+        'pairing' => $this->active->forSite((string) $this->syncState->get('file', $uuid)['source_site']) ?? $this->active->id(),
         'uuid' => $uuid,
         'uri' => $file->getFileUri(),
         'origin_uri' => $file->getFileUri(),
@@ -385,6 +399,11 @@ class FileSync {
    * A file's absolute URL on the origin, or one of its derivatives.
    */
   public function originUrl(string $uuid, ?string $style = NULL): ?string {
+    // Fetched from the origin the file came from.
+    $pairing = $this->get($uuid)['pairing'] ?? NULL;
+    if ($pairing !== NULL && $this->active->current() !== $pairing) {
+      return $this->active->run($pairing, fn () => $this->originUrl($uuid, $style));
+    }
     $origin = $this->origin->get();
     $record = $this->get($uuid);
     if ($origin === NULL || $record === NULL || !is_string($record['url']) || $record['url'] === '') {
