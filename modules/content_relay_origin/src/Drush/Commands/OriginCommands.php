@@ -178,7 +178,7 @@ final class OriginCommands extends DrushCommands {
   }
 
   /**
-   * Marks an item not syncable.
+   * Stops syncing an item, to every replica or some.
    */
   #[CLI\Command(name: 'content-relay:not-syncable', aliases: ['cr-not-syncable'])]
   #[CLI\Argument(name: 'entity_type', description: 'Entity type ID.')]
@@ -197,7 +197,7 @@ final class OriginCommands extends DrushCommands {
   ): void {
     if ($options['langcode']) {
       $resent = $this->control->setTranslationSyncable($this->load($entity_type, $id), $options['langcode'], FALSE, $this->list($options['replica']));
-      $this->logger()->success(dt('The @langcode translation is marked not syncable. @count replica(s) told.', [
+      $this->logger()->success(dt('Syncing stopped for the @langcode translation. @count replica(s) told.', [
         '@langcode' => $options['langcode'],
         '@count' => count($resent),
       ]));
@@ -208,11 +208,11 @@ final class OriginCommands extends DrushCommands {
       throw new \InvalidArgumentException('Behavior must be detach or remove.');
     }
     $told = $this->control->markNotSyncable($this->load($entity_type, $id), $this->list($options['replica']), $behavior);
-    $this->logger()->success(dt('Marked not syncable. @count replica(s) told.', ['@count' => count($told)]));
+    $this->logger()->success(dt('Syncing stopped. @count replica(s) told.', ['@count' => count($told)]));
   }
 
   /**
-   * Marks an item syncable again.
+   * Resumes syncing an item.
    */
   #[CLI\Command(name: 'content-relay:syncable', aliases: ['cr-syncable'])]
   #[CLI\Argument(name: 'entity_type', description: 'Entity type ID.')]
@@ -229,14 +229,14 @@ final class OriginCommands extends DrushCommands {
   ): void {
     if ($options['langcode']) {
       $resent = $this->control->setTranslationSyncable($this->load($entity_type, $id), $options['langcode'], TRUE, $this->list($options['replica']));
-      $this->logger()->success(dt('The @langcode translation is syncable again. Sending to @count replica(s).', [
+      $this->logger()->success(dt('Syncing resumed for the @langcode translation. Sending to @count replica(s).', [
         '@langcode' => $options['langcode'],
         '@count' => count($resent),
       ]));
       return;
     }
     $resumed = $this->control->markSyncable($this->load($entity_type, $id), $this->list($options['replica']));
-    $this->logger()->success(dt('Marked syncable. Sending to @count replica(s) again.', ['@count' => count($resumed)]));
+    $this->logger()->success(dt('Syncing resumed. Sending to @count replica(s) again.', ['@count' => count($resumed)]));
   }
 
   /**

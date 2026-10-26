@@ -163,13 +163,13 @@ final class OriginSettingsForm extends ConfigFormBase {
     ];
     $form['not_syncable_behavior'] = [
       '#type' => 'radios',
-      '#title' => $this->t('When an item replicas already have is marked not syncable'),
+      '#title' => $this->t('When an item replicas already have stops syncing'),
       '#options' => [
-        NotSyncableFlags::DETACH => $this->t('Replicas keep their copy, detached'),
+        NotSyncableFlags::DETACH => $this->t('Replicas keep their copy, no longer updated'),
         NotSyncableFlags::REMOVE => $this->t('Replicas delete their copy'),
       ],
       '#default_value' => $config->get('not_syncable.behavior') ?? NotSyncableFlags::DETACH,
-      '#description' => $this->t('The default; it can be chosen each time an item is marked.'),
+      '#description' => $this->t('The default; it can be chosen each time syncing stops for an item.'),
     ];
     return parent::buildForm($form, $form_state);
   }

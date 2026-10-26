@@ -142,7 +142,7 @@ final class OriginItemUiTest extends BrowserTestBase {
   }
 
   /**
-   * Not syncable from the entity form, the item page and the bulk action.
+   * Stopping syncing from the entity form, the item page and the bulk action.
    */
   public function testNotSyncable(): void {
     $this->drupalLogin($this->drupalCreateUser([
@@ -153,22 +153,23 @@ final class OriginItemUiTest extends BrowserTestBase {
       'mark content relay items not syncable',
     ]));
 
-    // A new item marked on its form never produces an event.
+    // A new item not synced from its form never produces an event.
     $this->drupalGet('node/add/article');
-    $this->submitForm(['title[0][value]' => 'Secret', 'content_relay[not_syncable]' => TRUE], 'Save');
+    $this->assertSession()->fieldValueEquals('content_relay[sync]', 'all');
+    $this->submitForm(['title[0][value]' => 'Secret', 'content_relay[sync]' => 'none'], 'Save');
     $secret = $this->drupalGetNodeByTitle('Secret');
     $this->assertNotEmpty($this->container->get('content_relay_origin.not_syncable')->get('node', $secret->uuid()));
     $this->assertCount(0, $this->outbox($secret));
 
     $this->drupalGet("node/{$secret->id()}/content-relay/push");
-    $this->assertSession()->pageTextContains('Not syncable: not pushed');
+    $this->assertSession()->pageTextContains('Syncing stopped: not pushed');
     $this->assertSession()->buttonExists('Push now');
     $this->assertSession()->elementAttributeExists('css', '#edit-submit', 'disabled');
 
-    // Unmarking it on its form sends it.
+    // Syncing it to every replica from its form sends it.
     $this->drupalGet($secret->toUrl('edit-form'));
-    $this->assertSession()->checkboxChecked('content_relay[not_syncable]');
-    $this->submitForm(['content_relay[not_syncable]' => FALSE], 'Save');
+    $this->assertSession()->fieldValueEquals('content_relay[sync]', 'none');
+    $this->submitForm(['content_relay[sync]' => 'all'], 'Save');
     $this->assertSame(['attach', 'update', 'update'], array_column($this->outbox($secret), 'operation'));
 
     // Operation links, and the item page for a scoped flag.
@@ -176,16 +177,24 @@ final class OriginItemUiTest extends BrowserTestBase {
     $this->drupalGet('admin/content');
     $this->assertSession()->linkByHrefExists("node/{$synced->id()}/content-relay/push");
     $this->assertSession()->linkByHrefExists("node/{$synced->id()}/content-relay/not-syncable");
+    $this->assertSession()->linkExists('Stop syncing');
     $this->drupalGet("node/{$synced->id()}/content-relay/not-syncable");
+    $this->assertSession()->pageTextContains('Sync to replicas');
     $this->submitForm([
-      'not_syncable' => TRUE,
-      'scope' => 'selected',
+      'sync' => 'except',
       'replicas[' . self::REPLICA . ']' => TRUE,
       'behavior' => NotSyncableFlags::REMOVE,
     ], 'Save');
     $flags = $this->container->get('content_relay_origin.not_syncable')->get('node', $synced->uuid());
     $this->assertSame([self::REPLICA], array_keys($flags));
     $this->assertSame(NotSyncableFlags::REMOVE, $flags[self::REPLICA]['behavior']);
+    $this->drupalGet('admin/content');
+    $this->assertSession()->linkExists('Resume syncing');
+    // Every replica except none of them is every replica.
+    $this->drupalGet("node/{$synced->id()}/content-relay/not-syncable");
+    $this->assertSession()->fieldValueEquals('sync', 'except');
+    $this->submitForm(['sync' => 'except', 'replicas[' . self::REPLICA . ']' => FALSE], 'Save');
+    $this->assertSame([], $this->container->get('content_relay_origin.not_syncable')->get('node', $synced->uuid()));
 
     // The bulk action.
     $other = $this->drupalCreateNode(['type' => 'article', 'title' => 'Bulk']);
@@ -534,7 +543,7 @@ final class OriginItemUiTest extends BrowserTestBase {
     $this->assertStringContainsString('Mirror (' . self::REPLICA . '): Could not be asked', $this->getOutput());
     $this->drush('content-relay:not-syncable', ['node', $checked->uuid()]);
     $this->drush('content-relay:origin-validate', ['node', $checked->uuid()]);
-    $this->assertStringContainsString('Mirror (' . self::REPLICA . '): Not syncable', $this->getOutput());
+    $this->assertStringContainsString('Mirror (' . self::REPLICA . '): Syncing stopped', $this->getOutput());
     $this->drush('content-relay:origin-validate', ['node', '999999'], [], NULL, NULL, 1);
   }
 

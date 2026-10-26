@@ -52,7 +52,7 @@ class EntityUi {
     if (ItemAccessCheck::forEntity($entity, 'not_syncable', $this->currentUser, $this->scope)->isAllowed()) {
       $flagged = $this->flags->get($entity->getEntityTypeId(), (string) $entity->uuid()) !== [];
       $operations['content_relay_not_syncable'] = [
-        'title' => $flagged ? $this->t('Make syncable') : $this->t('Mark not syncable'),
+        'title' => $flagged ? $this->t('Resume syncing') : $this->t('Stop syncing'),
         'url' => Url::fromRoute(ItemRoutes::name($entity->getEntityTypeId(), 'not_syncable'), $parameters),
         'weight' => 61,
       ];
@@ -80,7 +80,7 @@ class EntityUi {
       return;
     }
     $entity = $form_object->getEntity();
-    if (!$entity instanceof ContentEntityInterface || !$this->scope->applies($entity) || !$this->currentUser->hasPermission(ItemAccessCheck::PERMISSIONS['not_syncable']) || !isset($form['actions']['submit']['#submit'])) {
+    if (!$entity instanceof ContentEntityInterface || !$this->scope->applies($entity) || !ItemAccessCheck::syncPermission($entity, $this->currentUser)->isAllowed() || !isset($form['actions']['submit']['#submit'])) {
       return;
     }
     $form['content_relay'] = [
@@ -91,13 +91,8 @@ class EntityUi {
       '#weight' => 90,
     ] + NotSyncableForm::elements($entity, $this->flags, $this->push, $this->control);
     // #states selectors follow the tree.
-    $form['content_relay']['replicas']['#states']['visible'] = [
-      ':input[name="content_relay[not_syncable]"]' => ['checked' => TRUE],
-      ':input[name="content_relay[scope]"]' => ['value' => 'selected'],
-    ];
-    foreach (['scope', 'behavior'] as $key) {
-      $form['content_relay'][$key]['#states']['visible'] = [':input[name="content_relay[not_syncable]"]' => ['checked' => TRUE]];
-    }
+    $form['content_relay']['replicas']['#states'] = ['visible' => [':input[name="content_relay[sync]"]' => ['value' => 'except']]];
+    $form['content_relay']['behavior']['#states'] = ['invisible' => [':input[name="content_relay[sync]"]' => ['value' => 'all']]];
     // Before the entity is saved: a new item marked not syncable must not
     // produce a create, and an existing one must not send this save.
     $submit = &$form['actions']['submit']['#submit'];

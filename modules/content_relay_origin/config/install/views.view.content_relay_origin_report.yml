@@ -159,7 +159,7 @@ display:
           group_type: group
           admin_label: ''
           plugin_id: boolean
-          label: 'Not syncable'
+          label: 'Syncing stopped'
           exclude: false
           type: yes-no
         detached_by:

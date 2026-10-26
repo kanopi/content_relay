@@ -98,7 +98,7 @@ class ItemSyncControl {
     if (!$entity->isNew()) {
       $this->report->refreshEntity($entity);
     }
-    $this->logger->notice('@user marked @type @uuid not syncable for @replicas (@behavior).', [
+    $this->logger->notice('@user stopped syncing @type @uuid to @replicas (@behavior).', [
       '@user' => $this->currentUser->getAccountName(),
       '@type' => $entity_type_id,
       '@uuid' => $uuid,
@@ -139,7 +139,7 @@ class ItemSyncControl {
     if (!$entity->isNew()) {
       $this->report->refreshEntity($entity);
     }
-    $this->logger->notice('@user marked @type @uuid syncable for @replicas.', [
+    $this->logger->notice('@user resumed syncing @type @uuid to @replicas.', [
       '@user' => $this->currentUser->getAccountName(),
       '@type' => $entity_type_id,
       '@uuid' => $uuid,

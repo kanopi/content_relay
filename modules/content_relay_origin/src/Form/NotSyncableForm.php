@@ -64,11 +64,11 @@ final class NotSyncableForm extends FormBase {
       }
       $form['translations'] = [
         '#type' => 'checkboxes',
-        '#title' => $this->t('Translations not syncable'),
-        '#description' => $this->t('Stop sending only these translations, to every replica. Replicas keep what they have of them; the rest of the item keeps syncing.'),
+        '#title' => $this->t('Stop syncing only these translations'),
+        '#description' => $this->t('To every replica. Replicas keep what they have of them; the rest of the item keeps syncing.'),
         '#options' => $options,
         '#default_value' => $this->blockedTranslations($entity),
-        '#states' => ['invisible' => [':input[name="not_syncable"]' => ['checked' => TRUE]]],
+        '#states' => ['visible' => [':input[name="sync"]' => ['value' => 'all']]],
       ];
     }
     $form['actions'] = ['#type' => 'actions'];
@@ -77,10 +77,10 @@ final class NotSyncableForm extends FormBase {
   }
 
   /**
-   * The not syncable elements, shared with the entity form.
+   * The sync elements, shared with the entity form.
    *
    * @return array
-   *   Form elements: not_syncable, scope, replicas and behavior.
+   *   Form elements: sync, replicas and behavior.
    */
   public static function elements(ContentEntityInterface $entity, NotSyncableFlags $flags, ManualPush $push, ItemSyncControl $control): array {
     $current = $entity->isNew() ? [] : $flags->get($entity->getEntityTypeId(), (string) $entity->uuid());
@@ -88,47 +88,42 @@ final class NotSyncableForm extends FormBase {
     foreach ($push->targets($entity) as $replica_id => $replica) {
       $replicas[$replica_id] = $replica->label;
     }
-    $all = isset($current[NotSyncableFlags::ALL]);
-    $elements['not_syncable'] = [
-      '#type' => 'checkbox',
-      '#title' => new TranslatableMarkup('Not syncable'),
-      '#description' => new TranslatableMarkup('Stop sending this item to replicas.'),
-      '#default_value' => $current !== [],
+    $options = [
+      'all' => new TranslatableMarkup('Every replica'),
+      'none' => new TranslatableMarkup('No replicas'),
     ];
-    $visible = ['visible' => [':input[name="not_syncable"]' => ['checked' => TRUE]]];
-    $elements['scope'] = [
+    if ($replicas !== []) {
+      $options['except'] = new TranslatableMarkup('Every replica except');
+    }
+    $sync = match (TRUE) {
+      $current === [] => 'all',
+      isset($current[NotSyncableFlags::ALL]) || $replicas === [] => 'none',
+      default => 'except',
+    };
+    $elements['sync'] = [
       '#type' => 'radios',
-      '#title' => new TranslatableMarkup('For'),
-      '#options' => [
-        'all' => new TranslatableMarkup('All replicas, including ones paired later'),
-        'selected' => new TranslatableMarkup('Selected replicas'),
-      ],
-      '#default_value' => $current === [] || $all ? 'all' : 'selected',
-      '#states' => $visible,
-      '#access' => $replicas !== [],
+      '#title' => new TranslatableMarkup('Sync to replicas'),
+      '#options' => $options,
+      '#default_value' => $sync,
     ];
     $elements['replicas'] = [
       '#type' => 'checkboxes',
-      '#title' => new TranslatableMarkup('Replicas'),
+      '#title' => new TranslatableMarkup('Replicas that do not get it'),
+      '#title_display' => 'invisible',
       '#options' => $replicas,
       '#default_value' => array_values(array_diff(array_keys($current), [NotSyncableFlags::ALL])),
-      '#states' => [
-        'visible' => [
-          ':input[name="not_syncable"]' => ['checked' => TRUE],
-          ':input[name="scope"]' => ['value' => 'selected'],
-        ],
-      ],
+      '#states' => ['visible' => [':input[name="sync"]' => ['value' => 'except']]],
       '#access' => $replicas !== [],
     ];
     $elements['behavior'] = [
       '#type' => 'radios',
       '#title' => new TranslatableMarkup('Replicas that already have it'),
       '#options' => [
-        NotSyncableFlags::DETACH => new TranslatableMarkup('Keep their copy, detached'),
+        NotSyncableFlags::DETACH => new TranslatableMarkup('Keep their copy, no longer updated'),
         NotSyncableFlags::REMOVE => new TranslatableMarkup('Delete their copy'),
       ],
       '#default_value' => $control->defaultBehavior(),
-      '#states' => $visible,
+      '#states' => ['invisible' => [':input[name="sync"]' => ['value' => 'all']]],
     ];
     return $elements;
   }
@@ -141,18 +136,18 @@ final class NotSyncableForm extends FormBase {
    */
   public static function apply(ContentEntityInterface $entity, array $values, NotSyncableFlags $flags, ItemSyncControl $control): bool {
     $current = $entity->isNew() ? [] : $flags->get($entity->getEntityTypeId(), (string) $entity->uuid());
-    if (empty($values['not_syncable'])) {
+    $wanted = match ($values['sync'] ?? 'all') {
+      'none' => [NotSyncableFlags::ALL],
+      // Every replica except none of them is every replica.
+      'except' => array_values(array_filter((array) ($values['replicas'] ?? []))),
+      default => [],
+    };
+    if ($wanted === []) {
       if ($current === []) {
         return FALSE;
       }
       $control->markSyncable($entity);
       return TRUE;
-    }
-    $wanted = ($values['scope'] ?? 'all') === 'selected'
-      ? array_values(array_filter((array) ($values['replicas'] ?? [])))
-      : [NotSyncableFlags::ALL];
-    if ($wanted === []) {
-      $wanted = [NotSyncableFlags::ALL];
     }
     $remove = array_values(array_diff(array_keys($current), $wanted));
     $add = array_values(array_diff($wanted, array_keys($current)));

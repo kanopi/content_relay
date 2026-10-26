@@ -499,7 +499,7 @@ Translations travel with their item, as one entity with one UUID.
   their translations here as local translations, or delete them if chosen.
   **Added languages** start a backfill run of reconciliation; items waiting
   for it show as "Pending backfill".
-- **One translation** can be kept from sync: marked not syncable on the
+- **One translation** can be kept from sync: syncing stopped for it on the
   origin (`drush content-relay:not-syncable … --langcode=`) or detached on
   the replica (`drush content-relay:detach … --langcode=`). The rest of the
   item keeps syncing.
@@ -623,7 +623,7 @@ not fetched again. Failures are retried with backoff up to
 `files.max_attempts`, then marked failed. An expired link is renewed through
 the origin's file endpoint (`GET /content-relay/v1/files/{uuid}`, with the
 replica's JWT), which, like the download, serves only files used by content
-the replica's contract allows and that is not marked not syncable for it.
+the replica's contract allows and whose syncing is not stopped for it.
 
 Fetching goes through the `content_relay_replica.file_transport` service.
 Replace it to get binaries some other way (replicated object storage, a
@@ -647,20 +647,27 @@ default `.htaccess` and common nginx configurations do.
 **Encryption.** When the contract is encrypted, downloads are too; see
 Encryption above.
 
-## Not syncable items and detaching
+## Stopping syncing and detaching
 
 Either side can stop updates for one item, independently; each side can only
 undo its own.
 
-**On the origin**, an item is marked *not syncable* on its edit form, on its
-"Not syncable" page (an operation link), with the "Mark not syncable" bulk
-action (shipped for content; add one for other types under Actions), or with
-`drush content-relay:not-syncable`. The flag (`content_relay_not_syncable`)
-applies to every replica or to some. Replicas that already have the item are
-sent a `detach` event (they keep their copy) or a `delete`, per
-`not_syncable.behavior` or the choice made when marking. A not syncable item
-produces no events, is skipped by push and bulk push, and shows as such in
-the report. Marking it syncable again sends an `attach` event and the item.
+**On the origin**, syncing stops for an item from **Sync to replicas** on its
+edit form or its own page (the "Stop syncing" operation link): every replica
+(the default), no replicas, or every replica except some. The "Stop syncing"
+and "Resume syncing" bulk actions (shipped for content; add others under
+Actions) and `drush content-relay:not-syncable` / `content-relay:syncable` do
+the same. Internally the flag is "not syncable"
+(`content_relay_not_syncable`). Replicas that already have the item are sent
+a `detach` event (they keep their copy, no longer updated) or a `delete`,
+per `not_syncable.behavior` or the choice made at the time. An item whose
+syncing is stopped produces no events, is skipped by push and bulk push, and
+shows as "Not synced (stopped)" in the report. Resuming sends an `attach`
+event and the item.
+
+It takes "Stop and resume syncing Content Relay items" (any bundle) or the
+bundle's own permission ("Content: Stop and resume syncing Page"), and edit
+access to the item.
 
 **On a replica**, a synced item is detached from its operation link, in bulk
 from the report, or with `drush content-relay:detach`. It keeps its sync state
@@ -690,7 +697,7 @@ recorded in the event log with the user who triggered them.
 **Reports › Content Relay status** (`admin/reports/content-relay`) is a View
 over `content_relay_report`: one row per item, translation and replica,
 including items never sent. Statuses: in sync, out of sync, pending, accepted,
-failed, failed on replica, dead-lettered, conflict, not syncable, detached by
+failed, failed on replica, dead-lettered, conflict, not synced (stopped), detached by
 replica, never sent. Filters cover entity type, bundle, status, replica,
 language, "any translation out of sync", missing translations, "default
 translation only" (one row per item), the changed date and label or UUID.
@@ -698,7 +705,7 @@ Every column of the table is available to Views, with a relationship to each
 entity type's own table, so the view can be changed like any other.
 
 - **Push selected** and **Push all matching filters** confirm the count per
-  replica (leaving out not syncable and detached items), can be limited to
+  replica (leaving out items whose syncing is stopped, and detached ones), can be limited to
   some languages, and record the pushes through the Batch API; delivery then
   happens through the queue as usual. `drush content-relay:bulk-push` takes
   the same filters.
@@ -759,7 +766,8 @@ a batch, after fixing the cause. In Drush: `content-relay:failures`,
 | Push Content Relay items | origin | Push now (manual resync) |
 | Bulk push Content Relay items | origin | Push from the report, refresh it |
 | View the Content Relay status report | origin | The report and its CSV; validate on replicas |
-| Mark Content Relay items not syncable | origin | Not syncable flags |
+| Stop and resume syncing Content Relay items | origin | Stop and resume syncing items of any bundle (with edit access to the item) |
+| *Type*: Stop and resume syncing *bundle* | origin | The same, for one bundle |
 | Administer Content Relay replica | replica | Pairing, settings, each origin's settings, unpairing (restricted) |
 | Change the Content Relay subscription | replica | Propose contract changes (restricted) |
 | Detach and reattach Content Relay items | replica | Detach, reattach, in bulk too |

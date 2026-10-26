@@ -101,11 +101,11 @@ content_relay_origin.sending.reconcile:
 
 content_relay_origin.sending.not_syncable:
   type: mapping
-  label: 'Not syncable items'
+  label: 'Items that stop syncing'
   mapping:
     behavior:
       type: string
-      label: 'What replicas that already have an item are told when it is marked not syncable'
+      label: 'What replicas that already have an item do when it stops syncing'
       constraints:
         Choice:
           - detach
@@ -166,8 +166,8 @@ content_relay_origin.replica_pairing.*:
 
 action.configuration.content_relay_not_syncable:*:
   type: action_configuration_default
-  label: 'Mark not syncable'
+  label: 'Stop syncing'
 
 action.configuration.content_relay_syncable:*:
   type: action_configuration_default
-  label: 'Make syncable'
+  label: 'Resume syncing'

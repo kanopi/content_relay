@@ -789,3 +789,25 @@ used before one for every origin, so two origins with different bundles of
 the same name can each be mapped. Its ID is the source bundle's plus the
 pairing.
 
+## 95. Editors stop syncing; the code still says not syncable
+
+Editors were asked to tick "Not syncable", a negative, with its options
+appearing only once ticked. The edit form now asks **Sync to replicas**:
+every replica (the default), no replicas, or every replica except some, and
+"Replicas that already have it" only when not syncing everywhere. Every
+except none is every replica. Elsewhere the words are "Stop syncing" and
+"Resume syncing", and the report says "Not synced (stopped)". Machine names
+stay (`not_syncable` in code, config, permissions, routes and Drush), so
+settings, roles and scripts keep working; update 10004 renames the shipped
+actions and report column on sites that have them.
+
+## 96. Stopping syncing is permitted per bundle and needs edit access
+
+Editors are usually split by content type, so each syncable bundle has its
+own permission to stop and resume syncing, beside the one for every bundle,
+which roles that have it keep. Permissions exist for every syncable bundle,
+published or not, so taking a bundle out of sync for a while does not strip
+them from roles; each depends on its bundle, so deleting the bundle removes
+it cleanly. Stopping syncing also needs edit access to the item: it changes
+what happens to it, as editing does. View access was enough before.
+

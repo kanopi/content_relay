@@ -111,12 +111,12 @@ final class ReplicaSendingForm extends FormBase {
       '#default_value' => $value('read_limit.window'),
     ];
 
-    $form['not_syncable'] = $this->group('not_syncable', $this->t('Items marked not syncable'), isset($own['not_syncable']));
+    $form['not_syncable'] = $this->group('not_syncable', $this->t('Items that stop syncing'), isset($own['not_syncable']));
     $form['not_syncable']['values']['behavior'] = [
       '#type' => 'radios',
-      '#title' => $this->t('When an item this replica already has is marked not syncable'),
+      '#title' => $this->t('When an item this replica already has stops syncing'),
       '#options' => [
-        NotSyncableFlags::DETACH => $this->t('It keeps its copy, detached'),
+        NotSyncableFlags::DETACH => $this->t('It keeps its copy, no longer updated'),
         NotSyncableFlags::REMOVE => $this->t('It deletes its copy'),
       ],
       '#default_value' => $value('not_syncable.behavior') ?? NotSyncableFlags::DETACH,

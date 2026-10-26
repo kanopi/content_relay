@@ -63,7 +63,7 @@ class ManualPush {
       EventStatus::SKIPPED => new TranslatableMarkup('Skipped'),
       self::IN_SYNC => new TranslatableMarkup('Already in sync; nothing sent'),
       self::QUEUED => new TranslatableMarkup('Queued; not sent yet'),
-      'not_syncable' => new TranslatableMarkup('Not syncable'),
+      'not_syncable' => new TranslatableMarkup('Syncing stopped'),
       'detached_by_replica' => new TranslatableMarkup('Detached by the replica'),
       'not_in_contract' => new TranslatableMarkup("Not in the replica's contract"),
     ];

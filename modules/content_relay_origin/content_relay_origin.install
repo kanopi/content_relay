@@ -445,3 +445,32 @@ function content_relay_origin_update_10003(): string {
   }
   return (string) t('Each replica can now have its own sending settings.');
 }
+
+/**
+ * Renames "not syncable" to "stop syncing" where editors see it.
+ */
+function content_relay_origin_update_10004(): string {
+  $config_factory = \Drupal::configFactory();
+  $labels = [
+    'system.action.content_relay_node_not_syncable' => [
+      'Mark not syncable (Content Relay)',
+      'Stop syncing (Content Relay)',
+    ],
+    'system.action.content_relay_node_syncable' => ['Make syncable (Content Relay)', 'Resume syncing (Content Relay)'],
+  ];
+  $renamed = [];
+  foreach ($labels as $name => [$old, $new]) {
+    $config = $config_factory->getEditable($name);
+    if (!$config->isNew() && $config->get('label') === $old) {
+      $config->set('label', $new)->save();
+      $renamed[] = $name;
+    }
+  }
+  $view = $config_factory->getEditable('views.view.content_relay_origin_report');
+  $field = 'display.default.display_options.fields.not_syncable.label';
+  if (!$view->isNew() && $view->get($field) === 'Not syncable') {
+    $view->set($field, 'Syncing stopped')->save();
+    $renamed[] = $view->getName();
+  }
+  return $renamed === [] ? (string) t('Nothing to do.') : (string) t('Renamed in: @names.', ['@names' => implode(', ', $renamed)]);
+}

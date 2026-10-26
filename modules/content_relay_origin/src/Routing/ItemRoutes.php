@@ -50,7 +50,7 @@ final class ItemRoutes {
         : "/admin/content/content-relay/item/$entity_type_id/{" . $entity_type_id . '}';
       $pages = [
         'push' => [PushForm::class, 'Push', 'push'],
-        'not_syncable' => [NotSyncableForm::class, 'Not syncable', 'not-syncable'],
+        'not_syncable' => [NotSyncableForm::class, 'Sync to replicas', 'not-syncable'],
         'validate' => [ValidateForm::class, 'Validate', 'validate'],
       ];
       foreach ($pages as $page => [$form, $title, $path]) {

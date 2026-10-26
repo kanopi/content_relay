@@ -184,7 +184,7 @@ class ItemValidator {
       self::CHANGED_ON_REPLICA => new TranslatableMarkup('Changed on the replica'),
       self::MISSING => new TranslatableMarkup('Missing on the replica'),
       self::DETACHED => new TranslatableMarkup('Detached by the replica'),
-      self::NOT_SYNCABLE => new TranslatableMarkup('Not syncable'),
+      self::NOT_SYNCABLE => new TranslatableMarkup('Syncing stopped'),
       self::NO_LANGUAGES => new TranslatableMarkup('No languages for this replica'),
       self::UNREACHABLE => new TranslatableMarkup('Could not be asked'),
     ];

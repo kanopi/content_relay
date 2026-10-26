@@ -93,7 +93,7 @@ class ReportIndex {
       self::FAILED_ON_REPLICA => new TranslatableMarkup('Failed on replica'),
       self::DEAD_LETTERED => new TranslatableMarkup('Dead-lettered'),
       self::CONFLICT => new TranslatableMarkup('Conflict'),
-      self::NOT_SYNCABLE => new TranslatableMarkup('Not syncable'),
+      self::NOT_SYNCABLE => new TranslatableMarkup('Not synced (stopped)'),
       self::DETACHED_BY_REPLICA => new TranslatableMarkup('Detached by replica'),
       self::NEVER_SENT => new TranslatableMarkup('Never sent'),
       self::NO_LANGUAGES => new TranslatableMarkup('No languages for this replica'),

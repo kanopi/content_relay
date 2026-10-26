@@ -14,6 +14,7 @@ use Drupal\field\Entity\FieldConfig;
 use Drupal\field\Entity\FieldStorageConfig;
 use Drupal\node\Entity\Node;
 use Drupal\node\NodeInterface;
+use Drupal\system\Entity\Action;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
 
@@ -354,6 +355,38 @@ final class ItemSyncTest extends OriginTestBase {
     $this->assertSame(['create'], $this->operations());
     $this->assertSame([], $this->replica->events[0]['dependencies']);
     $this->assertSame([['entity_type' => 'node', 'uuid' => $hidden->uuid()]], $this->replica->events[0]['external_references']);
+  }
+
+  /**
+   * Sites updated see "stop syncing" where they saw "not syncable".
+   */
+  public function testLabelsRenamedOnUpdate(): void {
+    // As installed before the rename.
+    foreach ([
+      'content_relay_node_not_syncable' => 'Mark not syncable (Content Relay)',
+      'content_relay_node_syncable' => 'Make syncable (Content Relay)',
+    ] as $id => $label) {
+      $action = Action::load($id) ?? Action::create([
+        'id' => $id,
+        'type' => 'node',
+        'plugin' => str_replace('_node', '', $id) . ':node',
+      ]);
+      $action->set('label', $label)->save();
+    }
+    Action::create([
+      'id' => 'site_own',
+      'label' => 'Mark not syncable (Content Relay)',
+      'type' => 'node',
+      'plugin' => 'content_relay_not_syncable:node',
+    ])->save();
+
+    $this->container->get('module_handler')->loadInclude('content_relay_origin', 'install');
+    content_relay_origin_update_10004();
+    $this->assertSame('Stop syncing (Content Relay)', Action::load('content_relay_node_not_syncable')->label());
+    $this->assertSame('Resume syncing (Content Relay)', Action::load('content_relay_node_syncable')->label());
+    // A site's own action keeps the name it was given.
+    $this->assertSame('Mark not syncable (Content Relay)', Action::load('site_own')->label());
+    $this->assertSame('Nothing to do.', content_relay_origin_update_10004());
   }
 
 }

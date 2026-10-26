@@ -20,11 +20,14 @@ view content relay status report:
   title: 'View the Content Relay status report'
   description: 'See which items are in sync on which replica.'
 mark content relay items not syncable:
-  title: 'Mark Content Relay items not syncable'
-  description: 'Stop or resume sending individual items to replicas.'
+  title: 'Stop and resume syncing Content Relay items'
+  description: 'Stop or resume sending individual items of any bundle to replicas. Also needs edit access to the item. Each bundle also has a permission of its own.'
 view content relay event log:
   title: 'View the Content Relay event log'
   description: 'See every event sent to replicas, with its delivery state and the replica''s answer.'
 replay content relay events:
   title: 'Replay Content Relay events'
   description: 'Send a failed or dead-lettered event to its replica again.'
+
+permission_callbacks:
+  - \Drupal\content_relay_origin\SyncPermissions::permissions

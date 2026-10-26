@@ -14,7 +14,7 @@ use Drupal\Core\StringTranslation\TranslatableMarkup;
  */
 #[Action(
   id: 'content_relay_not_syncable',
-  label: new TranslatableMarkup('Mark not syncable'),
+  label: new TranslatableMarkup('Stop syncing'),
   deriver: ItemActions::class,
 )]
 final class MarkNotSyncable extends NotSyncableActionBase {

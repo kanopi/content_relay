@@ -219,9 +219,38 @@ final class OriginAdminTest extends BrowserTestBase {
     $this->drupalLogin($this->drupalCreateUser(array_merge($all, ['push content relay items', 'access content'])));
     $this->drupalGet('node/' . $node->id() . '/content-relay/not-syncable');
     $this->assertSession()->statusCodeEquals(403);
+    // It also takes edit access to the item.
     $this->drupalLogin($this->drupalCreateUser(['mark content relay items not syncable', 'access content']));
     $this->drupalGet('node/' . $node->id() . '/content-relay/not-syncable');
+    $this->assertSession()->statusCodeEquals(403);
+    $this->drupalLogin($this->drupalCreateUser([
+      'mark content relay items not syncable',
+      'access content',
+      'edit any article content',
+    ]));
+    $this->drupalGet('node/' . $node->id() . '/content-relay/not-syncable');
     $this->assertSession()->statusCodeEquals(200);
+
+    // Each bundle has a permission of its own.
+    $this->drupalLogin($this->drupalCreateUser([
+      'stop syncing node page items',
+      'access content',
+      'edit any article content',
+    ]));
+    $this->drupalGet('node/' . $node->id() . '/content-relay/not-syncable');
+    $this->assertSession()->statusCodeEquals(403);
+    $this->drupalGet('node/' . $node->id() . '/edit');
+    $this->assertSession()->fieldNotExists('content_relay[sync]');
+    $this->drupalLogin($this->drupalCreateUser([
+      'stop syncing node article items',
+      'access content',
+      'edit any article content',
+    ]));
+    $this->drupalGet('node/' . $node->id() . '/content-relay/not-syncable');
+    $this->assertSession()->statusCodeEquals(200);
+    $this->drupalGet('node/' . $node->id() . '/edit');
+    $this->assertSession()->fieldExists('content_relay[sync]');
+    $this->assertArrayHasKey('stop syncing node page items', $this->container->get('user.permissions')->getPermissions());
   }
 
 }
