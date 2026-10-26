@@ -41,7 +41,9 @@ use Drupal\Core\Entity\Plugin\Validation\Constraint\ReferenceAccessConstraint;
 use Drupal\Core\Entity\Plugin\Validation\Constraint\ValidReferenceConstraint;
 use Drupal\Core\Entity\RevisionLogInterface;
 use Drupal\Core\Lock\LockBackendInterface;
+use Drupal\Core\Validation\Plugin\Validation\Constraint\AllowedValuesConstraint;
 use Drupal\file\FileInterface;
+use Drupal\filter\Plugin\DataType\FilterFormat;
 use Psr\Log\LoggerInterface;
 use Symfony\Contracts\EventDispatcher\EventDispatcherInterface;
 
@@ -766,6 +768,11 @@ class SyncApplier {
         if ($constraint instanceof ValidReferenceConstraint && $violation->getMessageTemplate() === $constraint->message && $this->targetExists($entity, (string) $violation->getPropertyPath(), $violation->getInvalidValue())) {
           continue;
         }
+        // A text format is a valid choice only to users who may use it, which
+        // the origin decided. Here it only has to exist.
+        if ($constraint instanceof AllowedValuesConstraint && $this->isExistingFormat($entity->getTranslation($langcode), (string) $violation->getPropertyPath(), $violation->getInvalidValue())) {
+          continue;
+        }
         // Moderation: who may move content between states, and along which
         // transitions, was decided on the origin. A state this site's
         // workflow does not have is still a problem.
@@ -782,6 +789,28 @@ class SyncApplier {
       }
     }
     return array_values($violations);
+  }
+
+  /**
+   * Whether a violation is about a text format that exists here.
+   *
+   * @param \Drupal\Core\Entity\ContentEntityInterface $entity
+   *   The translation validated.
+   * @param string $path
+   *   The violation's property path, such as "body.0.format".
+   * @param mixed $value
+   *   The format ID.
+   */
+  protected function isExistingFormat(ContentEntityInterface $entity, string $path, mixed $value): bool {
+    $parts = explode('.', $path);
+    if (count($parts) !== 3 || !is_string($value) || !$entity->hasField($parts[0]) || !$this->entityTypeManager->hasDefinition('filter_format')) {
+      return FALSE;
+    }
+    $item = $entity->get($parts[0])->get((int) $parts[1]);
+    if ($item === NULL || !isset($item->getProperties()[$parts[2]]) || !$item->get($parts[2]) instanceof FilterFormat) {
+      return FALSE;
+    }
+    return $this->entityTypeManager->getStorage('filter_format')->load($value) !== NULL;
   }
 
   /**

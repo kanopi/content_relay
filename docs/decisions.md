@@ -694,3 +694,12 @@ already synced are skipped, events refused before an item was adopted are
 retried after, and items adopted as differing that nobody has resolved are
 compared again, so a copy put right since (missing files copied over, say)
 is adopted as in sync. Ordinary syncing still refuses unadopted items.
+
+## 87. A text format needs only exist, not be usable by whoever applies
+
+Core offers a text format as a valid choice only to users allowed to use
+it. Events are applied by whoever runs cron or the webhook, typically
+anonymous, so text in Full HTML or any restricted format would be refused.
+As with references (decision 83), the replica accepts a format that exists
+here; who may use it was decided on the origin. A format this site does not
+have is still refused.

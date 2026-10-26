@@ -13,6 +13,8 @@ use Drupal\content_relay_replica\FailedEventStore;
 use Drupal\content_relay_replica\SyncStatus;
 use Drupal\entity_test\Entity\EntityTestMul;
 use Drupal\field\Entity\FieldConfig;
+use Drupal\field\Entity\FieldStorageConfig;
+use Drupal\filter\Entity\FilterFormat;
 use Drupal\node\Entity\Node;
 use Drupal\taxonomy\Entity\Term;
 use Drupal\taxonomy\Entity\Vocabulary;
@@ -310,6 +312,27 @@ final class ApplyTest extends ReplicaTestBase {
     $result = $this->apply($this->event($this->originArticle('Colored', ['field_tags' => [$red]]), Operation::Create, 1));
     $this->assertSame([422, 'validation_failed'], [$result->httpStatus, $result->code]);
     $this->assertSame('field_tags', $result->details['violations'][0]['field']);
+  }
+
+  /**
+   * Text in a format the applying user may not use still applies.
+   */
+  public function testRestrictedTextFormat(): void {
+    FieldStorageConfig::create(['entity_type' => 'node', 'field_name' => 'body', 'type' => 'text_with_summary'])->save();
+    FieldConfig::create(['entity_type' => 'node', 'bundle' => 'article', 'field_name' => 'body'])->save();
+    FilterFormat::create(['format' => 'raw_html', 'name' => 'Raw HTML'])->save();
+    $this->assertFalse(FilterFormat::load('raw_html')->access('use'), 'The user applying the event may not use it.');
+
+    $snapshot = $this->originArticle('Raw', ['body' => ['value' => '<b>Raw</b>', 'format' => 'raw_html']]);
+    $result = $this->apply($this->event($snapshot, Operation::Create, 1));
+    $this->assertSame(ApplyResult::APPLIED, $result->result, (string) $result->message);
+    $this->assertSame('raw_html', $this->local($snapshot['uuid'])->get('body')->format);
+
+    // A format this site does not have is still refused.
+    $snapshot = $this->originArticle('Unknown', ['body' => ['value' => 'x', 'format' => 'raw_html']]);
+    $snapshot['shared']['body'][0]['format'] = 'no_such_format';
+    $result = $this->apply($this->event($snapshot, Operation::Create, 1));
+    $this->assertSame([422, 'validation_failed'], [$result->httpStatus, $result->code]);
   }
 
   /**
