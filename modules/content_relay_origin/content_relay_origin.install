@@ -474,3 +474,14 @@ function content_relay_origin_update_10004(): string {
   }
   return $renamed === [] ? (string) t('Nothing to do.') : (string) t('Renamed in: @names.', ['@names' => implode(', ', $renamed)]);
 }
+
+/**
+ * Adds the setting for languages the origin does not send.
+ */
+function content_relay_origin_update_10005(): string {
+  $config = \Drupal::configFactory()->getEditable('content_relay_origin.settings');
+  if ($config->get('languages') === NULL) {
+    $config->set('languages', ['excluded' => []])->save();
+  }
+  return (string) t('Languages can be kept from replicas.');
+}

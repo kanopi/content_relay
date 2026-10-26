@@ -290,4 +290,43 @@ final class MultilingualTest extends OriginTestBase {
     $this->assertSame(ReportIndex::IN_SYNC, $this->rows($page)['fr']['status']);
   }
 
+  /**
+   * A language the origin does not send stays out, whatever was asked.
+   */
+  public function testExcludedLanguages(): void {
+    $sending = $this->container->get('content_relay_origin.sending_settings');
+    $sending->pairing($this->replica->siteId)->setSetting('languages.excluded', ['zh-hans'])->save();
+    $contract = $this->container->get('content_relay_origin.contract_manager')->propose($this->replica->siteId, NULL, NULL, 'origin');
+    $this->assertSame(['zh-hans'], $contract->excludedLanguages());
+    $this->assertSame(['en'], $contract->languagesFor('node', 'article'));
+    $this->assertContains(['term' => 'language', 'value' => 'zh-hans', 'reason' => 'Not sent by this origin.'], $contract->notGranted());
+    $this->assertSame(200, $this->post('/content-relay/v1/messages', $this->replica->message('contract_ack', ['version' => 2]))->getStatusCode());
+
+    // Not in what is sent, and an item only in it is not sent at all.
+    $this->translated(['en' => 'Hello', 'zh-hans' => '你好']);
+    $this->deliver();
+    $this->assertSame(['en'], array_keys(end($this->replica->events)['snapshot']['translations']));
+    $count = count($this->replica->events);
+    $only = $this->translated(['zh-hans' => '只有中文']);
+    $this->deliver();
+    $this->assertCount($count, $this->replica->events);
+    $this->assertSame(ReportIndex::NO_LANGUAGES, $this->rows($only)['zh-hans']['status']);
+
+    // A replica receiving every language gets every one but that one,
+    // including languages added later, and is not told of excluded ones.
+    $terms = $contract->terms['replica_terms'];
+    $terms['languages']['mode'] = SubscriptionContract::LANGUAGES_ALL;
+    $sending->pairing($this->replica->siteId)->setSetting('languages.excluded', ['zh-hans', 'de'])->save();
+    $all = $this->container->get('content_relay_origin.contract_manager')->propose($this->replica->siteId, $terms, NULL, 'replica');
+    $this->assertNull($all->languagesFor('node', 'article'));
+    $this->assertSame(['de', 'zh-hans'], $all->excludedLanguages());
+    $this->assertSame(200, $this->post('/content-relay/v1/messages', $this->replica->message('contract_ack', ['version' => 3]))->getStatusCode());
+    ConfigurableLanguage::createFromLangcode('de')->save();
+    ConfigurableLanguage::createFromLangcode('es')->save();
+    $this->assertSame([[['change' => 'added', 'langcode' => 'es', 'name' => 'Spanish']]], $this->replica->languageNotices);
+    $this->translated(['en' => 'Hello', 'fr' => 'Bonjour', 'zh-hans' => '你好', 'es' => 'Hola']);
+    $this->deliver();
+    $this->assertSame(['en', 'es', 'fr'], array_keys(end($this->replica->events)['snapshot']['translations']));
+  }
+
 }

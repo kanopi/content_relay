@@ -334,10 +334,12 @@ class SyncApplier {
     // Sync owns what it applies, and what it applied before unless the
     // origin now withholds it, it was detached here, or this site no longer
     // receives the language: those stay as they are.
-    $languages = $this->contracts->accepts($event->contractVersion)?->languagesFor($event->entityType, $event->bundle);
+    $contract = $this->contracts->accepts($event->contractVersion);
+    $languages = $contract?->languagesFor($event->entityType, $event->bundle);
+    $excluded = $contract?->excludedLanguages() ?? [];
     $managed = [];
     foreach (array_unique([...$applied, ...array_map('strval', array_keys($state['source_translation_hashes'] ?? []))]) as $langcode) {
-      if (!in_array($langcode, $event->withheldLangcodes, TRUE) && !in_array($langcode, $detached, TRUE) && GenericContentEntityNormalizer::wanted($langcode, $languages)) {
+      if (!in_array($langcode, $event->withheldLangcodes, TRUE) && !in_array($langcode, $detached, TRUE) && GenericContentEntityNormalizer::wanted($langcode, $languages, $excluded)) {
         $managed[] = $this->languageMap->toLocal($langcode);
       }
     }

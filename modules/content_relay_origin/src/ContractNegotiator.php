@@ -58,6 +58,20 @@ class ContractNegotiator {
       'selected' => [],
       'per_bundle' => [],
     ];
+    // Languages the origin does not send are left out, whatever was asked.
+    $excluded = array_values(array_unique(array_map('strval', $origin_terms['excluded_languages'] ?? [])));
+    sort($excluded);
+    $languages['excluded'] = $excluded;
+    if ($excluded !== []) {
+      $asked = $languages['mode'] === SubscriptionContract::LANGUAGES_SELECTED ? $languages['selected'] : $excluded;
+      foreach (array_intersect($excluded, $asked) as $langcode) {
+        $not_granted[] = ['term' => 'language', 'value' => $langcode, 'reason' => 'Not sent by this origin.'];
+      }
+      $languages['selected'] = array_values(array_diff($languages['selected'], $excluded));
+      foreach ($languages['per_bundle'] as $key => $override) {
+        $languages['per_bundle'][$key]['selected'] = array_values(array_diff($override['selected'] ?? [], $excluded));
+      }
+    }
     $max = $origin_terms['max_languages'];
     if ($max !== NULL && $languages['mode'] === SubscriptionContract::LANGUAGES_SELECTED && count($languages['selected']) > $max) {
       foreach (array_slice($languages['selected'], $max) as $langcode) {

@@ -97,7 +97,13 @@ class ContractSummarizer {
   protected function languages(SubscriptionContract $contract): string {
     $languages = $contract->terms['effective']['languages'] ?? [];
     if (($languages['mode'] ?? SubscriptionContract::LANGUAGES_ALL) !== SubscriptionContract::LANGUAGES_SELECTED) {
-      return (string) $this->t('all languages');
+      $excluded = [];
+      foreach ($contract->excludedLanguages() as $langcode) {
+        $excluded[] = (string) ($this->languageManager->getLanguage($langcode)?->getName() ?? $langcode);
+      }
+      return $excluded === []
+        ? (string) $this->t('all languages')
+        : (string) $this->t('all languages except @languages', ['@languages' => $this->listing($excluded)]);
     }
     $names = [];
     foreach ($languages['selected'] ?? [] as $langcode) {

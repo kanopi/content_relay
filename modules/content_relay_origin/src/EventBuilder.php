@@ -69,7 +69,7 @@ class EventBuilder {
     $sent = $withheld = [];
     foreach (array_keys($entity->getTranslationLanguages()) as $langcode) {
       $langcode = (string) $langcode;
-      if (!GenericContentEntityNormalizer::wanted($langcode, $filter)) {
+      if (!GenericContentEntityNormalizer::wanted($langcode, $filter, $contract->excludedLanguages())) {
         continue;
       }
       if (isset($blocked[$langcode])) {
@@ -134,7 +134,9 @@ class EventBuilder {
       return NULL;
     }
     [$langcodes, $withheld] = $this->languages($entity, $contract, $row['replica_id']);
-    $context = new NormalizationContext($withheld === [] ? $contract->languagesFor($entity->getEntityTypeId(), $entity->bundle()) : $langcodes);
+    $context = $withheld === []
+      ? new NormalizationContext($contract->languagesFor($entity->getEntityTypeId(), $entity->bundle()), $contract->excludedLanguages())
+      : new NormalizationContext($langcodes);
     $snapshot = $this->serializer->normalize($entity, $context);
     $hashes = $this->hasher->hash($snapshot);
     [$dependencies, $external] = $this->classifyReferences(array_values($context->references), $contract, $row['replica_id']);

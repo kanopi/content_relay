@@ -9,10 +9,12 @@ use Drupal\content_relay_origin\ContractManager;
 use Drupal\content_relay_origin\NotSyncableFlags;
 use Drupal\content_relay_origin\PairingCodes;
 use Drupal\content_relay_origin\ReplicaRegistry;
+use Drupal\content_relay_origin\SendingSettings;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Config\TypedConfigManagerInterface;
 use Drupal\Core\Form\ConfigFormBase;
 use Drupal\Core\Form\FormStateInterface;
+use Drupal\Core\Language\LanguageManagerInterface;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 
 /**
@@ -26,6 +28,8 @@ final class OriginSettingsForm extends ConfigFormBase {
     protected SyncableEntityTypes $syncableTypes,
     protected ContractManager $contracts,
     protected ReplicaRegistry $registry,
+    protected LanguageManagerInterface $languageManager,
+    protected SendingSettings $sending,
   ) {
     parent::__construct($config_factory, $typed_config_manager);
   }
@@ -40,6 +44,8 @@ final class OriginSettingsForm extends ConfigFormBase {
       $container->get('content_relay.syncable_entity_types'),
       $container->get('content_relay_origin.contract_manager'),
       $container->get('content_relay_origin.replica_registry'),
+      $container->get('language_manager'),
+      $container->get('content_relay_origin.sending_settings'),
     );
   }
 
@@ -161,6 +167,14 @@ final class OriginSettingsForm extends ConfigFormBase {
       '#min' => 0,
       '#default_value' => intdiv((int) $this->config('content_relay.settings')->get('encryption.transition_window'), 60),
     ];
+    $form['languages_excluded'] = [
+      '#type' => 'checkboxes',
+      '#title' => $this->t('Languages not sent'),
+      '#description' => $this->t('Translations in these languages go to no replica, whatever it asks for. A replica can be given its own list on its Settings page.'),
+      '#options' => self::languageOptions($this->languageManager),
+      '#default_value' => $config->get('languages.excluded') ?? [],
+      '#access' => count($this->languageManager->getLanguages()) > 1,
+    ];
     $form['not_syncable_behavior'] = [
       '#type' => 'radios',
       '#title' => $this->t('When an item replicas already have stops syncing'),
@@ -172,6 +186,32 @@ final class OriginSettingsForm extends ConfigFormBase {
       '#description' => $this->t('The default; it can be chosen each time syncing stops for an item.'),
     ];
     return parent::buildForm($form, $form_state);
+  }
+
+  /**
+   * This site's languages, for a choice.
+   *
+   * @return array<string, string>
+   *   Names by langcode.
+   */
+  public static function languageOptions(LanguageManagerInterface $language_manager): array {
+    $options = [];
+    foreach ($language_manager->getLanguages() as $langcode => $language) {
+      $options[$langcode] = $language->getName();
+    }
+    return $options;
+  }
+
+  /**
+   * Checked langcodes, sorted.
+   *
+   * @return string[]
+   *   Langcodes.
+   */
+  public static function checked(array $values): array {
+    $checked = array_values(array_map('strval', array_filter($values)));
+    sort($checked);
+    return $checked;
   }
 
   /**
@@ -211,6 +251,7 @@ final class OriginSettingsForm extends ConfigFormBase {
       ->set('delivery.timeout', (int) $form_state->getValue(['delivery', 'timeout']))
       ->set('retention_days', (int) $form_state->getValue('retention_days'))
       ->set('not_syncable.behavior', (string) $form_state->getValue('not_syncable_behavior'))
+      ->set('languages.excluded', self::checked((array) $form_state->getValue('languages_excluded')))
       ->save();
     $require = (bool) $form_state->getValue(['encryption', 'require']);
     $changed = $require !== (bool) $this->config('content_relay.settings')->get('encryption.require');
@@ -218,14 +259,22 @@ final class OriginSettingsForm extends ConfigFormBase {
       ->set('encryption.require', $require)
       ->set('encryption.transition_window', 60 * (int) $form_state->getValue(['encryption', 'transition_window']))
       ->save();
-    if ($changed) {
-      // Every contract states each side's policy: new versions carry it.
-      foreach ($this->registry->getAll() as $replica) {
-        if ($replica->receivesEvents() && $this->contracts->getLatest($replica->id) !== NULL) {
-          $this->contracts->propose($replica->id, NULL, NULL, 'origin', (int) $this->currentUser()->id());
-        }
+    // Every contract states each side's policy: replicas whose policy changed
+    // get new versions carrying it.
+    $proposed = 0;
+    foreach ($this->registry->getAll() as $replica) {
+      $latest = $this->contracts->getLatest($replica->id);
+      if (!$replica->receivesEvents() || $latest === NULL) {
+        continue;
       }
-      $this->messenger()->addStatus($this->t('Replicas will be sent new contract versions with the encryption policy.'));
+      $excluded = self::checked((array) ($this->sending->get('languages.excluded', $replica->id) ?? []));
+      if ($changed || $excluded !== $latest->excludedLanguages()) {
+        $this->contracts->propose($replica->id, NULL, NULL, 'origin', (int) $this->currentUser()->id());
+        $proposed++;
+      }
+    }
+    if ($proposed > 0) {
+      $this->messenger()->addStatus($this->formatPlural($proposed, 'One replica will be sent a new contract version.', '@count replicas will be sent new contract versions.'));
     }
     parent::submitForm($form, $form_state);
   }

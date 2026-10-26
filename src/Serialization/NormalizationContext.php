@@ -56,9 +56,13 @@ final class NormalizationContext {
    *   the default translation is always included because a snapshot cannot
    *   exist without it; whether to send an entity whose only wanted language
    *   is not its default is the caller's decision.
+   * @param string[] $excludedLangcodes
+   *   Translations left out whatever $langcodes says, as the default
+   *   translation is otherwise: languages the sender does not send.
    */
   public function __construct(
     public readonly ?array $langcodes = NULL,
+    public readonly array $excludedLangcodes = [],
   ) {}
 
   /**

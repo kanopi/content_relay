@@ -106,14 +106,19 @@ final class ReadController implements ContainerInjectionInterface {
       return $replica_id;
     }
     $published = $this->scope->getPublishedBundles($replica_id);
-    $allowed = $this->contracts->getLatest($replica_id)?->terms['origin_terms']['allowed_bundles'] ?? NULL;
+    $latest = $this->contracts->getLatest($replica_id);
+    $allowed = $latest?->terms['origin_terms']['allowed_bundles'] ?? NULL;
     $bundles = [];
     foreach ($published as $entity_type_id => $list) {
       $bundles[$entity_type_id] = $allowed === NULL ? $list : array_values(array_intersect($list, $allowed[$entity_type_id] ?? []));
     }
+    // The languages this replica could receive: not those never sent to it.
+    $excluded = $latest?->excludedLanguages() ?? [];
     $languages = [];
     foreach ($this->languageManager->getLanguages() as $langcode => $language) {
-      $languages[$langcode] = $language->getName();
+      if (!in_array($langcode, $excluded, TRUE)) {
+        $languages[$langcode] = $language->getName();
+      }
     }
     return $this->requests->answer($replica_id, 'schema', [
       'bundles' => $this->describer->describeMany(array_filter($bundles)),
@@ -206,6 +211,7 @@ final class ReadController implements ContainerInjectionInterface {
     $this->requests->consume($replica_id, count($uuids));
     $hashes = $this->hashStore->latestMany($entity_type_id, $uuids);
     $languages = $contract->languagesFor($entity_type_id, $bundle);
+    $excluded = $contract->excludedLanguages();
     $blocked = $this->flags->blockedAmong($entity_type_id, $uuids, $replica_id);
     $withheld = $this->translationBlocks->withheldAmong($entity_type_id, $uuids, $replica_id);
 
@@ -229,7 +235,7 @@ final class ReadController implements ContainerInjectionInterface {
         'not_syncable' => isset($blocked[$uuid]),
         'withheld' => $withheld[$uuid] ?? [],
         // None of its translations is in a language the replica gets.
-        'no_languages' => array_filter(array_keys($hashes[$uuid]['hashes']->translations), fn ($langcode) => GenericContentEntityNormalizer::wanted((string) $langcode, $languages)) === [],
+        'no_languages' => array_filter(array_keys($hashes[$uuid]['hashes']->translations), fn ($langcode) => GenericContentEntityNormalizer::wanted((string) $langcode, $languages, $excluded)) === [],
       ];
     }
     return $this->requests->answer($replica_id, 'hashes', [

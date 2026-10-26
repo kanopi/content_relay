@@ -18,6 +18,8 @@ not_syncable:
   behavior: detach
 files:
   link_lifetime: 3600
+languages:
+  excluded: []
 read_limit:
   items: 2000
   window: 60

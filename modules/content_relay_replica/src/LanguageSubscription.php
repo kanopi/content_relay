@@ -172,6 +172,15 @@ class LanguageSubscription {
         }
         $before = $previous->languagesFor($entity_type_id, $bundle);
         $after = $contract->languagesFor($entity_type_id, $bundle);
+        // Languages the origin stopped sending: as if this site dropped them.
+        $now_excluded = array_values(array_diff($contract->excludedLanguages(), $previous->excludedLanguages()));
+        if ($now_excluded !== []) {
+          $this->release((string) $entity_type_id, (string) $bundle, $now_excluded, NULL, $mode);
+        }
+        // And ones it sends again are pulled.
+        if (array_diff($previous->excludedLanguages(), $contract->excludedLanguages()) !== []) {
+          $backfill = TRUE;
+        }
         // Fewer languages: translations in the others stop syncing.
         if ($after !== NULL && ($before === NULL || array_diff($before, $after) !== [])) {
           $this->release((string) $entity_type_id, (string) $bundle, NULL, $after, $mode);

@@ -385,7 +385,7 @@ class GenericContentEntityNormalizer extends PluginBase implements EntityNormali
     $default = $entity->getUntranslated()->language()->getId();
     $langcodes = [];
     foreach (array_keys($entity->getTranslationLanguages(FALSE)) as $langcode) {
-      if (self::wanted((string) $langcode, $context->langcodes)) {
+      if (self::wanted((string) $langcode, $context->langcodes, $context->excludedLangcodes)) {
         $langcodes[] = (string) $langcode;
       }
     }
@@ -393,7 +393,7 @@ class GenericContentEntityNormalizer extends PluginBase implements EntityNormali
     // The receiver's filter leaves the default translation out of the item
     // it gets, but embedded entities always keep theirs: they are shown in
     // the parent's languages, falling back to their default.
-    if (!self::wanted($default, $context->langcodes) && $langcodes !== [] && count($context->stack) <= 1) {
+    if (!self::wanted($default, $context->langcodes, $context->excludedLangcodes) && $langcodes !== [] && count($context->stack) <= 1) {
       return $langcodes;
     }
     return [$default, ...$langcodes];
@@ -408,12 +408,14 @@ class GenericContentEntityNormalizer extends PluginBase implements EntityNormali
    *   The langcode.
    * @param string[]|null $filter
    *   Langcodes the receiver wants, or NULL for all.
+   * @param string[] $excluded
+   *   Langcodes the sender does not send, whatever the filter.
    */
-  public static function wanted(string $langcode, ?array $filter): bool {
-    return $filter === NULL || in_array($langcode, $filter, TRUE) || in_array($langcode, [
-      LanguageInterface::LANGCODE_NOT_SPECIFIED,
-      LanguageInterface::LANGCODE_NOT_APPLICABLE,
-    ], TRUE);
+  public static function wanted(string $langcode, ?array $filter, array $excluded = []): bool {
+    if (in_array($langcode, [LanguageInterface::LANGCODE_NOT_SPECIFIED, LanguageInterface::LANGCODE_NOT_APPLICABLE], TRUE)) {
+      return TRUE;
+    }
+    return !in_array($langcode, $excluded, TRUE) && ($filter === NULL || in_array($langcode, $filter, TRUE));
   }
 
   /**

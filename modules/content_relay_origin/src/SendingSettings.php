@@ -24,7 +24,7 @@ class SendingSettings {
    *
    * The rest of the site-wide settings are not about one replica.
    */
-  public const KEYS = ['bundles', 'delivery', 'read_limit', 'not_syncable', 'files', 'encryption'];
+  public const KEYS = ['bundles', 'delivery', 'read_limit', 'not_syncable', 'files', 'languages', 'encryption'];
 
   public function __construct(
     protected ConfigFactoryInterface $configFactory,

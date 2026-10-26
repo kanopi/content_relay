@@ -459,7 +459,7 @@ final class OriginItemUiTest extends BrowserTestBase {
     $this->drupalLogin($this->drupalCreateUser(['administer content relay origin']));
     $this->drupalGet('admin/config/services/content-relay/origin');
     $this->submitForm(['encryption[require]' => TRUE, 'encryption[transition_window]' => 30], 'Save configuration');
-    $this->assertSession()->pageTextContains('Replicas will be sent new contract versions with the encryption policy.');
+    $this->assertSession()->pageTextContains('One replica will be sent a new contract version.');
     $config = $this->config('content_relay.settings');
     $this->assertTrue($config->get('encryption.require'));
     $this->assertSame(1800, $config->get('encryption.transition_window'));

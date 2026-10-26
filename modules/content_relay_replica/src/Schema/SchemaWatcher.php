@@ -69,8 +69,8 @@ class SchemaWatcher {
         }
         $mapping = $this->mappings->forSource($entity_type_id, $bundle);
         if ($mapping === NULL) {
-          $languages = $contract->languagesFor($entity_type_id, $bundle);
-          $check = $this->checker->check($entity_type_id, $bundle, $origin, $languages ?? array_map('strval', array_keys($answer['languages'])));
+          $languages = $contract->languagesFor($entity_type_id, $bundle) ?? array_map('strval', array_keys($answer['languages']));
+          $check = $this->checker->check($entity_type_id, $bundle, $origin, array_values(array_diff($languages, $contract->excludedLanguages())));
         }
         else {
           $unmapped = $this->checker->unmappedFields($origin, $mapping);

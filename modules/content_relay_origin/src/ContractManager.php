@@ -93,6 +93,7 @@ class ContractManager {
     $origin_terms = ($origin_terms ?? $latest?->terms['origin_terms'] ?? []) + SubscriptionContract::defaultOriginTerms();
     // This site's own policy, whatever was proposed.
     $origin_terms['require_encryption'] = (bool) $this->sending->get('encryption.require', $replica_id);
+    $origin_terms['excluded_languages'] = array_values((array) ($this->sending->get('languages.excluded', $replica_id) ?? []));
     $origin_encryption_keys = $this->keyStore->getPublicKeys(KeyPurpose::Encryption);
     $negotiated = $this->negotiator->negotiate($origin_terms, $replica_terms, $origin_encryption_keys !== [] && $replica->encryptionKeys !== [], $replica_id);
     $version = ($latest?->version() ?? 0) + 1;

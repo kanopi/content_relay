@@ -811,3 +811,16 @@ them from roles; each depends on its bundle, so deleting the bundle removes
 it cleanly. Stopping syncing also needs edit access to the item: it changes
 what happens to it, as editing does. View access was enough before.
 
+## 97. The origin can keep languages from replicas
+
+Each side decides about languages: the replica what it asks for, the origin
+what it sends. The origin's list (site-wide, or per replica) travels in the
+contract as `excluded_languages` and in its effective terms as
+`languages.excluded`, rather than being turned into a list of selected
+languages, so a replica that receives every language keeps getting new
+ones, all but those. Every language check (`wanted()`) takes the excluded
+list beside the selection, so sending, pulls, hash listings, reconciliation,
+adopting and applying agree. A language newly excluded is released on the
+replica like one it dropped itself, by its removal setting; one sent again
+starts a backfill.
+

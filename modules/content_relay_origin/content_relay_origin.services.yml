@@ -342,6 +342,7 @@ services:
       - '@http_client'
       - '@state'
       - '@logger.channel.content_relay_origin'
+      - '@content_relay_origin.sending_settings'
 
   content_relay_origin.translation_blocks:
     class: Drupal\content_relay_origin\TranslationBlocks

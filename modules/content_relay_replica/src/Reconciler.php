@@ -460,8 +460,9 @@ class Reconciler {
     $origin = array_diff_key(is_array($item['hash']['translations'] ?? NULL) ? $item['hash']['translations'] : [], $ignored);
     $local = array_diff_key($state['source_translation_hashes'], $ignored);
     $languages = $contract?->languagesFor($state['entity_type'], $bundle);
+    $excluded = $contract?->excludedLanguages() ?? [];
     foreach ($origin as $langcode => $hash) {
-      $received = GenericContentEntityNormalizer::wanted((string) $langcode, $languages);
+      $received = GenericContentEntityNormalizer::wanted((string) $langcode, $languages, $excluded);
       if ($received && (!isset($local[$langcode]) || !hash_equals((string) $local[$langcode], (string) $hash))) {
         return TRUE;
       }

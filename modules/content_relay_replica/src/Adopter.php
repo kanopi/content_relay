@@ -119,7 +119,9 @@ class Adopter {
   public function adoptPage(string $entity_type_id, string $bundle, string $after = ''): array {
     $page = $this->originClient->hashes($entity_type_id, $bundle, $after, self::PAGE);
     $mapped = $this->mappings->forSource($entity_type_id, $bundle) !== NULL;
-    $languages = $this->contracts->getCurrent()?->languagesFor($entity_type_id, $bundle);
+    $contract = $this->contracts->getCurrent();
+    $languages = $contract?->languagesFor($entity_type_id, $bundle);
+    $excluded = $contract?->excludedLanguages() ?? [];
     $counts = [];
     foreach ($page['items'] as $item) {
       $state = $this->syncState->get($entity_type_id, $item['uuid']);
@@ -127,7 +129,7 @@ class Adopter {
         $state !== NULL && !self::unresolved($state) => 'already_synced',
         $item['not_syncable'] || $item['no_languages'] => 'kept',
         $mapped => 'mapped',
-        default => $this->adoptItem($entity_type_id, $bundle, $item, $languages),
+        default => $this->adoptItem($entity_type_id, $bundle, $item, $languages, $excluded),
       };
       $counts[$outcome] = ($counts[$outcome] ?? 0) + 1;
       if (in_array($outcome, ['adopted', 'adopted_edited'], TRUE) && ($retried = $this->retryRefused($entity_type_id, $item['uuid'])) > 0) {
@@ -175,11 +177,13 @@ class Adopter {
    *   The item's entry in the origin's hash listing.
    * @param string[]|null $languages
    *   The languages this site receives for the bundle, NULL for all.
+   * @param string[] $excluded
+   *   Languages the origin does not send.
    *
    * @return string
    *   The outcome.
    */
-  protected function adoptItem(string $entity_type_id, string $bundle, array $item, ?array $languages): string {
+  protected function adoptItem(string $entity_type_id, string $bundle, array $item, ?array $languages, array $excluded = []): string {
     /** @var \Drupal\Core\Entity\EntityInterface|null $entity */
     $entity = $this->entityRepository->loadEntityByUuid($entity_type_id, $item['uuid']);
     if (!$entity instanceof ContentEntityInterface) {
@@ -196,7 +200,7 @@ class Adopter {
     $received = [];
     foreach ($origin as $langcode => $hash) {
       $langcode = (string) $langcode;
-      if (!in_array($langcode, $item['withheld'], TRUE) && GenericContentEntityNormalizer::wanted($langcode, $languages) && $this->languageMap->exists($this->languageMap->toLocal($langcode))) {
+      if (!in_array($langcode, $item['withheld'], TRUE) && GenericContentEntityNormalizer::wanted($langcode, $languages, $excluded) && $this->languageMap->exists($this->languageMap->toLocal($langcode))) {
         $received[$langcode] = $hash;
       }
     }

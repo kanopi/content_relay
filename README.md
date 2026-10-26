@@ -481,6 +481,15 @@ Translations travel with their item, as one entity with one UUID.
   translation in the replica's languages is not sent, and the origin's
   report shows it as "No languages for this replica". Language-neutral items
   always pass.
+- **What the origin sends** can be narrowed too: **Languages not sent** on
+  the origin's settings, or for one replica on its Settings page. The
+  replica's contract then says "all languages except …", or leaves them out
+  of its selection and lists them as not granted ("Not sent by this
+  origin."), whatever it asked for. They are left out of events, pulls, hash
+  listings and the languages offered, and new languages in that list are not
+  announced. On the replica, translations it already had in them are kept as
+  local translations or deleted, as for a language it drops itself; once the
+  origin sends one again, a backfill pulls it.
 - **Language codes** can be mapped (`languages.map` in the replica settings,
   such as `zh-hans` to `zh-cn`). Hashes always use the origin's codes. After
   changing a mapping, `drush content-relay:move-language <from> <to>` moves

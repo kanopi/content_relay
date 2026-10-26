@@ -168,6 +168,39 @@ final class LanguageSubscriptionTest extends ReplicaTestBase {
   }
 
   /**
+   * A language the origin stops sending is dropped as one this site drops.
+   *
+   * Kept as a local translation (or deleted, as chosen), never managed by
+   * sync while excluded, and pulled again once the origin sends it again.
+   */
+  public function testOriginExcludesLanguage(): void {
+    $snapshot = $this->synced();
+    $previous = $this->container->get('content_relay_replica.contracts')->getCurrent();
+    $excluded = $this->languageContract(2, NULL)->toArray();
+    $excluded['effective']['languages']['excluded'] = ['fr'];
+    $excluded = new SubscriptionContract($excluded);
+    $this->container->get('content_relay_replica.contracts')->save($excluded);
+    $this->languages->contractChanged($previous, $excluded);
+    $this->runQueue();
+    $state = $this->state($snapshot['uuid']);
+    $this->assertSame(['en'], array_keys($state['source_translation_hashes']));
+    $this->assertSame(['fr'], $state['local_translations']);
+
+    // An update without French leaves the local French alone.
+    $update = $snapshot;
+    unset($update['translations']['fr']);
+    $update['translations']['en']['title'][0]['value'] = 'Hello again';
+    $this->assertSame(ApplyResult::APPLIED, $this->apply($this->event($update, Operation::Update, 2, ['contract_version' => 2]))->result);
+    $this->assertSame('Bonjour', $this->local($snapshot['uuid'])->getTranslation('fr')->label());
+    $this->assertSame('Hello again', $this->local($snapshot['uuid'])->label());
+
+    // Sent again: a backfill brings it back.
+    $this->container->get('state')->delete(LanguageSubscription::BACKFILL);
+    $this->languages->contractChanged($excluded, $this->languageContract(3, NULL));
+    $this->assertTrue($this->container->get('state')->get(LanguageSubscription::BACKFILL));
+  }
+
+  /**
    * The origin removing a language keeps its translations here.
    */
   public function testOriginRemovesLanguage(): void {

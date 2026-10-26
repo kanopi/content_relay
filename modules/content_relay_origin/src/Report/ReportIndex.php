@@ -278,8 +278,12 @@ class ReportIndex {
     }
     $contract = $this->contracts->getActive($replica->id) ?? $this->contracts->getPending($replica->id);
     $languages = $contract?->languagesFor($entity_type_id, $entity->bundle());
+    $excluded = $contract?->excludedLanguages() ?? [];
     $origin_hashes = $latest['hashes'];
-    $langcodes = array_values(array_filter(array_map('strval', array_keys($origin_hashes->translations)), fn (string $langcode) => GenericContentEntityNormalizer::wanted($langcode, $languages)));
+    $langcodes = array_values(array_filter(
+      array_map('strval', array_keys($origin_hashes->translations)),
+      fn (string $langcode) => GenericContentEntityNormalizer::wanted($langcode, $languages, $excluded),
+    ));
 
     $item = $this->items->get($replica->id, $entity_type_id, $uuid);
     $replica_hashes = $item === NULL || $item['status'] === ReplicaItems::DELETED || $item['translation_hashes'] === NULL

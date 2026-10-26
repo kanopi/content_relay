@@ -124,6 +124,9 @@ final class SendingSettingsTest extends OriginTestBase {
     $this->container->get('module_handler')->loadInclude('content_relay_origin', 'install');
     content_relay_origin_update_10003();
     $this->assertNotNull($manager->getEntityType('content_relay_replica_pairing'));
+    $this->config('content_relay_origin.settings')->clear('languages')->save();
+    content_relay_origin_update_10005();
+    $this->assertSame([], $this->config('content_relay_origin.settings')->get('languages.excluded'));
 
     $registry = $this->container->get('content_relay_origin.replica_registry');
     $registry->save(new Replica('11111111-1111-4111-8111-111111111111', 'Asia', 'https://asia.example.com/content-relay/v1/events', Replica::ACTIVE, []));

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Drupal\Tests\content_relay_origin\Functional;
 
 use Drupal\content_relay_origin\Replica;
+use Drupal\language\Entity\ConfigurableLanguage;
 use Drupal\Tests\BrowserTestBase;
 use Drupal\Tests\content_relay\Traits\FileKeyTrait;
 use PHPUnit\Framework\Attributes\Group;
@@ -26,7 +27,7 @@ final class OriginAdminTest extends BrowserTestBase {
   /**
    * {@inheritdoc}
    */
-  protected static $modules = ['content_relay_origin', 'node'];
+  protected static $modules = ['content_relay_origin', 'node', 'language'];
 
   /**
    * {@inheritdoc}
@@ -184,6 +185,39 @@ final class OriginAdminTest extends BrowserTestBase {
     $this->submitForm(['delivery[own]' => FALSE], 'Save');
     $this->assertArrayNotHasKey('delivery', $sending->pairing(self::REPLICA)->getSettings());
     $this->assertSession()->pageTextNotContains('new contract version');
+  }
+
+  /**
+   * Languages can be kept from every replica, or from one.
+   */
+  public function testExcludedLanguages(): void {
+    ConfigurableLanguage::createFromLangcode('fr')->save();
+    ConfigurableLanguage::createFromLangcode('de')->save();
+    $this->registerReplica();
+    $contracts = $this->container->get('content_relay_origin.contract_manager');
+
+    // Site-wide: replicas get a contract without it.
+    $this->drupalGet('admin/config/services/content-relay/origin');
+    $this->submitForm(['languages_excluded[fr]' => TRUE], 'Save configuration');
+    $this->assertSession()->pageTextContains('One replica will be sent a new contract version.');
+    $this->assertSame(['fr'], $this->config('content_relay_origin.settings')->get('languages.excluded'));
+    $this->assertSame(['fr'], $contracts->getLatest(self::REPLICA)->excludedLanguages());
+    // Saving again changes nothing to send.
+    $this->submitForm([], 'Save configuration');
+    $this->assertSession()->pageTextNotContains('new contract version');
+
+    // For one replica.
+    $this->drupalGet('admin/config/services/content-relay/origin/replicas/' . self::REPLICA . '/settings');
+    $this->assertSession()->checkboxChecked('languages[values][excluded][fr]');
+    $this->submitForm([
+      'languages[own]' => TRUE,
+      'languages[values][excluded][fr]' => FALSE,
+      'languages[values][excluded][de]' => TRUE,
+    ], 'Save');
+    $this->assertSession()->pageTextContains('China will be sent a new contract version.');
+    $this->assertSame(['de'], $contracts->getLatest(self::REPLICA)->excludedLanguages());
+    $this->drupalGet('admin/config/services/content-relay/origin/replicas/' . self::REPLICA . '/contract');
+    $this->assertSession()->pageTextContains('all languages except German');
   }
 
   /**

@@ -11,6 +11,7 @@ use Drupal\content_relay_origin\ReplicaRegistry;
 use Drupal\content_relay_origin\SendingSettings;
 use Drupal\Core\Form\FormBase;
 use Drupal\Core\Form\FormStateInterface;
+use Drupal\Core\Language\LanguageManagerInterface;
 use Drupal\Core\Url;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
@@ -28,6 +29,7 @@ final class ReplicaSendingForm extends FormBase {
     protected SendingSettings $sending,
     protected ContractManager $contracts,
     protected SyncableEntityTypes $syncableTypes,
+    protected LanguageManagerInterface $languageManager,
   ) {}
 
   /**
@@ -39,6 +41,7 @@ final class ReplicaSendingForm extends FormBase {
       $container->get('content_relay_origin.sending_settings'),
       $container->get('content_relay_origin.contract_manager'),
       $container->get('content_relay.syncable_entity_types'),
+      $container->get('language_manager'),
     );
   }
 
@@ -111,6 +114,15 @@ final class ReplicaSendingForm extends FormBase {
       '#default_value' => $value('read_limit.window'),
     ];
 
+    $form['languages'] = $this->group('languages', $this->t('Languages'), isset($own['languages']), $this->t('Its contract offers no translations in these languages, whatever it asks for.'));
+    $form['languages']['#access'] = count($this->languageManager->getLanguages()) > 1;
+    $form['languages']['values']['excluded'] = [
+      '#type' => 'checkboxes',
+      '#title' => $this->t('Languages not sent'),
+      '#options' => OriginSettingsForm::languageOptions($this->languageManager),
+      '#default_value' => $value('languages.excluded') ?? [],
+    ];
+
     $form['not_syncable'] = $this->group('not_syncable', $this->t('Items that stop syncing'), isset($own['not_syncable']));
     $form['not_syncable']['values']['behavior'] = [
       '#type' => 'radios',
@@ -161,6 +173,7 @@ final class ReplicaSendingForm extends FormBase {
     $before = [
       'bundles' => $this->sending->get('bundles', $replica->id),
       'require' => (bool) $this->sending->get('encryption.require', $replica->id),
+      'excluded' => OriginSettingsForm::checked((array) ($this->sending->get('languages.excluded', $replica->id) ?? [])),
     ];
     $settings = $pairing->getSettings();
     foreach (SendingSettings::KEYS as $group) {
@@ -172,6 +185,7 @@ final class ReplicaSendingForm extends FormBase {
       $settings[$group] = match ($group) {
         'bundles' => $this->bundles($values),
         'not_syncable' => ['behavior' => (string) $values['behavior']],
+        'languages' => ['excluded' => OriginSettingsForm::checked((array) $values['excluded'])],
         'encryption' => [
           'require' => (bool) $values['require'],
           'transition_window' => (int) $values['transition_window'],
@@ -184,7 +198,8 @@ final class ReplicaSendingForm extends FormBase {
 
     // What a contract offers or requires changed: send a new version.
     $changed = $before['bundles'] !== $this->sending->get('bundles', $replica->id)
-      || $before['require'] !== (bool) $this->sending->get('encryption.require', $replica->id);
+      || $before['require'] !== (bool) $this->sending->get('encryption.require', $replica->id)
+      || $before['excluded'] !== OriginSettingsForm::checked((array) ($this->sending->get('languages.excluded', $replica->id) ?? []));
     if ($changed && $replica->receivesEvents() && $this->contracts->getLatest($replica->id) !== NULL) {
       $this->contracts->propose($replica->id, NULL, NULL, 'origin', (int) $this->currentUser()->id());
       $this->messenger()->addStatus($this->t('%replica will be sent a new contract version.', ['%replica' => $replica->label]));

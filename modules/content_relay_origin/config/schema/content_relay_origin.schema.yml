@@ -40,6 +40,8 @@ content_relay_origin.settings:
       type: content_relay_origin.sending.not_syncable
     files:
       type: content_relay_origin.sending.files
+    languages:
+      type: content_relay_origin.sending.languages
 
 content_relay_origin.sending.bundles:
   type: sequence
@@ -119,6 +121,17 @@ content_relay_origin.sending.files:
       type: integer
       label: 'How long download links stay valid, in seconds'
 
+content_relay_origin.sending.languages:
+  type: mapping
+  label: 'Languages'
+  mapping:
+    excluded:
+      type: sequence
+      label: 'Languages not sent, whatever replicas ask for'
+      sequence:
+        type: string
+        label: 'Langcode'
+
 content_relay_origin.sending.encryption:
   type: mapping
   label: 'Encryption'
@@ -144,6 +157,8 @@ content_relay_origin.sending:
       type: content_relay_origin.sending.not_syncable
     files:
       type: content_relay_origin.sending.files
+    languages:
+      type: content_relay_origin.sending.languages
     encryption:
       type: content_relay_origin.sending.encryption
 

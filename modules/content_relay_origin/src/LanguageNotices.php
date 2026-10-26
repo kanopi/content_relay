@@ -34,6 +34,7 @@ class LanguageNotices {
     protected ClientInterface $httpClient,
     protected StateInterface $state,
     protected LoggerInterface $logger,
+    protected SendingSettings $sending,
   ) {}
 
   /**
@@ -49,7 +50,9 @@ class LanguageNotices {
   public function notify(string $change, string $langcode, string $name): void {
     $pending = $this->state->get(self::STATE, []);
     foreach ($this->registry->getAll() as $replica) {
-      if ($replica->receivesEvents()) {
+      // A language never sent to a replica is no news to it.
+      $excluded = (array) ($this->sending->get('languages.excluded', $replica->id) ?? []);
+      if ($replica->receivesEvents() && !in_array($langcode, $excluded, TRUE)) {
         $pending[$replica->id][] = ['change' => $change, 'langcode' => $langcode, 'name' => $name];
       }
     }

@@ -81,6 +81,8 @@ final class SubscriptionContract {
       // NULL: every bundle the origin publishes, now and later.
       'allowed_bundles' => NULL,
       'max_languages' => NULL,
+      // Languages the origin sends to no one under this contract.
+      'excluded_languages' => [],
       'file_transports' => ['http'],
       'max_events_per_minute' => NULL,
       'max_payload_bytes' => 16 * 1024 * 1024,
@@ -168,6 +170,20 @@ final class SubscriptionContract {
     $languages = $this->terms['effective']['languages'] ?? ['mode' => self::LANGUAGES_ALL];
     $languages = $languages['per_bundle'][$entity_type_id . '.' . $bundle] ?? $languages;
     return ($languages['mode'] ?? self::LANGUAGES_ALL) === self::LANGUAGES_SELECTED ? array_values($languages['selected'] ?? []) : NULL;
+  }
+
+  /**
+   * Languages the origin does not send, whatever the replica asked for.
+   *
+   * Pass them to GenericContentEntityNormalizer::wanted() with the list from
+   * languagesFor(): a replica receiving every language gets every language
+   * but these, including any the origin adds later.
+   *
+   * @return string[]
+   *   Origin langcodes.
+   */
+  public function excludedLanguages(): array {
+    return array_values($this->terms['effective']['languages']['excluded'] ?? []);
   }
 
   /**

@@ -276,4 +276,18 @@ final class ReadEndpointTest extends OriginTestBase {
     $this->assertSame('Not writable', $this->container->get('entity_type.manager')->getStorage('node')->loadUnchanged($node->id())->label());
   }
 
+  /**
+   * Languages the origin does not send are not offered, nor counted.
+   */
+  public function testExcludedLanguages(): void {
+    $this->pairAndAcknowledge();
+    $this->container->get('content_relay_origin.sending_settings')->pairing($this->replica->siteId)->setSetting('languages.excluded', ['en'])->save();
+    $this->container->get('content_relay_origin.contract_manager')->propose($this->replica->siteId, NULL, NULL, 'origin');
+    $this->assertSame(200, $this->post('/content-relay/v1/messages', $this->replica->message('contract_ack', ['version' => 2]))->getStatusCode());
+    $this->assertSame([], $this->answer($this->read('/content-relay/v1/schema'), 'schema')['languages']);
+    $this->node('article', 'Only in English');
+    $hashes = $this->answer($this->read('/content-relay/v1/hashes?entity_type=node&bundle=article'), 'hashes');
+    $this->assertTrue($hashes['items'][0]['no_languages']);
+  }
+
 }
