@@ -6,177 +6,251 @@ content_relay_replica.settings:
       type: string
       label: 'Endpoint URL to give the origin, when the site cannot work it out (for example behind a proxy). Empty to use this site''s own address.'
     origin_allowed_ips:
-      type: sequence
-      label: 'Addresses and ranges the origin may post from; empty for any'
-      sequence:
-        type: string
-        label: 'Address or range'
+      type: content_relay_replica.receiving.origin_allowed_ips
     failures:
-      type: mapping
-      label: 'Save failures'
-      mapping:
-        transient_retry_limit:
-          type: integer
-          label: 'Local retries of a transient failure before it is treated as permanent'
-        retry_base:
-          type: integer
-          label: 'First retry delay, in seconds'
-        retry_max:
-          type: integer
-          label: 'Longest retry delay, in seconds'
+      type: content_relay_replica.receiving.failures
     external_references:
-      type: mapping
-      label: 'References to content this replica does not subscribe to'
-      mapping:
-        fallbacks:
-          type: sequence
-          label: 'Local entity ID to use instead, by entity type. Types not listed leave the reference out.'
-          sequence:
-            type: string
-            label: 'Local entity ID'
+      type: content_relay_replica.receiving.external_references
     processed_retention_days:
       type: integer
       label: 'Days to remember processed event IDs'
     local_only:
+      type: content_relay_replica.receiving.local_only
+    languages:
+      type: content_relay_replica.receiving.languages
+    conflicts:
+      type: content_relay_replica.receiving.conflicts
+    moderation:
+      type: content_relay_replica.receiving.moderation
+    reconcile:
+      type: content_relay_replica.receiving.reconcile
+    detach:
+      type: content_relay_replica.receiving.detach
+    files:
+      type: content_relay_replica.receiving.files
+    processing:
+      type: content_relay_replica.receiving.processing
+
+content_relay_replica.receiving.origin_allowed_ips:
+  type: sequence
+  label: 'Addresses and ranges the origin may post from; empty for any'
+  sequence:
+    type: string
+    label: 'Address or range'
+
+content_relay_replica.receiving.failures:
+  type: mapping
+  label: 'Save failures'
+  mapping:
+    transient_retry_limit:
+      type: integer
+      label: 'Local retries of a transient failure before it is treated as permanent'
+    retry_base:
+      type: integer
+      label: 'First retry delay, in seconds'
+    retry_max:
+      type: integer
+      label: 'Longest retry delay, in seconds'
+
+content_relay_replica.receiving.external_references:
+  type: mapping
+  label: 'References to content this replica does not subscribe to'
+  mapping:
+    fallbacks:
       type: sequence
-      label: 'Fields this site keeps for itself: never synced, not hashed'
+      label: 'Local entity ID to use instead, by entity type. Types not listed leave the reference out.'
+      sequence:
+        type: string
+        label: 'Local entity ID'
+
+content_relay_replica.receiving.local_only:
+  type: sequence
+  label: 'Fields this site keeps for itself: never synced, not hashed'
+  sequence:
+    type: mapping
+    label: 'Local-only fields of a bundle'
+    mapping:
+      entity_type:
+        type: string
+        label: 'Entity type'
+      bundle:
+        type: string
+        label: 'Bundle'
+      fields:
+        type: sequence
+        label: 'Field names'
+        sequence:
+          type: string
+          label: 'Field name'
+
+content_relay_replica.receiving.languages:
+  type: mapping
+  label: 'Languages'
+  mapping:
+    map:
+      type: sequence
+      label: 'Origin langcodes kept under another code here'
       sequence:
         type: mapping
-        label: 'Local-only fields of a bundle'
+        label: 'Language code mapping'
         mapping:
-          entity_type:
+          origin:
             type: string
-            label: 'Entity type'
-          bundle:
+            label: 'Langcode on the origin'
+          local:
             type: string
-            label: 'Bundle'
-          fields:
-            type: sequence
-            label: 'Field names'
-            sequence:
-              type: string
-              label: 'Field name'
+            label: 'Langcode here'
+    unknown:
+      type: string
+      label: 'A received language this site does not have: skip that translation, or reject the item'
+      constraints:
+        Choice:
+          - skip
+          - reject
+    removed:
+      type: string
+      label: 'Translations in a language the origin removed, or this site stopped receiving: keep as local translations, or delete'
+      constraints:
+        Choice:
+          - keep
+          - delete
+
+content_relay_replica.receiving.conflicts:
+  type: mapping
+  label: 'Items edited here when the origin sends an update'
+  mapping:
+    on_event:
+      type: string
+      label: 'Save the origin version as a new revision and flag for review (overwrite), save it as a draft under Content Moderation (draft), or keep the local copy and mark a conflict (reject)'
+      constraints:
+        Choice:
+          - overwrite
+          - draft
+          - reject
+
+content_relay_replica.receiving.moderation:
+  type: mapping
+  label: 'Content Moderation'
+  mapping:
+    target_state:
+      type: string
+      label: 'Moderation state for synced content; empty for the origin''s state'
+
+content_relay_replica.receiving.reconcile:
+  type: mapping
+  label: 'Reconciliation'
+  mapping:
+    interval:
+      type: integer
+      label: 'Seconds between scheduled reconciliation runs; 0 to run only on demand'
+    max_items:
+      type: integer
+      label: 'Items a run pulls, deletes or marks itself, and the queue worker per cron run; the rest wait in the queue'
+
+content_relay_replica.receiving.detach:
+  type: mapping
+  label: 'Items detached on this replica'
+  mapping:
+    follow_deletes:
+      type: boolean
+      label: 'Delete a detached item when the origin deletes it'
+
+content_relay_replica.receiving.files:
+  type: mapping
+  label: 'Files'
+  mapping:
+    pending:
+      type: string
+      label: 'Content whose files have not arrived: publish as received, or hold unpublished'
+      constraints:
+        Choice:
+          - publish
+          - hold
+    links:
+      type: string
+      label: 'Links to files in text point at this site''s copies (local) or the origin''s (origin)'
+      constraints:
+        Choice:
+          - local
+          - origin
+    max_attempts:
+      type: integer
+      label: 'Download attempts before a file is marked as failed'
+    retry_base:
+      type: integer
+      label: 'First retry delay, in seconds'
+    timeout:
+      type: integer
+      label: 'Download timeout, in seconds'
+    fetch_on_miss:
+      type: string
+      label: 'When a synced file is requested and missing here: off, redirect to the origin, or placeholder'
+      constraints:
+        Choice:
+          - 'off'
+          - redirect
+          - placeholder
+    verify_interval:
+      type: integer
+      label: 'Seconds between checks that every synced file is present and intact; 0 to disable'
+
+content_relay_replica.receiving.processing:
+  type: mapping
+  label: 'Processing'
+  mapping:
+    auto_backlog:
+      type: integer
+      label: 'In auto mode, queue events while this many are already waiting; 0 to ignore'
+    auto_max_load:
+      type: float
+      label: 'In auto mode, queue events while the one-minute load average is at least this; 0 to ignore'
+    status_batch_limit:
+      type: integer
+      label: 'Most event IDs the origin may ask about at once'
+    lock_wait:
+      type: integer
+      label: 'Seconds to wait for an item another process is writing, before answering busy'
+
+content_relay_replica.receiving:
+  type: mapping
+  label: 'How content from one origin is received; what is left out follows the site-wide settings'
+  mapping:
+    origin_allowed_ips:
+      type: content_relay_replica.receiving.origin_allowed_ips
+    failures:
+      type: content_relay_replica.receiving.failures
+    external_references:
+      type: content_relay_replica.receiving.external_references
+    local_only:
+      type: content_relay_replica.receiving.local_only
     languages:
-      type: mapping
-      label: 'Languages'
-      mapping:
-        map:
-          type: sequence
-          label: 'Origin langcodes kept under another code here'
-          sequence:
-            type: mapping
-            label: 'Language code mapping'
-            mapping:
-              origin:
-                type: string
-                label: 'Langcode on the origin'
-              local:
-                type: string
-                label: 'Langcode here'
-        unknown:
-          type: string
-          label: 'A received language this site does not have: skip that translation, or reject the item'
-          constraints:
-            Choice:
-              - skip
-              - reject
-        removed:
-          type: string
-          label: 'Translations in a language the origin removed, or this site stopped receiving: keep as local translations, or delete'
-          constraints:
-            Choice:
-              - keep
-              - delete
+      type: content_relay_replica.receiving.languages
     conflicts:
-      type: mapping
-      label: 'Items edited here when the origin sends an update'
-      mapping:
-        on_event:
-          type: string
-          label: 'Save the origin version as a new revision and flag for review (overwrite), save it as a draft under Content Moderation (draft), or keep the local copy and mark a conflict (reject)'
-          constraints:
-            Choice:
-              - overwrite
-              - draft
-              - reject
+      type: content_relay_replica.receiving.conflicts
     moderation:
-      type: mapping
-      label: 'Content Moderation'
-      mapping:
-        target_state:
-          type: string
-          label: 'Moderation state for synced content; empty for the origin''s state'
+      type: content_relay_replica.receiving.moderation
     reconcile:
-      type: mapping
-      label: 'Reconciliation'
-      mapping:
-        interval:
-          type: integer
-          label: 'Seconds between scheduled reconciliation runs; 0 to run only on demand'
-        max_items:
-          type: integer
-          label: 'Items a run pulls, deletes or marks itself, and the queue worker per cron run; the rest wait in the queue'
+      type: content_relay_replica.receiving.reconcile
     detach:
-      type: mapping
-      label: 'Items detached on this replica'
-      mapping:
-        follow_deletes:
-          type: boolean
-          label: 'Delete a detached item when the origin deletes it'
+      type: content_relay_replica.receiving.detach
     files:
-      type: mapping
-      label: 'Files'
-      mapping:
-        pending:
-          type: string
-          label: 'Content whose files have not arrived: publish as received, or hold unpublished'
-          constraints:
-            Choice:
-              - publish
-              - hold
-        links:
-          type: string
-          label: 'Links to files in text point at this site''s copies (local) or the origin''s (origin)'
-          constraints:
-            Choice:
-              - local
-              - origin
-        max_attempts:
-          type: integer
-          label: 'Download attempts before a file is marked as failed'
-        retry_base:
-          type: integer
-          label: 'First retry delay, in seconds'
-        timeout:
-          type: integer
-          label: 'Download timeout, in seconds'
-        fetch_on_miss:
-          type: string
-          label: 'When a synced file is requested and missing here: off, redirect to the origin, or placeholder'
-          constraints:
-            Choice:
-              - 'off'
-              - redirect
-              - placeholder
-        verify_interval:
-          type: integer
-          label: 'Seconds between checks that every synced file is present and intact; 0 to disable'
+      type: content_relay_replica.receiving.files
     processing:
-      type: mapping
-      label: 'Processing'
-      mapping:
-        auto_backlog:
-          type: integer
-          label: 'In auto mode, queue events while this many are already waiting; 0 to ignore'
-        auto_max_load:
-          type: float
-          label: 'In auto mode, queue events while the one-minute load average is at least this; 0 to ignore'
-        status_batch_limit:
-          type: integer
-          label: 'Most event IDs the origin may ask about at once'
-        lock_wait:
-          type: integer
-          label: 'Seconds to wait for an item another process is writing, before answering busy'
+      type: content_relay_replica.receiving.processing
+
+content_relay_replica.origin_pairing.*:
+  type: config_entity
+  label: 'Content Relay origin pairing'
+  mapping:
+    id:
+      type: machine_name
+      label: 'ID'
+    label:
+      type: label
+      label: 'Label'
+    settings:
+      type: content_relay_replica.receiving
+      label: 'Receiving settings'
 
 content_relay_replica.mapping.*:
   type: config_entity

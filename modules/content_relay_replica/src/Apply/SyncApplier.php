@@ -20,15 +20,16 @@ use Drupal\content_relay_replica\ContractStore;
 use Drupal\content_relay_replica\Entity\ContentRelayMapping;
 use Drupal\content_relay_replica\FailedEventStore;
 use Drupal\content_relay_replica\File\FileSync;
-use Drupal\content_relay_replica\LocalChanges;
 use Drupal\content_relay_replica\LanguageMap;
-use Drupal\content_relay_replica\Moderation;
+use Drupal\content_relay_replica\LocalChanges;
 use Drupal\content_relay_replica\LocalOnlyFields;
 use Drupal\content_relay_replica\Mapping\MappedImporter;
 use Drupal\content_relay_replica\Mapping\MappingException;
 use Drupal\content_relay_replica\Mapping\MappingRepository;
+use Drupal\content_relay_replica\Moderation;
 use Drupal\content_relay_replica\OriginPeer;
 use Drupal\content_relay_replica\ProcessedEvents;
+use Drupal\content_relay_replica\ReceivingSettings;
 use Drupal\content_relay_replica\SyncStateStore;
 use Drupal\content_relay_replica\SyncStatus;
 use Drupal\Core\Config\ConfigFactoryInterface;
@@ -124,6 +125,7 @@ class SyncApplier {
     protected LocalOnlyFields $localOnly,
     protected LanguageMap $languageMap,
     protected Moderation $moderation,
+    protected ReceivingSettings $receiving,
   ) {}
 
   /**
@@ -218,7 +220,7 @@ class SyncApplier {
       return $this->fail($event, $source_site, FailedEventStore::PERMANENT, 'uuid_collision', 'An item with this UUID exists on the replica but was not created by sync, so sync leaves it alone.');
     }
     if ($state !== NULL && $state['detached_at'] !== NULL) {
-      $follow = (bool) $this->configFactory->get('content_relay_replica.settings')->get('detach.follow_deletes');
+      $follow = (bool) $this->receiving->get('detach.follow_deletes');
       if ($event->operation !== Operation::Delete || !$follow) {
         return $this->answer($event, new ApplyResult(200, ApplyResult::SKIPPED_DETACHED, NULL, 'The item is detached on this replica.', [
           'detached_at' => (int) $state['detached_at'],
@@ -302,7 +304,7 @@ class SyncApplier {
         $altered = TRUE;
       }
     }
-    if ($skipped !== [] && ($this->configFactory->get('content_relay_replica.settings')->get('languages.unknown') ?? 'skip') === 'reject') {
+    if ($skipped !== [] && ($this->receiving->get('languages.unknown') ?? 'skip') === 'reject') {
       return sprintf('Languages this site does not have, and no mapping for: %s.', implode(', ', $skipped));
     }
     if ($origin['translations'] === []) {
@@ -348,7 +350,7 @@ class SyncApplier {
    *   CONFLICT_OVERWRITE, CONFLICT_DRAFT or CONFLICT_REJECT.
    */
   protected function conflictResolution(SyncEvent $event, ContentEntityInterface $entity, array $edited, ?string $on_conflict): string {
-    $resolution = $on_conflict ?? $this->configFactory->get('content_relay_replica.settings')->get('conflicts.on_event') ?? self::CONFLICT_OVERWRITE;
+    $resolution = $on_conflict ?? $this->receiving->get('conflicts.on_event') ?? self::CONFLICT_OVERWRITE;
     // A draft needs a moderation workflow; without one it is an overwrite.
     if ($resolution === self::CONFLICT_DRAFT && !$this->moderation->isModerated($entity)) {
       $resolution = self::CONFLICT_OVERWRITE;
@@ -724,7 +726,7 @@ class SyncApplier {
     foreach ($event->externalReferences as $reference) {
       $external[$reference['entity_type'] . ':' . $reference['uuid']] = TRUE;
     }
-    $fallbacks = $this->configFactory->get('content_relay_replica.settings')->get('external_references.fallbacks') ?? [];
+    $fallbacks = $this->receiving->get('external_references.fallbacks') ?? [];
     $fallback = function (string $entity_type_id, string $uuid) use ($fallbacks): int|string|null {
       $id = $fallbacks[$entity_type_id] ?? NULL;
       if ($id === NULL || $id === '') {

@@ -716,3 +716,16 @@ tells every peer, requiring confirmation only where that role does (a
 replica's origin). Content saved by sync, deletes included, is passed on to
 this site's replicas but not back to its own origin, so two sites can sync
 both ways without echoing.
+
+## 89. Receiving settings belong to a pairing
+
+How a replica receives from an origin (conflicts, languages, local-only
+fields, files, processing, reconciliation, allowed addresses, deletes when
+detached) is a config entity per origin, `content_relay_origin_pairing`, so
+it is exported and deployed, and can live in a config split. What a pairing
+leaves out follows `content_relay_replica.settings`, which also seeds new
+pairings and keeps the settings that are not about one origin (webhook URL,
+retention, lock waits). The origin's identity, keys, contract and stream
+stay in the database. Pairing creates the entity; sites paired before get
+one, `default`, on update. While a site has one origin, the settings form
+edits both. See docs/multi-pairing.md for the rest of the plan.

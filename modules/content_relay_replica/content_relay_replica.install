@@ -395,3 +395,14 @@ function content_relay_replica_update_10001(): string {
   }
   return $created === [] ? (string) t('The replica keeps its contracts in their own table.') : (string) t('Created missing tables: @tables.', ['@tables' => implode(', ', $created)]);
 }
+
+/**
+ * Adds the origin pairing configuration entity type.
+ */
+function content_relay_replica_update_10002(): string {
+  $manager = \Drupal::entityDefinitionUpdateManager();
+  if ($manager->getEntityType('content_relay_origin_pairing') === NULL) {
+    $manager->installEntityType(\Drupal::entityTypeManager()->getDefinition('content_relay_origin_pairing'));
+  }
+  return (string) t('Each origin a site receives from now has its own receiving settings.');
+}

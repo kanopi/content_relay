@@ -22,6 +22,7 @@ class Moderation {
 
   public function __construct(
     protected ConfigFactoryInterface $configFactory,
+    protected ReceivingSettings $receiving,
     protected ?ModerationInformationInterface $information = NULL,
   ) {}
 
@@ -36,7 +37,7 @@ class Moderation {
    * The state synced content is put in, or NULL for the origin's.
    */
   public function targetState(): ?string {
-    $state = (string) ($this->configFactory->get('content_relay_replica.settings')->get('moderation.target_state') ?? '');
+    $state = (string) ($this->receiving->get('moderation.target_state') ?? '');
     return $state === '' || $this->information === NULL ? NULL : $state;
   }
 

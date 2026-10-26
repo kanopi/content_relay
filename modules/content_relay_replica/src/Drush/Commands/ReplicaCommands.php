@@ -538,8 +538,13 @@ final class ReplicaCommands extends DrushCommands {
       $this->logger()->warning(dt('Nothing to retry.'));
       return self::EXIT_SUCCESS;
     }
-    $failed = 0;
+    $failed = $closed = 0;
     foreach ($list as $id) {
+      // Retrying one may have settled another of the same item.
+      if ($options['all'] && ($this->failures->load($id)['status'] ?? NULL) !== FailedEventStore::OPEN) {
+        $closed++;
+        continue;
+      }
       try {
         $result = $this->applier->retry($id);
         $ok = $result->httpStatus < 400 && $result->result !== ApplyResult::ACCEPTED;
@@ -550,9 +555,10 @@ final class ReplicaCommands extends DrushCommands {
       }
       $failed += (int) !$ok;
     }
-    $this->logger()->notice(dt('@done applied, @failed still failing.', [
-      '@done' => count($list) - $failed,
+    $this->logger()->notice(dt('@done applied, @failed still failing@closed.', [
+      '@done' => count($list) - $failed - $closed,
       '@failed' => $failed,
+      '@closed' => $closed === 0 ? '' : dt(', @count settled along the way', ['@count' => $closed]),
     ]));
     return $failed === 0 ? self::EXIT_SUCCESS : self::EXIT_FAILURE;
   }

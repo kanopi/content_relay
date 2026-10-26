@@ -52,6 +52,7 @@ class FailedEventStore {
     protected ContractStore $contracts,
     protected KeyStore $keyStore,
     protected CacheTagsInvalidatorInterface $cacheTagsInvalidator,
+    protected ReceivingSettings $receiving,
   ) {}
 
   /**
@@ -139,7 +140,7 @@ class FailedEventStore {
    * Whether a transient failure has used up its local retries.
    */
   public function isRetryLimitReached(int $attempts): bool {
-    return $attempts > max(0, (int) $this->configFactory->get('content_relay_replica.settings')->get('failures.transient_retry_limit'));
+    return $attempts > max(0, (int) $this->receiving->get('failures.transient_retry_limit'));
   }
 
   /**
@@ -386,7 +387,7 @@ class FailedEventStore {
    * The delay before retrying a transient failure, by attempt.
    */
   protected function retryDelay(int $attempts): int {
-    $settings = $this->configFactory->get('content_relay_replica.settings');
+    $settings = $this->receiving;
     $base = max(1, (int) $settings->get('failures.retry_base'));
     $max = max($base, (int) $settings->get('failures.retry_max'));
     return (int) min($max, $base * 2 ** min(20, $attempts - 1));

@@ -27,7 +27,7 @@ services:
 
   content_relay_replica.failed_events:
     class: Drupal\content_relay_replica\FailedEventStore
-    arguments: ['@database', '@queue', '@config.factory', '@datetime.time', '@content_relay_replica.contracts', '@content_relay.key_store', '@cache_tags.invalidator']
+    arguments: ['@database', '@queue', '@config.factory', '@datetime.time', '@content_relay_replica.contracts', '@content_relay.key_store', '@cache_tags.invalidator', '@content_relay_replica.receiving_settings']
 
   content_relay_replica.failure_classifier:
     class: Drupal\content_relay_replica\Apply\FailureClassifier
@@ -58,6 +58,7 @@ services:
       - '@content_relay_replica.local_only_fields'
       - '@content_relay_replica.language_map'
       - '@content_relay_replica.moderation'
+      - '@content_relay_replica.receiving_settings'
 
   content_relay_replica.contracts:
     class: Drupal\content_relay_replica\ContractStore
@@ -80,6 +81,7 @@ services:
       - '@logger.channel.content_relay_replica'
       - '@content_relay_replica.origin_policy'
       - '@content_relay_replica.language_subscription'
+      - '@content_relay_replica.receiving_settings'
 
   content_relay_replica.local_changes:
     class: Drupal\content_relay_replica\LocalChanges
@@ -93,10 +95,11 @@ services:
       - '@entity.repository'
       - '@entity_type.manager'
       - '@content_relay_replica.language_map'
+      - '@content_relay_replica.receiving_settings'
 
   content_relay_replica.local_only_fields:
     class: Drupal\content_relay_replica\LocalOnlyFields
-    arguments: ['@config.factory', '@entity_type.manager']
+    arguments: ['@config.factory', '@entity_type.manager', '@content_relay_replica.receiving_settings']
 
   content_relay_replica.origin_client:
     class: Drupal\content_relay_replica\OriginClient
@@ -131,7 +134,7 @@ services:
   # Replace to fetch binaries some other way, such as from replicated storage.
   content_relay_replica.file_transport:
     class: Drupal\content_relay_replica\File\HttpFileTransport
-    arguments: ['@http_client', '@content_relay_replica.origin', '@config.factory']
+    arguments: ['@http_client', '@content_relay_replica.origin', '@config.factory', '@content_relay_replica.receiving_settings']
 
   content_relay_replica.file_sync:
     class: Drupal\content_relay_replica\File\FileSync
@@ -151,6 +154,7 @@ services:
       - '@config.factory'
       - '@datetime.time'
       - '@logger.channel.content_relay_replica'
+      - '@content_relay_replica.receiving_settings'
 
   content_relay_replica.fetch_on_miss:
     class: Drupal\content_relay_replica\EventSubscriber\FetchOnMiss
@@ -159,7 +163,7 @@ services:
       - '@entity_type.manager'
       - '@content_relay_replica.sync_state'
       - '@content_relay_replica.file_sync'
-      - '@config.factory'
+      - '@content_relay_replica.receiving_settings'
     tags:
       - { name: event_subscriber }
 
@@ -194,6 +198,7 @@ services:
       - '@content_relay_replica.received_events'
       - '@lock'
       - '@config.factory'
+      - '@content_relay_replica.receiving_settings'
 
   content_relay_replica.status_report:
     class: Drupal\content_relay_replica\Processing\StatusReport
@@ -281,6 +286,13 @@ services:
       - '@uuid'
       - '@logger.channel.content_relay_replica'
       - '@queue'
+      - '@content_relay_replica.receiving_settings'
+
+  content_relay_replica.receiving_settings:
+    class: Drupal\content_relay_replica\ReceivingSettings
+    arguments:
+      - '@config.factory'
+      - '@entity_type.manager'
 
   content_relay_replica.adopter:
     class: Drupal\content_relay_replica\Adopter
@@ -308,7 +320,7 @@ services:
 
   content_relay_replica.language_map:
     class: Drupal\content_relay_replica\LanguageMap
-    arguments: ['@config.factory', '@language_manager']
+    arguments: ['@config.factory', '@language_manager', '@content_relay_replica.receiving_settings']
 
   content_relay_replica.language_subscription:
     class: Drupal\content_relay_replica\LanguageSubscription
@@ -323,7 +335,8 @@ services:
       - '@config.factory'
       - '@datetime.time'
       - '@logger.channel.content_relay_replica'
+      - '@content_relay_replica.receiving_settings'
 
   content_relay_replica.moderation:
     class: Drupal\content_relay_replica\Moderation
-    arguments: ['@config.factory', '@?content_moderation.moderation_information']
+    arguments: ['@config.factory', '@content_relay_replica.receiving_settings', '@?content_moderation.moderation_information']

@@ -7,6 +7,7 @@ namespace Drupal\content_relay_replica\Processing;
 use Drupal\content_relay\Event\ProcessingMode;
 use Drupal\content_relay\Event\SyncEvent;
 use Drupal\content_relay_replica\ContractStore;
+use Drupal\content_relay_replica\ReceivingSettings;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Lock\LockBackendInterface;
 
@@ -26,6 +27,7 @@ class ProcessingPolicy {
     protected ReceivedEvents $received,
     protected LockBackendInterface $lock,
     protected ConfigFactoryInterface $configFactory,
+    protected ReceivingSettings $receiving,
   ) {}
 
   /**
@@ -57,7 +59,7 @@ class ProcessingPolicy {
     if (!$this->lock->lockMayBeAvailable('content_relay_replica:apply:' . $event->entityType . ':' . $event->entityUuid)) {
       return TRUE;
     }
-    $settings = $this->configFactory->get('content_relay_replica.settings');
+    $settings = $this->receiving;
     $backlog = (int) $settings->get('processing.auto_backlog');
     if ($backlog > 0 && $this->received->backlog() >= $backlog) {
       return TRUE;

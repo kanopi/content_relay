@@ -13,6 +13,7 @@ use Drupal\content_relay\Serialization\NormalizationContext;
 use Drupal\content_relay_replica\LocalChanges;
 use Drupal\content_relay_replica\OriginClient;
 use Drupal\content_relay_replica\OriginPeer;
+use Drupal\content_relay_replica\ReceivingSettings;
 use Drupal\content_relay_replica\SubscriptionException;
 use Drupal\content_relay_replica\SyncStateStore;
 use Drupal\content_relay_replica\SyncStatus;
@@ -70,6 +71,7 @@ class FileSync {
     protected ConfigFactoryInterface $configFactory,
     protected TimeInterface $time,
     protected LoggerInterface $logger,
+    protected ReceivingSettings $receiving,
   ) {}
 
   /**
@@ -639,7 +641,7 @@ class FileSync {
    * A files setting.
    */
   protected function settings(string $key): mixed {
-    return $this->configFactory->get('content_relay_replica.settings')->get('files.' . $key);
+    return $this->receiving->get('files.' . $key);
   }
 
 }

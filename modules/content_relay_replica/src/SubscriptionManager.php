@@ -68,6 +68,7 @@ class SubscriptionManager {
     protected LoggerInterface $logger,
     protected OriginPolicy $policy,
     protected LanguageSubscription $languages,
+    protected ReceivingSettings $receiving,
   ) {}
 
   /**
@@ -140,6 +141,9 @@ class SubscriptionManager {
       $this->state->delete(OriginPeer::STATE_KEY);
       throw $e;
     }
+    // How content from this origin is received: the site-wide settings to
+    // start with.
+    $this->receiving->ensurePairing((string) ($body['origin']['label'] ?? $body['origin']['site_id']));
     $this->logger->notice('Paired with origin @origin (@url); contract version @version.', [
       '@origin' => $body['origin']['site_id'],
       '@url' => $origin_url,

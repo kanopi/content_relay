@@ -187,6 +187,11 @@ final class SubscriptionTest extends KernelTestBase {
     $this->assertSame(base64_encode($this->replicaKey->publicKey), $request['signing_keys'][$this->replicaKey->id()]['public_key']);
     $this->assertSame('https://replica.example.com/content-relay/v1/events', $request['webhook_url']);
     $this->assertSame('node.forum', $result['contract']->notGranted()[0]['value']);
+
+    // Receiving from it starts with the site-wide settings.
+    $pairing = $this->container->get('content_relay_replica.receiving_settings')->pairing();
+    $this->assertSame('default', $pairing->id());
+    $this->assertSame('overwrite', $pairing->getSetting('conflicts.on_event'));
   }
 
   /**

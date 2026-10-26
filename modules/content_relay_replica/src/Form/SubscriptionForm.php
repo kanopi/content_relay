@@ -10,11 +10,12 @@ use Drupal\content_relay\Serialization\SyncableEntityTypes;
 use Drupal\content_relay_replica\ContractStore;
 use Drupal\content_relay_replica\LanguageSubscription;
 use Drupal\content_relay_replica\Mapping\MappingRepository;
-use Drupal\content_relay_replica\Schema\SchemaWatcher;
 use Drupal\content_relay_replica\OriginClient;
-use Drupal\content_relay_replica\Schema\CompatibilityChecker;
-use Drupal\content_relay_replica\SubscriptionException;
 use Drupal\content_relay_replica\OriginPeer;
+use Drupal\content_relay_replica\ReceivingSettings;
+use Drupal\content_relay_replica\Schema\CompatibilityChecker;
+use Drupal\content_relay_replica\Schema\SchemaWatcher;
+use Drupal\content_relay_replica\SubscriptionException;
 use Drupal\content_relay_replica\SubscriptionManager;
 use Drupal\Core\Form\FormBase;
 use Drupal\Core\Form\FormStateInterface;
@@ -39,6 +40,7 @@ final class SubscriptionForm extends FormBase {
     protected MappingRepository $mappings,
     protected LanguageSubscription $languages,
     protected SchemaWatcher $schemaWatcher,
+    protected ReceivingSettings $receiving,
   ) {}
 
   /**
@@ -57,6 +59,7 @@ final class SubscriptionForm extends FormBase {
       $container->get('content_relay_replica.mappings'),
       $container->get('content_relay_replica.language_subscription'),
       $container->get('content_relay_replica.schema_watcher'),
+      $container->get('content_relay_replica.receiving_settings'),
     );
   }
 
@@ -201,7 +204,7 @@ final class SubscriptionForm extends FormBase {
         'keep' => $this->t('Keep them as local translations, left alone by sync'),
         'delete' => $this->t('Delete them'),
       ],
-      '#default_value' => $this->configFactory()->get('content_relay_replica.settings')->get('languages.removed') ?? 'keep',
+      '#default_value' => $this->receiving->get('languages.removed') ?? 'keep',
     ];
     $form['terms']['processing'] = [
       '#type' => 'select',

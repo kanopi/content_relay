@@ -22,6 +22,7 @@ class LanguageMap {
   public function __construct(
     protected ConfigFactoryInterface $configFactory,
     protected LanguageManagerInterface $languageManager,
+    protected ReceivingSettings $receiving,
   ) {}
 
   /**
@@ -32,7 +33,7 @@ class LanguageMap {
    */
   public function all(): array {
     $map = [];
-    foreach ($this->configFactory->get('content_relay_replica.settings')->get('languages.map') ?? [] as $entry) {
+    foreach ($this->receiving->get('languages.map') ?? [] as $entry) {
       if (is_string($entry['origin'] ?? NULL) && is_string($entry['local'] ?? NULL) && $entry['origin'] !== $entry['local']) {
         $map[$entry['origin']] = $entry['local'];
       }

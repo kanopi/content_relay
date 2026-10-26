@@ -4,25 +4,26 @@ declare(strict_types=1);
 
 namespace Drupal\content_relay_replica\Controller;
 
+use Drupal\content_relay\Crypto\MessageSigner;
 use Drupal\content_relay\Crypto\MessageVerifier;
 use Drupal\content_relay\Crypto\VerificationException;
 use Drupal\content_relay\Event\ProcessingMode;
 use Drupal\content_relay\Event\SyncEvent;
-use Drupal\content_relay\Http\IpAllowlist;
 use Drupal\content_relay\Exception\InvalidEventException;
+use Drupal\content_relay\Http\IpAllowlist;
 use Drupal\content_relay_replica\Apply\SyncApplier;
-use Drupal\content_relay\Crypto\MessageSigner;
 use Drupal\content_relay_replica\LanguageSubscription;
 use Drupal\content_relay_replica\OriginPeer;
 use Drupal\content_relay_replica\ProcessedEvents;
 use Drupal\content_relay_replica\Processing\ProcessingPolicy;
 use Drupal\content_relay_replica\Processing\ReceivedEvents;
 use Drupal\content_relay_replica\Processing\StatusReport;
-use Drupal\Core\Config\ConfigFactoryInterface;
+use Drupal\content_relay_replica\ReceivingSettings;
 use Drupal\content_relay_replica\StreamTracker;
 use Drupal\content_relay_replica\SubscriptionException;
 use Drupal\content_relay_replica\SubscriptionManager;
 use Drupal\content_relay_replica\Validator;
+use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\DependencyInjection\ContainerInjectionInterface;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\DependencyInjection\ContainerInterface;
@@ -58,6 +59,7 @@ final class EventReceiverController implements ContainerInjectionInterface {
     private readonly ProcessedEvents $processed,
     private readonly LanguageSubscription $languages,
     private readonly Validator $validator,
+    private readonly ReceivingSettings $receiving,
   ) {}
 
   /**
@@ -79,6 +81,7 @@ final class EventReceiverController implements ContainerInjectionInterface {
       $container->get('content_relay_replica.processed_events'),
       $container->get('content_relay_replica.language_subscription'),
       $container->get('content_relay_replica.validator'),
+      $container->get('content_relay_replica.receiving_settings'),
     );
   }
 
@@ -104,7 +107,7 @@ final class EventReceiverController implements ContainerInjectionInterface {
     if ($message->sender !== $this->origin->getSiteId()) {
       return $this->refuse(403, 'unknown_sender', 'This replica does not receive from that site.');
     }
-    if (!IpAllowlist::allows($request->getClientIp(), $this->configFactory->get('content_relay_replica.settings')->get('origin_allowed_ips') ?? [])) {
+    if (!IpAllowlist::allows($request->getClientIp(), $this->receiving->get('origin_allowed_ips') ?? [])) {
       $this->logger->warning('Refused a message from the origin at @ip, which is not on the allowlist.', ['@ip' => $request->getClientIp()]);
       return $this->refuse(403, 'address_not_allowed', 'Messages are not accepted from this address.');
     }

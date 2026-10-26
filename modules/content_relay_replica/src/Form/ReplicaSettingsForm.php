@@ -7,6 +7,7 @@ namespace Drupal\content_relay_replica\Form;
 use Drupal\content_relay\Http\IpAllowlist;
 use Drupal\content_relay_replica\LanguageMap;
 use Drupal\content_relay_replica\LanguageSubscription;
+use Drupal\content_relay_replica\ReceivingSettings;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Config\TypedConfigManagerInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
@@ -27,6 +28,7 @@ final class ReplicaSettingsForm extends ConfigFormBase {
     protected LanguageMap $languageMap,
     protected LanguageSubscription $languages,
     protected EntityTypeManagerInterface $entityTypeManager,
+    protected ReceivingSettings $receiving,
   ) {
     parent::__construct($config_factory, $typed_config_manager);
   }
@@ -41,6 +43,7 @@ final class ReplicaSettingsForm extends ConfigFormBase {
       $container->get('content_relay_replica.language_map'),
       $container->get('content_relay_replica.language_subscription'),
       $container->get('entity_type.manager'),
+      $container->get('content_relay_replica.receiving_settings'),
     );
   }
 
@@ -331,6 +334,8 @@ final class ReplicaSettingsForm extends ConfigFormBase {
       }
     }
     $config->save();
+    // While this site has one origin, its pairing follows this form.
+    $this->receiving->copyToPairing();
 
     // Translations follow a changed mapping when asked to.
     if ($form_state->getValue('move')) {

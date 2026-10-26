@@ -38,6 +38,7 @@ class LocalChanges {
     protected EntityRepositoryInterface $entityRepository,
     protected EntityTypeManagerInterface $entityTypeManager,
     protected LanguageMap $languageMap,
+    protected ReceivingSettings $receiving,
   ) {}
 
   /**
@@ -165,7 +166,7 @@ class LocalChanges {
    */
   public function originUrlResolver(): ?\Closure {
     $origin = $this->origin->get();
-    if ($this->configFactory->get('content_relay_replica.settings')->get('files.links') !== 'origin' || $origin === NULL) {
+    if ($this->receiving->get('files.links') !== 'origin' || $origin === NULL) {
       return NULL;
     }
     $base = rtrim($origin['url'], '/');

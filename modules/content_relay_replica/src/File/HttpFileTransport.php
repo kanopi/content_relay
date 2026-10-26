@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Drupal\content_relay_replica\File;
 
 use Drupal\content_relay_replica\OriginPeer;
+use Drupal\content_relay_replica\ReceivingSettings;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
@@ -18,6 +19,7 @@ class HttpFileTransport implements FileTransportInterface {
     protected ClientInterface $httpClient,
     protected OriginPeer $origin,
     protected ConfigFactoryInterface $configFactory,
+    protected ReceivingSettings $receiving,
   ) {}
 
   /**
@@ -33,7 +35,7 @@ class HttpFileTransport implements FileTransportInterface {
         'sink' => $destination,
         'http_errors' => FALSE,
         'allow_redirects' => FALSE,
-        'timeout' => (int) ($this->configFactory->get('content_relay_replica.settings')->get('files.timeout') ?: 300),
+        'timeout' => (int) ($this->receiving->get('files.timeout') ?: 300),
         'connect_timeout' => 10,
       ]);
     }

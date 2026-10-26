@@ -62,6 +62,7 @@ class LanguageSubscription {
     protected ConfigFactoryInterface $configFactory,
     protected TimeInterface $time,
     protected LoggerInterface $logger,
+    protected ReceivingSettings $receiving,
   ) {}
 
   /**
@@ -383,7 +384,7 @@ class LanguageSubscription {
    * What to do with translations of dropped languages.
    */
   protected function removalMode(): string {
-    return $this->state->get(self::REMOVAL) ?? ($this->configFactory->get('content_relay_replica.settings')->get('languages.removed') ?? 'keep');
+    return $this->state->get(self::REMOVAL) ?? ($this->receiving->get('languages.removed') ?? 'keep');
   }
 
 }

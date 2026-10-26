@@ -103,13 +103,14 @@ class Reconciler {
     protected UuidInterface $uuid,
     protected LoggerInterface $logger,
     protected QueueFactory $queueFactory,
+    protected ReceivingSettings $receiving,
   ) {}
 
   /**
    * Items a run acts on itself, and the queue worker per cron run.
    */
   public function maxItems(): int {
-    return max(1, (int) ($this->configFactory->get('content_relay_replica.settings')->get('reconcile.max_items') ?? 100));
+    return max(1, (int) ($this->receiving->get('reconcile.max_items') ?? 100));
   }
 
   /**
@@ -250,7 +251,7 @@ class Reconciler {
    * Continues or starts the scheduled run, within a time budget. For cron.
    */
   public function cron(int $budget = 30): void {
-    $interval = (int) ($this->configFactory->get('content_relay_replica.settings')->get('reconcile.interval') ?? 86400);
+    $interval = (int) ($this->receiving->get('reconcile.interval') ?? 86400);
     $run_id = $this->database->select(self::TABLE, 'r')
       ->fields('r', ['id'])
       ->condition('status', 'running')

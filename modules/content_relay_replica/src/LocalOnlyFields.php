@@ -23,6 +23,7 @@ class LocalOnlyFields {
   public function __construct(
     protected ConfigFactoryInterface $configFactory,
     protected EntityTypeManagerInterface $entityTypeManager,
+    protected ReceivingSettings $receiving,
   ) {}
 
   /**
@@ -44,7 +45,7 @@ class LocalOnlyFields {
     }
     // With a target state of its own, moderation state is this site's, and
     // so is the published flag it sets.
-    if ((string) ($this->configFactory->get('content_relay_replica.settings')->get('moderation.target_state') ?? '') !== '') {
+    if ((string) ($this->receiving->get('moderation.target_state') ?? '') !== '') {
       $fields[] = 'moderation_state';
       $published = $this->entityTypeManager->getDefinition($entity_type_id, FALSE)?->getKey('published');
       if (is_string($published) && $published !== '') {
@@ -63,7 +64,7 @@ class LocalOnlyFields {
    *   Field names.
    */
   public function configured(string $entity_type_id, string $bundle): array {
-    foreach ($this->configFactory->get('content_relay_replica.settings')->get('local_only') ?? [] as $entry) {
+    foreach ($this->receiving->get('local_only') ?? [] as $entry) {
       if (($entry['entity_type'] ?? NULL) === $entity_type_id && ($entry['bundle'] ?? NULL) === $bundle) {
         return array_values(array_map('strval', $entry['fields'] ?? []));
       }

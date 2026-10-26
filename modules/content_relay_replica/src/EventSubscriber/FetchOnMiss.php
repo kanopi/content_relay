@@ -6,8 +6,8 @@ namespace Drupal\content_relay_replica\EventSubscriber;
 
 use Drupal\content_relay\File\FileUrlMapper;
 use Drupal\content_relay_replica\File\FileSync;
+use Drupal\content_relay_replica\ReceivingSettings;
 use Drupal\content_relay_replica\SyncStateStore;
-use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Routing\TrustedRedirectResponse;
 use Symfony\Component\EventDispatcher\EventSubscriberInterface;
@@ -36,7 +36,7 @@ final class FetchOnMiss implements EventSubscriberInterface {
     private readonly EntityTypeManagerInterface $entityTypeManager,
     private readonly SyncStateStore $syncState,
     private readonly FileSync $files,
-    private readonly ConfigFactoryInterface $configFactory,
+    private readonly ReceivingSettings $receiving,
   ) {}
 
   /**
@@ -53,7 +53,7 @@ final class FetchOnMiss implements EventSubscriberInterface {
     if (!$event->isMainRequest() || $event->getResponse()->getStatusCode() !== 404) {
       return;
     }
-    $mode = (string) $this->configFactory->get('content_relay_replica.settings')->get('files.fetch_on_miss');
+    $mode = (string) $this->receiving->get('files.fetch_on_miss');
     if ($mode !== 'redirect' && $mode !== 'placeholder') {
       return;
     }
